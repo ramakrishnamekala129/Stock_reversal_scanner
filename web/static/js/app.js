@@ -11,9 +11,10 @@ let searchQuery = '';
 let signalFilterDirection = 'ALL';
 let signalFilterPattern = 'ALL';
 
-// WebSocket Instance
+// WebSocket & Polling Instances
 let socket = null;
 let reconnectTimer = null;
+let pollInterval = null;
 
 // Initialize on DOM Load
 document.addEventListener('DOMContentLoaded', () => {
@@ -21,6 +22,8 @@ document.addEventListener('DOMContentLoaded', () => {
     initAudioToggle();
     fetchInitialSnapshot();
     connectWebSocket();
+    // Fast polling fallback every 2.5s until WS connects
+    pollInterval = setInterval(fetchInitialSnapshot, 2500);
 });
 
 async function fetchInitialSnapshot() {
@@ -29,9 +32,15 @@ async function fetchInitialSnapshot() {
         if (res.ok) {
             const data = await res.json();
             renderInitialSnapshot(data);
+            if (data.market && data.market.length > 0) {
+                const badge = document.getElementById('connectionText');
+                if (badge && badge.innerText === 'CONNECTING...') {
+                    updateConnectionStatus('LIVE CONNECTED', '#10b981');
+                }
+            }
         }
     } catch (err) {
-        console.warn('Failed to fetch initial snapshot:', err);
+        console.warn('Failed to fetch snapshot:', err);
     }
 }
 
@@ -74,8 +83,8 @@ function playSignalChime(isBullish = true) {
             osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
             osc.frequency.exponentialRampToValueAtTime(880.00, audioCtx.currentTime + 0.15); // A5
         } else {
-            osc.frequency.setValueAtTime(587.33, audioCtx.currentTime);
-            osc.frequency.exponentialRampToValueAtTime(369.99, audioCtx.currentTime + 0.2);
+            osc.frequency.setValueAtTime(440.00, audioCtx.currentTime); // A4
+            osc.frequency.exponentialRampToValueAtTime(293.66, audioCtx.currentTime + 0.2); // D4
         }
 
         gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
@@ -105,6 +114,8 @@ function connectWebSocket() {
             clearTimeout(reconnectTimer);
             reconnectTimer = null;
         }
+        if (pollInterval) clearInterval(pollInterval);
+        pollInterval = setInterval(fetchInitialSnapshot, 10000);
     };
 
     socket.onmessage = (event) => {
@@ -118,6 +129,8 @@ function connectWebSocket() {
 
     socket.onclose = () => {
         updateConnectionStatus('RECONNECTING...', '#f43f5e');
+        if (pollInterval) clearInterval(pollInterval);
+        pollInterval = setInterval(fetchInitialSnapshot, 2500);
         if (!reconnectTimer) {
             reconnectTimer = setTimeout(connectWebSocket, 2000);
         }
