@@ -21,6 +21,7 @@ import config
 from market.session import MarketSessionManager
 from scanner.scanner import FNOIntradayScanner
 from upstox.auth import UpstoxAuth
+from web.state import dashboard_state
 
 logging.basicConfig(
     level=logging.INFO,

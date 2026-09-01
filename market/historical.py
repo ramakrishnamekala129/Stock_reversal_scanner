@@ -227,7 +227,7 @@ class HistoricalDataLoader:
         Caches locally so dry runs and restarts load in milliseconds.
         """
         today_str = datetime.now(pytz.timezone(config.MARKET_TIMEZONE)).strftime("%Y-%m-%d")
-        cache_file = self.cache_dir / f"intraday_5m_{today_str}.json"
+        cache_file = config.CACHE_DIR / f"intraday_5m_{today_str}.json"
 
         if not force_refresh and cache_file.exists():
             try:

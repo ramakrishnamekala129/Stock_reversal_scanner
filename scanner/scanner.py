@@ -157,7 +157,7 @@ class FNOIntradayScanner:
         if self.excel_mgr:
             self.excel_mgr.update_price(tick.symbol, tick.ltp, tick.volume, tick.timestamp)
 
-    def _handle_candle_closed(self, symbol: str, candle: Candle, df_history: pd.DataFrame):
+    def _handle_candle_closed(self, symbol: str, candle: Candle, df_history: pd.DataFrame, print_console: bool = True):
         """
         Invoked ONLY when a 5-minute candle closes (e.g. at 09:20:00, 09:25:00, etc.).
         Runs pattern detection, pivot context scoring, and triggers deduplicated alerts.
