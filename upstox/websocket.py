@@ -155,16 +155,19 @@ class UpstoxWebSocketStreamer:
                 eod_ohlc = market_ff.get("marketOHLC", {}).get("ohlc", [])
                 
                 ltp = float(ltpc.get("ltp", 0.0))
-                volume = int(market_ff.get("v", 0) or ltpc.get("v", 0))
+                # Upstox Protobuf: vtt = Volume Traded Today, ltq = Last Traded Qty
+                volume = int(market_ff.get("vtt", 0) or market_ff.get("v", 0) or ltpc.get("ltq", 0))
                 ts_ms = ltpc.get("ltt")
 
                 # Parse intraday / day OHLC if present
                 for ohlc in eod_ohlc:
-                    if ohlc.get("interval") in ["I1", "1d", "1m"]:
+                    if ohlc.get("interval") in ["I1", "1d", "1m", "I30", "30m"]:
                         open_price = float(ohlc.get("open", 0.0)) or None
                         high_price = float(ohlc.get("high", 0.0)) or None
                         low_price = float(ohlc.get("low", 0.0)) or None
                         close_price = float(ohlc.get("close", 0.0)) or None
+                        if not volume and ohlc.get("vol"):
+                            volume = int(ohlc.get("vol"))
 
             # Handle ltpc feed
             elif "ltpc" in feed_data:
