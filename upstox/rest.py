@@ -38,6 +38,13 @@ class UpstoxRestClient:
                 "Authorization": f"Bearer {api_client.configuration.access_token}"
             })
 
+    @property
+    def access_token(self) -> str:
+        """Returns the active Upstox access token string."""
+        if self.api_client and self.api_client.configuration and self.api_client.configuration.access_token:
+            return self.api_client.configuration.access_token
+        return config.UPSTOX_ACCESS_TOKEN or ""
+
     def download_nse_instruments(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """
         Downloads and caches the official Upstox NSE instrument master.
