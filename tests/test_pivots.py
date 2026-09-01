@@ -102,3 +102,21 @@ def test_narrow_cpr_and_trap_zone():
     assert p.is_narrow_trap_zone is True
     assert p.bull_trap_width_pct <= 0.10
     assert p.bear_trap_width_pct <= 0.10
+
+
+def test_cpr_breakout_and_breakdown_validation():
+    from indicators.pivots import is_valid_cpr_breakout, is_valid_cpr_breakdown
+    # H=100.0, L=90.0, C=95.0 -> PP=95.0, BC=95.0, TC=95.0 (cpr_top=95.0, cpr_bottom=95.0)
+    p = calculate_daily_pivots('TEST', '2026-09-01', 92.0, 100.0, 90.0, 95.0, 1000)
+
+    # 1. Valid CPR Breakout: Open 94.0, High 100.0, Low 93.0, Close 99.0 (Bullish, >60% range above 95.0)
+    assert is_valid_cpr_breakout(94.0, 100.0, 93.0, 99.0, p) is True
+    # Inward failure: Close is below CPR top
+    assert is_valid_cpr_breakout(94.0, 96.0, 93.0, 94.5, p) is False
+    # Wick only failure: Bearish candle closing below open
+    assert is_valid_cpr_breakout(98.0, 100.0, 93.0, 96.0, p) is False
+
+    # 2. Valid CPR Breakdown: Open 96.0, High 97.0, Low 90.0, Close 91.0 (Bearish, >60% range below 95.0)
+    assert is_valid_cpr_breakdown(96.0, 97.0, 90.0, 91.0, p) is True
+    # Inward failure: Close is above CPR bottom
+    assert is_valid_cpr_breakdown(96.0, 97.0, 94.0, 95.5, p) is False

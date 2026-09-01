@@ -42,7 +42,7 @@ def test_signal_scoring_and_generation():
     assert "Price > Pivot" in sig.conditions_met
     assert "Price > PDH" in sig.conditions_met
     assert sig.zone != ""
-    assert "Above" in sig.zone or "R1" in sig.zone
+    assert "Above" in sig.zone or "R1" in sig.zone or "CPR" in sig.zone
 
 
 def test_event_deduplication():

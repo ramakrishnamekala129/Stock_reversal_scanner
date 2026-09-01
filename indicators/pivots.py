@@ -80,14 +80,64 @@ class DailyPivots:
         }
 
 
+def is_valid_cpr_breakout(
+    open_p: float,
+    high_p: float,
+    low_p: float,
+    close_p: float,
+    pivots: DailyPivots,
+    min_candle_ratio: float = 0.60,
+) -> bool:
+    """
+    Validates a decisive CPR Breakout (Bullish):
+    1. Candle closes ABOVE CPR top (max(TC, BC)).
+    2. Candle is bullish (close > open).
+    3. Most of the candle (>= 60% of total range) formed and closed above CPR top.
+    """
+    if close_p <= pivots.cpr_top or close_p <= open_p:
+        return False
+
+    tot_range = max(high_p - low_p, 0.0001)
+    range_above_cpr = max(high_p - pivots.cpr_top, 0.0)
+    ratio_above = range_above_cpr / tot_range
+
+    return ratio_above >= min_candle_ratio
+
+
+def is_valid_cpr_breakdown(
+    open_p: float,
+    high_p: float,
+    low_p: float,
+    close_p: float,
+    pivots: DailyPivots,
+    min_candle_ratio: float = 0.60,
+) -> bool:
+    """
+    Validates a decisive CPR Breakdown (Bearish):
+    1. Candle closes BELOW CPR bottom (min(TC, BC)).
+    2. Candle is bearish (close < open).
+    3. Most of the candle (>= 60% of total range) formed and closed below CPR bottom.
+    """
+    if close_p >= pivots.cpr_bottom or close_p >= open_p:
+        return False
+
+    tot_range = max(high_p - low_p, 0.0001)
+    range_below_cpr = max(pivots.cpr_bottom - low_p, 0.0)
+    ratio_below = range_below_cpr / tot_range
+
+    return ratio_below >= min_candle_ratio
+
+
 def get_pivot_zone(
     price: float,
     pivots: DailyPivots,
     low: Optional[float] = None,
     high: Optional[float] = None,
+    open_p: Optional[float] = None,
 ) -> str:
     """
     Returns high-precision technical zone classification including:
+    - CPR Breakout / Breakdown (Decisive close with >=60% of candle on breakout side)
     - Bull Trap Zone (R1 - PDH Resistance) (Narrow if range <= 0.10% of price)
     - Bear Trap Zone (S1 - PDL Support) (Narrow if range <= 0.10% of price)
     - Central Pivot Range (Inside Narrow CPR / CPR Base)
@@ -96,26 +146,39 @@ def get_pivot_zone(
     """
     c_low = low if low is not None else price
     c_high = high if high is not None else price
+    c_open = open_p if open_p is not None else c_low
 
-    # 1. Check Bull Trap Zone (R1 & PDH Confluence) - price inside or candle wick touches
+    # 1. Check CPR Breakout (Majority >=60% of candle closed above CPR top)
+    if is_valid_cpr_breakout(c_open, c_high, c_low, price, pivots):
+        if pivots.is_narrow_cpr:
+            return f"🚀 Narrow CPR Breakout ({pivots.cpr_width_pct:.2f}%)"
+        return "🚀 CPR Breakout (Bullish Close)"
+
+    # 2. Check CPR Breakdown (Majority >=60% of candle closed below CPR bottom)
+    if is_valid_cpr_breakdown(c_open, c_high, c_low, price, pivots):
+        if pivots.is_narrow_cpr:
+            return f"💥 Narrow CPR Breakdown ({pivots.cpr_width_pct:.2f}%)"
+        return "💥 CPR Breakdown (Bearish Close)"
+
+    # 3. Check Bull Trap Zone (R1 & PDH Confluence) - price inside or candle wick touches
     if (pivots.bull_trap_bottom <= price <= pivots.bull_trap_top) or (c_high >= pivots.bull_trap_bottom and c_low <= pivots.bull_trap_top):
         if pivots.is_narrow_bull_trap:
             return f"🪤 Narrow Bull Trap ({pivots.bull_trap_width_pct:.2f}%)"
         return "Bull Trap Zone (R1 - PDH)"
 
-    # 2. Check Bear Trap Zone (S1 & PDL Confluence) - price inside or candle wick touches
+    # 4. Check Bear Trap Zone (S1 & PDL Confluence) - price inside or candle wick touches
     if (pivots.bear_trap_bottom <= price <= pivots.bear_trap_top) or (c_low <= pivots.bear_trap_top and c_high >= pivots.bear_trap_bottom):
         if pivots.is_narrow_bear_trap:
             return f"🪤 Narrow Bear Trap ({pivots.bear_trap_width_pct:.2f}%)"
         return "Bear Trap Zone (S1 - PDL)"
 
-    # 3. Check CPR Zone (Central Pivot Range) - price inside or candle wick touches
+    # 5. Check CPR Zone (Central Pivot Range) - price inside or candle wick touches
     if (pivots.cpr_bottom <= price <= pivots.cpr_top) or (c_low <= pivots.cpr_top and c_high >= pivots.cpr_bottom):
         if pivots.is_narrow_cpr:
-            return "Inside Narrow CPR (<0.1%)"
+            return f"Inside Narrow CPR ({pivots.cpr_width_pct:.2f}%)"
         return "Inside CPR Zone (Choppy / Base)"
 
-    # 4. Expansion / Breakout Levels
+    # 6. Expansion / Breakout Levels
     if price >= pivots.r3:
         return "Above R3 (Super Breakout)"
     elif price >= pivots.r2:
@@ -233,11 +296,14 @@ class PivotRelationship:
     crossed_s2: bool
     crossed_s3: bool
 
-    distance_from_pivot: float
-    distance_from_pdh: float
-    distance_from_pdl: float
-    distance_from_r1: float
-    distance_from_s1: float
+    cpr_breakout: bool = False
+    cpr_breakdown: bool = False
+
+    distance_from_pivot: float = 0.0
+    distance_from_pdh: float = 0.0
+    distance_from_pdl: float = 0.0
+    distance_from_r1: float = 0.0
+    distance_from_s1: float = 0.0
 
 
 def evaluate_pivot_relationship(
@@ -278,6 +344,9 @@ def evaluate_pivot_relationship(
     crossed_s2 = has_crossed_below(pivots.s2)
     crossed_s3 = has_crossed_below(pivots.s3)
 
+    cpr_breakout = is_valid_cpr_breakout(curr_open, curr_high, curr_low, curr_close, pivots)
+    cpr_breakdown = is_valid_cpr_breakdown(curr_open, curr_high, curr_low, curr_close, pivots)
+
     distance_from_pivot = round(curr_close - pivots.pp, 2)
     distance_from_pdh = round(curr_close - pivots.pdh, 2)
     distance_from_pdl = round(curr_close - pivots.pdl, 2)
@@ -299,6 +368,8 @@ def evaluate_pivot_relationship(
         crossed_s1=crossed_s1,
         crossed_s2=crossed_s2,
         crossed_s3=crossed_s3,
+        cpr_breakout=cpr_breakout,
+        cpr_breakdown=cpr_breakdown,
         distance_from_pivot=distance_from_pivot,
         distance_from_pdh=distance_from_pdh,
         distance_from_pdl=distance_from_pdl,

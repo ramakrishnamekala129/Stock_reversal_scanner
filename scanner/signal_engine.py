@@ -229,15 +229,34 @@ class SignalEngine:
                 score_breakdown.append(f"Bull Trap R1-PDH Touch & Rejection (+{w})")
                 conditions_met.append("🪤 Bull Trap Rejection (R1-PDH)")
 
-            # 3. CPR (Central Pivot Range) Confluence (Candle Touch / Test)
+            # 3. CPR Breakout / Breakdown (Decisive close with >=60% of candle)
+            if pivot_rel.cpr_breakout and not is_bearish:
+                w = 3
+                score += w
+                score_breakdown.append(f"CPR Breakout (>=60% candle above CPR) (+{w})")
+                if pivots.is_narrow_cpr:
+                    conditions_met.append(f"🚀 Narrow CPR Breakout ({pivots.cpr_width_pct:.2f}%)")
+                else:
+                    conditions_met.append("🚀 CPR Breakout (Bullish Close)")
+
+            if pivot_rel.cpr_breakdown and is_bearish:
+                w = 3
+                score += w
+                score_breakdown.append(f"CPR Breakdown (>=60% candle below CPR) (+{w})")
+                if pivots.is_narrow_cpr:
+                    conditions_met.append(f"💥 Narrow CPR Breakdown ({pivots.cpr_width_pct:.2f}%)")
+                else:
+                    conditions_met.append("💥 CPR Breakdown (Bearish Close)")
+
+            # 4. CPR (Central Pivot Range) Touch / Test Confluence
             candle_touches_cpr = (curr_low <= pivots.cpr_top and curr_high >= pivots.cpr_bottom)
-            if candle_touches_cpr:
+            if candle_touches_cpr and not pivot_rel.cpr_breakout and not pivot_rel.cpr_breakdown:
                 if pivots.is_narrow_cpr:
                     conditions_met.append("⚡ Tested Narrow CPR (<0.1%)")
                 else:
                     conditions_met.append("🎯 Tested CPR Zone")
 
-            # 4. Narrow CPR Trending Day Candidate (< 0.10% width)
+            # 5. Narrow CPR Trending Day Candidate (< 0.10% width)
             if pivots.is_narrow_cpr:
                 w = 2
                 score += w
@@ -256,7 +275,7 @@ class SignalEngine:
             is_actionable = score >= self.min_signal_score
 
             if is_actionable:
-                pivot_zone = get_pivot_zone(curr_close, pivots, low=curr_low, high=curr_high)
+                pivot_zone = get_pivot_zone(curr_close, pivots, low=curr_low, high=curr_high, open_p=curr_open)
                 signal_event = SignalEvent(
                     symbol=symbol,
                     timestamp=ts,

@@ -275,6 +275,8 @@ class ScannerTkinterGUI:
         tk.Label(toolbar, text="CPR / Trap:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         cpr_combo = ttk.Combobox(toolbar, textvariable=self.signal_cpr_var, values=[
             "ALL",
+            "🚀 CPR Breakout (Bullish Close)",
+            "💥 CPR Breakdown (Bearish Close)",
             "⚡ Narrow CPR (<= 0.1%)",
             "🪤 Narrow Trap Zones (<= 0.1%)",
             "🪤 All Trap Zones (R1-PDH / S1-PDL)",
@@ -282,7 +284,7 @@ class ScannerTkinterGUI:
             "🐂 Bull Trap (R1 - PDH)",
             "🐻 Bear Trap (S1 - PDL)",
             "📌 Inside CPR / Pivot Test",
-        ], state="readonly", width=28)
+        ], state="readonly", width=30)
         cpr_combo.pack(side=tk.LEFT, padx=(0, 12))
         cpr_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
@@ -384,6 +386,8 @@ class ScannerTkinterGUI:
         tk.Label(toolbar, text="Filter Stocks:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         m_cpr_combo = ttk.Combobox(toolbar, textvariable=self.market_cpr_var, values=[
             "ALL",
+            "🚀 CPR Breakout (Bullish Close)",
+            "💥 CPR Breakdown (Bearish Close)",
             "⚡ Narrow CPR (<= 0.1%) Trending",
             "🪤 Narrow Trap Zones (<= 0.1%)",
             "🪤 In Trap Zones",
@@ -391,7 +395,7 @@ class ScannerTkinterGUI:
             "🐂 In Bull Trap (R1 - PDH)",
             "🐻 In Bear Trap (S1 - PDL)",
             "📌 Inside CPR Zone",
-        ], state="readonly", width=32)
+        ], state="readonly", width=34)
         m_cpr_combo.pack(side=tk.LEFT, padx=(0, 12))
         m_cpr_combo.bind("<<ComboboxSelected>>", lambda e: self._render_market())
 
@@ -619,6 +623,8 @@ class ScannerTkinterGUI:
                 continue
 
             # Apply CPR / Trap Filter
+            has_cpr_breakout = "CPR Breakout" in zone or any("CPR Breakout" in str(c) for c in conds)
+            has_cpr_breakdown = "CPR Breakdown" in zone or any("CPR Breakdown" in str(c) for c in conds)
             has_narrow_cpr = any("Narrow CPR" in str(c) for c in conds) or "Narrow CPR" in zone
             has_narrow_trap = any("Narrow Bull Trap" in str(c) or "Narrow Bear Trap" in str(c) for c in conds) or ("Narrow" in zone and "Trap" in zone)
             is_trap = "Trap" in zone or any("Trap" in str(c) for c in conds)
@@ -626,7 +632,11 @@ class ScannerTkinterGUI:
             is_bear_trap = "Bear Trap" in zone or any("Bear Trap" in str(c) for c in conds)
             is_cpr_test = "CPR" in zone or any("CPR" in str(c) for c in conds)
 
-            if cpr_filter == "⚡ Narrow CPR (<= 0.1%)" and not has_narrow_cpr:
+            if cpr_filter == "🚀 CPR Breakout (Bullish Close)" and not has_cpr_breakout:
+                continue
+            elif cpr_filter == "💥 CPR Breakdown (Bearish Close)" and not has_cpr_breakdown:
+                continue
+            elif cpr_filter == "⚡ Narrow CPR (<= 0.1%)" and not has_narrow_cpr:
                 continue
             elif cpr_filter == "🪤 Narrow Trap Zones (<= 0.1%)" and not has_narrow_trap:
                 continue
@@ -735,8 +745,15 @@ class ScannerTkinterGUI:
             cpr_width = float(m.get("cpr_width_pct", 0.0))
             is_narrow = cpr_width <= 0.10
 
+            has_cpr_breakout = "CPR Breakout" in zone
+            has_cpr_breakdown = "CPR Breakdown" in zone
             has_narrow_trap = ("Narrow" in zone and "Trap" in zone)
-            if cpr_filter == "⚡ Narrow CPR (<= 0.1%) Trending" and not is_narrow:
+
+            if cpr_filter == "🚀 CPR Breakout (Bullish Close)" and not has_cpr_breakout:
+                continue
+            elif cpr_filter == "💥 CPR Breakdown (Bearish Close)" and not has_cpr_breakdown:
+                continue
+            elif cpr_filter == "⚡ Narrow CPR (<= 0.1%) Trending" and not is_narrow:
                 continue
             elif cpr_filter == "🪤 Narrow Trap Zones (<= 0.1%)" and not has_narrow_trap:
                 continue
