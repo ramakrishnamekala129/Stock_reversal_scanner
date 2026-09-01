@@ -186,9 +186,58 @@ class HistoricalDataLoader:
             df_5m = df_5m.reset_index()
             return df_5m
 
+    def load_symbol_broker_5m(self, symbol: str, instrument_key: str) -> Optional[pd.DataFrame]:
+        """
+        Fetches today's official broker candles for a single symbol and returns 5-minute DataFrame.
+        """
+        kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
+        raw_1m = self.rest_client.get_intraday_1m_candles(instrument_key)
+        if not raw_1m:
+            return None
+
+        records = []
+        for c in raw_1m:
+            ts = pd.to_datetime(c[0])
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC").tz_convert(kolkata_tz)
+            else:
+                ts = ts.tz_convert(kolkata_tz)
+
+            records.append({
+                "timestamp": ts,
+                "open": float(c[1]),
+                "high": float(c[2]),
+                "low": float(c[3]),
+                "close": float(c[4]),
+                "volume": int(c[5]),
+            })
+
+        if not records:
+            return None
+
+        df_1m = pd.DataFrame(records).sort_values("timestamp").set_index("timestamp")
+        df_5m = df_1m.resample("5min", origin="start_day", offset="15min").agg({
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        }).dropna().reset_index()
+
+        return df_5m
+
+    def refresh_latest_broker_candles(
+        self,
+        universe: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        Fetches the latest official broker-side 5-minute candles for all universe stocks.
+        """
+        results: Dict[str, pd.DataFrame] = {}
+
         with ThreadPoolExecutor(max_workers=config.MAX_CONCURRENT_REQUESTS) as executor:
             future_to_sym = {
-                executor.submit(_fetch_and_aggregate, sym, item): sym
+                executor.submit(self.load_symbol_broker_5m, sym, item["instrument_key"]): sym
                 for sym, item in universe.items()
             }
             for future in as_completed(future_to_sym):
@@ -196,9 +245,8 @@ class HistoricalDataLoader:
                 try:
                     df = future.result()
                     if df is not None and not df.empty:
-                        dfs[sym] = df
+                        results[sym] = df
                 except Exception as e:
-                    logger.debug(f"Could not load 5m historical data for {sym}: {e}")
+                    logger.debug(f"Error fetching broker candles for {sym}: {e}")
 
-        logger.info(f"Loaded 5M historical DataFrames for {len(dfs)} symbols.")
-        return dfs
+        return results

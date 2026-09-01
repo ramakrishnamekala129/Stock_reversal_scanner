@@ -173,15 +173,29 @@ class FNOIntradayScanner:
             if self.db:
                 self.db.save_signal(sig.to_dict())
 
+    def sync_broker_candles_for_all(self):
+        """
+        Fetches the latest official broker-side 5-minute candles for the entire F&O universe.
+        """
+        logger.info("Syncing official 5-minute candles directly from broker for F&O universe...")
+        broker_dfs = self.hist_loader.refresh_latest_broker_candles(self._universe)
+        key_map = {sym: item["instrument_key"] for sym, item in self._universe.items()}
+        for sym, df_b in broker_dfs.items():
+            self.candle_engine.sync_broker_candles(sym, df_b, key_map=key_map)
+        logger.info(f"Broker candle sync complete for {len(broker_dfs)} symbols.")
+
     def run_live(self):
         """
         Main execution loop for live market scanning.
+        Polls official broker candles on every 5-minute closure (e.g. 09:20, 09:25...)
+        while maintaining live WebSocket event tracking.
         """
         # Register graceful termination handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
         logger.info("Scanner listening for live market events... Press Ctrl+C to stop.")
+        last_synced_minute = -1
 
         try:
             while self._is_running:
@@ -193,6 +207,14 @@ class FNOIntradayScanner:
                     self.candle_engine.force_close_active_candles()
                     self.stop()
                     break
+
+                # 5-minute boundary check: 2 seconds after each 5-minute boundary (e.g. 12:45:02, 12:50:02...)
+                current_min = now_ist.minute
+                current_sec = now_ist.second
+                if current_min % 5 == 0 and current_sec >= 2 and current_min != last_synced_minute:
+                    last_synced_minute = current_min
+                    logger.info(f"5-Minute candle boundary reached ({now_ist.strftime('%H:%M:%S')}). Fetching broker-side candles...")
+                    self.sync_broker_candles_for_all()
 
                 time.sleep(1.0)
         except KeyboardInterrupt:

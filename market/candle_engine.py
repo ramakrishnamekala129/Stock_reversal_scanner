@@ -85,39 +85,67 @@ class CandleEngine:
 
     def initialize_history(self, symbol_dfs: Dict[str, pd.DataFrame], key_map: Optional[Dict[str, str]] = None):
         """
-        Seeds candle history from initial historical DataFrames.
+        Seeds candle history from initial historical DataFrames without triggering closed callbacks.
         """
-        for symbol, df in symbol_dfs.items():
-            if df.empty:
-                continue
-            candle_list = []
-            inst_key = key_map.get(symbol, "") if key_map else ""
-            for _, row in df.iterrows():
-                ts = row["timestamp"]
-                if isinstance(ts, pd.Timestamp):
-                    ts = ts.to_pydatetime()
-                if ts.tzinfo is None:
-                    ts = self.tz.localize(ts)
-                else:
-                    ts = ts.astimezone(self.tz)
+        callback = self.on_candle_closed
+        self.on_candle_closed = None  # Temporarily disable callback during seeding
+        try:
+            for sym, df in symbol_dfs.items():
+                self.sync_broker_candles(sym, df, key_map=key_map)
+        finally:
+            self.on_candle_closed = callback
+        logger.info(f"Initialized candle history for {len(self._history)} symbols directly from broker.")
+    def sync_broker_candles(self, symbol: str, broker_df: pd.DataFrame, key_map: Optional[Dict[str, str]] = None):
+        """
+        Syncs official broker-side 5M candles into the history and dispatches on_candle_closed for newly closed candles.
+        """
+        if broker_df.empty:
+            return
 
-                candle = Candle(
-                    symbol=symbol,
-                    instrument_key=inst_key,
-                    timestamp=ts,
-                    open=float(row["open"]),
-                    high=float(row["high"]),
-                    low=float(row["low"]),
-                    close=float(row["close"]),
-                    volume=int(row["volume"]),
-                    status=CandleStatus.CLOSED,
-                    tick_count=1,
-                )
-                if candle.is_valid():
-                    candle_list.append(candle)
+        inst_key = key_map.get(symbol, "") if key_map else ""
+        existing_history = self._history.get(symbol, [])
+        last_known_ts = existing_history[-1].timestamp if existing_history else None
 
-            self._history[symbol] = candle_list
-        logger.info(f"Initialized candle history for {len(self._history)} symbols.")
+        updated_list = []
+        newly_closed = []
+
+        for _, row in broker_df.iterrows():
+            ts = row["timestamp"]
+            if isinstance(ts, pd.Timestamp):
+                ts = ts.to_pydatetime()
+            if ts.tzinfo is None:
+                ts = self.tz.localize(ts)
+            else:
+                ts = ts.astimezone(self.tz)
+
+            candle = Candle(
+                symbol=symbol,
+                instrument_key=inst_key,
+                timestamp=ts,
+                open=float(row["open"]),
+                high=float(row["high"]),
+                low=float(row["low"]),
+                close=float(row["close"]),
+                volume=int(row["volume"]),
+                status=CandleStatus.CLOSED,
+                tick_count=1,
+            )
+            if candle.is_valid():
+                updated_list.append(candle)
+                if last_known_ts is None or ts > last_known_ts:
+                    newly_closed.append(candle)
+
+        if updated_list:
+            self._history[symbol] = updated_list[-100:]
+
+        # Dispatch on_candle_closed for new official broker candles
+        if self.on_candle_closed and newly_closed:
+            df_full = self.get_candle_history_df(symbol)
+            for c in newly_closed:
+                try:
+                    self.on_candle_closed(symbol, c, df_full)
+                except Exception as e:
+                    logger.error(f"Error in on_candle_closed callback for {symbol}: {e}", exc_info=True)
 
     def get_candle_history_df(self, symbol: str) -> pd.DataFrame:
         """

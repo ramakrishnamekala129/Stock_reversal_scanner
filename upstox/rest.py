@@ -113,7 +113,7 @@ class UpstoxRestClient:
 
     def get_intraday_1m_candles(self, instrument_key: str) -> List[List[Any]]:
         """
-        Fetches today's intraday 1-minute historical candles.
+        Fetches today's intraday 1-minute historical candles directly from Upstox broker.
         Candle format: [timestamp, open, high, low, close, volume, open_interest]
         """
         encoded_key = urllib.parse.quote(instrument_key)
@@ -133,6 +133,39 @@ class UpstoxRestClient:
                     break
             except Exception as e:
                 time.sleep(config.API_RETRY_BACKOFF_BASE * (attempt + 1))
+
+        return []
+
+    def get_broker_5m_history(
+        self,
+        instrument_key: str,
+        to_date: Optional[str] = None,
+        from_date: Optional[str] = None,
+    ) -> List[List[Any]]:
+        """
+        Fetches official 5-minute historical candles from Upstox History V3 API.
+        """
+        if not self.api_client:
+            return []
+
+        try:
+            history_api = upstox_client.HistoryV3Api(self.api_client)
+            if not to_date:
+                to_date = date.today().isoformat()
+            if not from_date:
+                from_date = (date.today() - timedelta(days=7)).isoformat()
+
+            res = history_api.get_historical_candle_data1(
+                instrument_key=instrument_key,
+                unit="minutes",
+                interval="5",
+                to_date=to_date,
+                from_date=from_date,
+            )
+            if res and res.data and res.data.candles:
+                return res.data.candles
+        except Exception as e:
+            logger.debug(f"HistoryV3 5m fetch failed for {instrument_key}: {e}")
 
         return []
 
