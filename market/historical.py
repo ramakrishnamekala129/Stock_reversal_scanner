@@ -240,8 +240,8 @@ class HistoricalDataLoader:
                         df = pd.DataFrame(recs)
                         df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_convert(kolkata_tz)
                         dfs[sym] = df
-                if len(dfs) > 0:
-                    logger.info(f"Loaded {len(dfs)} 5-minute candle datasets from local cache: {cache_file.name}")
+                if len(dfs) >= len(universe):
+                    logger.info(f"Loaded {len(dfs)}/{len(universe)} 5-minute candle datasets from local cache: {cache_file.name}")
                     return dfs
             except Exception as e:
                 logger.warning(f"Failed to read 5M candle cache: {e}")
