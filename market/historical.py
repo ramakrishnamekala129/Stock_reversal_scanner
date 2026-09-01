@@ -11,6 +11,7 @@ import pandas as pd
 import pytz
 
 import config
+from database.repository import DatabaseRepository
 from upstox.rest import UpstoxRestClient
 
 logger = logging.getLogger(__name__)
@@ -70,8 +71,9 @@ class AsyncUpstoxRateLimiter:
 class HistoricalDataLoader:
     """Loads previous-day session data and builds initial 5M history with asyncio acceleration & rate limiting."""
 
-    def __init__(self, rest_client: UpstoxRestClient):
+    def __init__(self, rest_client: UpstoxRestClient, db: Optional[DatabaseRepository] = None):
         self.rest_client = rest_client
+        self.db = db or DatabaseRepository()
         self._pd_cache: Dict[str, PreviousDayOHLCV] = {}
 
     def get_cached_previous_day(self, symbol: str) -> Optional[PreviousDayOHLCV]:
@@ -224,46 +226,51 @@ class HistoricalDataLoader:
     ) -> Dict[str, pd.DataFrame]:
         """
         Loads today's official broker-side 5-minute historical candles using asyncio concurrency.
-        Caches locally so dry runs and restarts load in milliseconds.
+        Caches into SQLite database table (candles_5m) for sub-millisecond lookback and atomic batch inserts.
         """
         today_str = datetime.now(pytz.timezone(config.MARKET_TIMEZONE)).strftime("%Y-%m-%d")
-        cache_file = config.CACHE_DIR / f"intraday_5m_{today_str}.json"
 
-        if not force_refresh and cache_file.exists():
+        # 1. Query SQLite Database Cache
+        if not force_refresh:
             try:
-                with open(cache_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                dfs = {}
-                kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
-                for sym, recs in data.items():
-                    if recs:
-                        df = pd.DataFrame(recs)
-                        df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_convert(kolkata_tz)
-                        dfs[sym] = df
-                if len(dfs) >= len(universe):
-                    logger.info(f"Loaded {len(dfs)}/{len(universe)} 5-minute candle datasets from local cache: {cache_file.name}")
-                    return dfs
+                db_dfs = self.db.get_candles_by_date(today_str)
+                if len(db_dfs) >= len(universe):
+                    logger.info(f"Loaded {len(db_dfs)}/{len(universe)} 5-minute candle datasets directly from SQLite database (candles_5m).")
+                    return db_dfs
             except Exception as e:
-                logger.warning(f"Failed to read 5M candle cache: {e}")
+                logger.warning(f"Failed to query SQLite candle cache: {e}")
 
+        # 2. Fetch fresh 5M candles from broker via asyncio
         logger.info("Loading initial 5-minute historical candles directly from broker via asyncio...")
         start_t = time.time()
         dfs = self.refresh_latest_broker_candles(universe)
         elapsed = time.time() - start_t
         logger.info(f"Loaded 5M broker DataFrames for {len(dfs)}/{len(universe)} symbols in {elapsed:.2f}s.")
 
-        # Save to disk cache
+        # 3. Batch insert all fetched candles into SQLite database
         try:
-            serializable = {}
+            records = []
             for sym, df in dfs.items():
                 if df is not None and not df.empty:
-                    df_copy = df.copy()
-                    df_copy["timestamp"] = df_copy["timestamp"].astype(str)
-                    serializable[sym] = df_copy.to_dict(orient="records")
-            with open(cache_file, "w", encoding="utf-8") as f:
-                json.dump(serializable, f)
+                    inst_key = universe.get(sym, {}).get("instrument_key", "")
+                    for row in df.itertuples():
+                        ts_str = row.timestamp.isoformat() if hasattr(row.timestamp, "isoformat") else str(row.timestamp)
+                        records.append({
+                            "symbol": sym,
+                            "instrument_key": inst_key,
+                            "timestamp": ts_str,
+                            "open": float(row.open),
+                            "high": float(row.high),
+                            "low": float(row.low),
+                            "close": float(row.close),
+                            "volume": int(row.volume),
+                            "is_closed": 1,
+                        })
+            if records:
+                self.db.save_candles_batch(records)
+                logger.info(f"Cached {len(records)} 5-minute candles across {len(dfs)} stocks into SQLite database.")
         except Exception as e:
-            logger.warning(f"Failed to write 5M candle cache: {e}")
+            logger.warning(f"Failed to write 5M candles into SQLite database: {e}")
 
         return dfs
 

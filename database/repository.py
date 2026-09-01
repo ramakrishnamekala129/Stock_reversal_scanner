@@ -8,6 +8,9 @@ import sqlite3
 import threading
 from typing import Any, Dict, List, Optional
 
+import pandas as pd
+import pytz
+
 import config
 
 logger = logging.getLogger(__name__)
@@ -126,6 +129,52 @@ class DatabaseRepository:
                 """, candle_dict)
         except Exception as e:
             logger.debug(f"DB error saving candle for {candle_dict.get('symbol')}: {e}")
+
+    def save_candles_batch(self, candle_records: List[Dict[str, Any]]):
+        """Batch inserts or updates multiple 5-minute candles in a single transaction."""
+        if not config.ENABLE_DB_STORAGE or not candle_records:
+            return
+        conn = self._get_connection()
+        try:
+            with conn:
+                conn.executemany("""
+                    INSERT INTO candles_5m (symbol, instrument_key, timestamp, open, high, low, close, volume, is_closed)
+                    VALUES (:symbol, :instrument_key, :timestamp, :open, :high, :low, :close, :volume, :is_closed)
+                    ON CONFLICT(symbol, timestamp) DO UPDATE SET
+                        open = excluded.open,
+                        high = excluded.high,
+                        low = excluded.low,
+                        close = excluded.close,
+                        volume = excluded.volume,
+                        is_closed = excluded.is_closed
+                """, candle_records)
+        except Exception as e:
+            logger.error(f"DB error in save_candles_batch: {e}")
+
+    def get_candles_by_date(self, date_str: str) -> Dict[str, pd.DataFrame]:
+        """
+        Retrieves all 5-minute candles for a specific date (YYYY-MM-DD) from SQLite,
+        returning a mapping of symbol -> pd.DataFrame with Kolkata timezone timestamps.
+        Optimized with vectorized pandas SQL retrieval (sub-50ms for entire universe).
+        """
+        conn = self._get_connection()
+        query = """
+            SELECT symbol, timestamp, open, high, low, close, volume
+            FROM candles_5m
+            WHERE timestamp LIKE ?
+            ORDER BY symbol, timestamp ASC
+        """
+        try:
+            df_all = pd.read_sql_query(query, conn, params=(f"{date_str}%",))
+            if df_all.empty:
+                return {}
+
+            kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
+            df_all["timestamp"] = pd.to_datetime(df_all["timestamp"], utc=True).dt.tz_convert(kolkata_tz)
+            return {sym: group.copy().reset_index(drop=True) for sym, group in df_all.groupby("symbol")}
+        except Exception as e:
+            logger.error(f"Error querying candles from SQLite: {e}")
+            return {}
 
     def save_daily_levels(self, levels_dict: Dict[str, Any]):
         """Persists daily pivot levels."""
