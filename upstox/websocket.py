@@ -179,17 +179,22 @@ class UpstoxWebSocketStreamer:
             if ltp <= 0:
                 return None
 
-            # Parse timestamp (in milliseconds or ISO string)
+            # Parse timestamp (in milliseconds or ISO string) and ensure IST timezone
+            ist_tz = timezone(timedelta(hours=5, minutes=30))
             if ts_ms:
                 try:
                     if isinstance(ts_ms, (int, float)) or str(ts_ms).isdigit():
-                        ts = datetime.fromtimestamp(int(ts_ms) / 1000.0, tz=timezone.utc)
+                        ts = datetime.fromtimestamp(int(ts_ms) / 1000.0, tz=ist_tz)
                     else:
                         ts = datetime.fromisoformat(str(ts_ms))
+                        if ts.tzinfo is not None:
+                            ts = ts.astimezone(ist_tz)
+                        else:
+                            ts = ts.replace(tzinfo=ist_tz)
                 except Exception:
-                    ts = datetime.now(timezone.utc)
+                    ts = datetime.now(ist_tz)
             else:
-                ts = datetime.now(timezone.utc)
+                ts = datetime.now(ist_tz)
 
             return NormalizedTick(
                 instrument_key=key,

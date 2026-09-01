@@ -35,6 +35,7 @@ class DailyPivots:
             "pdl": self.pdl,
             "pdc": self.pdc,
             "pdv": self.pdv,
+            "pp": self.pp,
             "pivot": self.pp,
             "r1": self.r1,
             "r2": self.r2,
