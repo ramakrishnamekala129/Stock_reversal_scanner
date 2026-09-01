@@ -46,6 +46,28 @@ class DailyPivots:
         }
 
 
+def get_pivot_zone(price: float, pivots: DailyPivots) -> str:
+    """
+    Returns the technical pivot zone classification for a given price.
+    """
+    if price >= pivots.r3:
+        return "Above R3 (Breakout)"
+    elif price >= pivots.r2:
+        return "R2 - R3 (Bullish Zone)"
+    elif price >= pivots.r1:
+        return "R1 - R2 (Expansion)"
+    elif price >= pivots.pp:
+        return "PP - R1 (Bullish Bias)"
+    elif price >= pivots.s1:
+        return "S1 - PP (Support Zone)"
+    elif price >= pivots.s2:
+        return "S2 - S1 (Bearish Zone)"
+    elif price >= pivots.s3:
+        return "S3 - S2 (Oversold)"
+    else:
+        return "Below S3 (Breakdown)"
+
+
 def calculate_daily_pivots(
     symbol: str,
     date_str: str,

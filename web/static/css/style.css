@@ -460,6 +460,15 @@ body {
     font-weight: 600;
 }
 
+.badge-zone {
+    background: rgba(99, 102, 241, 0.15);
+    color: #818cf8;
+    border: 1px solid rgba(99, 102, 241, 0.35);
+    font-weight: 600;
+    font-size: 11px;
+    letter-spacing: 0.2px;
+}
+
 .badge-score {
     display: inline-flex;
     align-items: center;

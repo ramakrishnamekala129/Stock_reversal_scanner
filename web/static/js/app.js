@@ -285,7 +285,6 @@ function renderSignalsTable() {
                 timeDisplay = parts[1].split('+')[0].split('.')[0].split('Z')[0];
             }
         }
-
         return `
             <tr>
                 <td class="mono"><strong>${timeDisplay}</strong></td>
@@ -294,13 +293,14 @@ function renderSignalsTable() {
                 <td><span class="badge badge-pattern">${sig.pattern}</span></td>
                 <td class="num"><strong>${formatNumber(sig.price)}</strong></td>
                 <td class="num"><span class="badge-score ${scoreClass}">${scoreVal}</span></td>
-                <td class="num">${formatNumber(sig.pivot)}</td>
+                <td><span class="badge badge-zone">${sig.zone || '--'}</span></td>
+                <td class="num">${formatNumber(sig.pivot || sig.pp)}</td>
                 <td class="num">${formatNumber(sig.pdh)}</td>
                 <td class="num">${formatNumber(sig.pdl)}</td>
                 <td class="num">${formatNumber(sig.r1)}</td>
                 <td class="num">${formatNumber(sig.s1)}</td>
                 <td class="num">${formatNumber(sig.relative_volume)}x</td>
-                <td><div class="tag-list">${condTags}</div></td>
+                <td><div class="tag-list">${condTags || '<span class="tag">Standard Setup</span>'}</div></td>
             </tr>
         `;
     }).join('');
@@ -318,7 +318,7 @@ function renderMarketTable() {
     });
 
     if (items.length === 0) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="16">No instruments found matching search.</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="17">No instruments found matching search.</td></tr>`;
         return;
     }
 
@@ -333,6 +333,7 @@ function renderMarketTable() {
                 <td class="num cell-ltp"><strong>${formatNumber(item.ltp)}</strong></td>
                 <td class="num cell-chg ${chgClass}"><strong>${chgPrefix}${formatNumber(chgVal)}%</strong></td>
                 <td class="num cell-vol">${formatVolume(item.volume)}</td>
+                <td><span class="badge badge-zone">${item.zone || '--'}</span></td>
                 <td class="num"><strong>${formatNumber(item.pp)}</strong></td>
                 <td class="num">${formatNumber(item.r1)}</td>
                 <td class="num">${formatNumber(item.r2)}</td>
@@ -373,8 +374,8 @@ function updateMarketRowCells(row, item, oldPrice) {
     if (volCell && item.volume > 0) {
         volCell.innerText = formatVolume(item.volume);
     }
-    if (timeCell) {
-        timeCell.innerText = item.time || '--';
+    if (timeCell && item.time) {
+        timeCell.innerText = item.time;
     }
 }
 
@@ -421,19 +422,19 @@ function exportCurrentTableToCSV() {
     let rows = [];
 
     if (currentTab === 'signals') {
-        rows.push(['Time', 'Symbol', 'Signal', 'Pattern', 'Price', 'Score', 'Pivot', 'PDH', 'PDL', 'R1', 'S1', 'Rel Vol', 'Conditions']);
+        rows.push(['Time', 'Symbol', 'Signal', 'Pattern', 'Price', 'Score', 'Pivot Zone', 'Pivot (PP)', 'PDH', 'PDL', 'R1', 'S1', 'Rel Vol', 'Conditions & Factors Met']);
         signalsList.forEach(s => {
             rows.push([
                 s.timestamp, s.symbol, s.direction, s.pattern, s.price, s.score,
-                s.pivot, s.pdh, s.pdl, s.r1, s.s1, s.relative_volume,
+                `"${s.zone || ''}"`, s.pivot || s.pp, s.pdh, s.pdl, s.r1, s.s1, s.relative_volume,
                 `"${(s.conditions_met || []).join('; ')}"`
             ]);
         });
     } else {
-        rows.push(['Symbol', 'LTP', 'Change %', 'Volume', 'Pivot', 'R1', 'R2', 'R3', 'S1', 'S2', 'S3', 'PDO', 'PDH', 'PDL', 'PDC', 'Last Updated']);
+        rows.push(['Symbol', 'LTP', 'Change %', 'Volume', 'Pivot Zone', 'Pivot (PP)', 'R1', 'R2', 'R3', 'S1', 'S2', 'S3', 'PDO', 'PDH', 'PDL', 'PDC', 'Last Updated']);
         marketDataMap.forEach(m => {
             rows.push([
-                m.symbol, m.ltp, m.change_pct, m.volume, m.pp, m.r1, m.r2, m.r3,
+                m.symbol, m.ltp, m.change_pct, m.volume, `"${m.zone || ''}"`, m.pp, m.r1, m.r2, m.r3,
                 m.s1, m.s2, m.s3, m.pdo, m.pdh, m.pdl, m.pdc, m.time
             ]);
         });

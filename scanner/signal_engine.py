@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 import config
-from indicators.pivots import DailyPivots, evaluate_pivot_relationship, PivotRelationship
+from indicators.pivots import DailyPivots, evaluate_pivot_relationship, PivotRelationship, get_pivot_zone
 from indicators.volume import calculate_volume_metrics, VolumeMetrics
 from patterns.candlestick import detect_candlestick_patterns, PatternResult
 from scanner.context import determine_market_context
@@ -48,6 +48,7 @@ class SignalEvent:
     relative_volume: float
     volume: int
     conditions_met: List[str]
+    zone: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -57,14 +58,24 @@ class SignalEvent:
             "direction": self.direction,
             "price": self.price,
             "score": self.score,
+            "score_breakdown": self.score_breakdown,
+            "zone": self.zone,
             "pivot": self.pivot,
+            "pp": self.pivot,
+            "pdo": self.pdo,
             "pdh": self.pdh,
             "pdl": self.pdl,
+            "pdc": self.pdc,
+            "pdv": self.pdv,
             "r1": self.r1,
             "r2": self.r2,
+            "r3": self.r3,
             "s1": self.s1,
             "s2": self.s2,
+            "s3": self.s3,
             "relative_volume": self.relative_volume,
+            "volume": self.volume,
+            "conditions_met": self.conditions_met,
         }
 
 
@@ -199,6 +210,7 @@ class SignalEngine:
                 is_actionable = score >= self.min_signal_score
 
             if is_actionable:
+                pivot_zone = get_pivot_zone(curr_close, pivots)
                 signal_event = SignalEvent(
                     symbol=symbol,
                     timestamp=ts,
@@ -207,6 +219,7 @@ class SignalEngine:
                     price=curr_close,
                     score=score,
                     score_breakdown=score_breakdown,
+                    zone=pivot_zone,
                     pdo=pivots.pdo,
                     pdh=pivots.pdh,
                     pdl=pivots.pdl,

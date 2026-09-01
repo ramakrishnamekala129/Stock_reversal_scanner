@@ -132,24 +132,52 @@ class WebDashboardState:
             market_data = []
             for sym, p in sorted(self.pivots.items()):
                 lp = self.live_prices.get(sym, {})
+                ltp = lp.get("ltp", p.get("pdc", 0.0))
+                r3 = p.get("r3", 0.0)
+                r2 = p.get("r2", 0.0)
+                r1 = p.get("r1", 0.0)
+                pp = p.get("pp") or p.get("pivot", 0.0)
+                s1 = p.get("s1", 0.0)
+                s2 = p.get("s2", 0.0)
+                s3 = p.get("s3", 0.0)
+
+                zone = "PP - R1 (Bullish Bias)"
+                if r3 > 0 and ltp >= r3:
+                    zone = "Above R3 (Breakout)"
+                elif r2 > 0 and ltp >= r2:
+                    zone = "R2 - R3 (Bullish Zone)"
+                elif r1 > 0 and ltp >= r1:
+                    zone = "R1 - R2 (Expansion)"
+                elif pp > 0 and ltp >= pp:
+                    zone = "PP - R1 (Bullish Bias)"
+                elif s1 > 0 and ltp >= s1:
+                    zone = "S1 - PP (Support Zone)"
+                elif s2 > 0 and ltp >= s2:
+                    zone = "S2 - S1 (Bearish Zone)"
+                elif s3 > 0 and ltp >= s3:
+                    zone = "S3 - S2 (Oversold)"
+                elif s3 > 0:
+                    zone = "Below S3 (Breakdown)"
+
                 market_data.append({
                     "symbol": sym,
-                    "ltp": lp.get("ltp", p.get("pdc", 0.0)),
+                    "ltp": ltp,
                     "change_pct": lp.get("change_pct", 0.0),
                     "volume": lp.get("volume", p.get("pdv", 0)),
+                    "zone": zone,
                     "time": lp.get("time", "--"),
                     "pdo": p.get("pdo", 0.0),
                     "pdh": p.get("pdh", 0.0),
                     "pdl": p.get("pdl", 0.0),
                     "pdc": p.get("pdc", 0.0),
                     "pdv": p.get("pdv", 0),
-                    "pp": p.get("pp") or p.get("pivot", 0.0),
-                    "r1": p.get("r1", 0.0),
-                    "r2": p.get("r2", 0.0),
-                    "r3": p.get("r3", 0.0),
-                    "s1": p.get("s1", 0.0),
-                    "s2": p.get("s2", 0.0),
-                    "s3": p.get("s3", 0.0),
+                    "pp": pp,
+                    "r1": r1,
+                    "r2": r2,
+                    "r3": r3,
+                    "s1": s1,
+                    "s2": s2,
+                    "s3": s3,
                 })
 
             return {
