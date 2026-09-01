@@ -2,15 +2,16 @@
 Live Excel Updater Module.
 Creates and updates an interactive Excel workbook with:
 - Sheet 1: 'Live_Prices_&_Pivots' (Live prices, previous-day OHLCV, standard daily pivots)
-- Sheet 2: 'Signals' (Live stream of detected reversal & pattern signals)
-Uses win32com Excel automation for live in-place updating when Excel is open,
-and openpyxl for standalone disk persistence.
+- Sheet 2: 'Signals' (All detected reversal & pattern signals in rows)
+Maintains in-memory openpyxl workbook for guaranteed persistence and uses COM automation
+for real-time live window streaming when available.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
 import logging
+import os
 from pathlib import Path
 import threading
 import time
@@ -41,8 +42,12 @@ class LiveExcelManager:
         self.symbol_row_map: Dict[str, int] = {}  # symbol -> 1-based row in Excel
         self._lock = threading.Lock()
 
-        # Cached live price rows for fast updates
-        # symbol -> {ltp, volume, change_pct, updated_at}
+        # In-Memory openpyxl Workbook & Sheets (immune to COM / deactivated license issues)
+        self.wb: Optional[openpyxl.Workbook] = None
+        self.ws1: Optional[openpyxl.worksheet.worksheet.Worksheet] = None
+        self.ws2: Optional[openpyxl.worksheet.worksheet.Worksheet] = None
+
+        # Cached live price updates for COM thread
         self._live_cache: Dict[str, Dict[str, Any]] = {}
         self._signals_cache: List[SignalEvent] = []
 
@@ -61,6 +66,7 @@ class LiveExcelManager:
         """
         self.pivots = pivots_map
         wb = openpyxl.Workbook()
+        self.wb = wb
 
         # Styles
         header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
@@ -81,6 +87,7 @@ class LiveExcelManager:
         ws1 = wb.active
         ws1.title = self.SHEET1_NAME
         ws1.views.sheetView[0].showGridLines = True
+        self.ws1 = ws1
 
         headers1 = [
             "Symbol", "LTP", "Change %", "Volume",
@@ -139,6 +146,7 @@ class LiveExcelManager:
         # -------------------------------------------------------------
         ws2 = wb.create_sheet(title=self.SHEET2_NAME)
         ws2.views.sheetView[0].showGridLines = True
+        self.ws2 = ws2
 
         headers2 = [
             "Time", "Symbol", "Signal", "Pattern", "Price", "Score",
@@ -157,15 +165,8 @@ class LiveExcelManager:
             col_letter = get_column_letter(col[0].column)
             ws2.column_dimensions[col_letter].width = max(max_len + 4, 14)
 
-        # Save template to disk if not already open by Excel
-        self.file_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            wb.save(self.file_path)
-            logger.info(f"Excel workbook template initialized and saved at: {self.file_path.name}")
-        except PermissionError:
-            logger.info("Workbook is currently open in Excel. Attaching live via COM automation...")
-        except Exception as e:
-            logger.warning(f"Could not overwrite Excel template: {e}")
+        # Save initial template to disk
+        self.save_to_disk()
 
         # Start live background updating & COM integration
         if self.auto_open:
@@ -173,7 +174,7 @@ class LiveExcelManager:
 
     def update_price(self, symbol: str, ltp: float, volume: int = 0, timestamp: Optional[datetime] = None):
         """
-        Queues or updates a live price update for a symbol.
+        Updates live price in in-memory openpyxl sheet and queues update for COM thread.
         """
         p = self.pivots.get(symbol)
         pdc = p.pdc if p and p.pdc > 0 else ltp
@@ -181,6 +182,16 @@ class LiveExcelManager:
         time_str = (timestamp or datetime.now()).strftime("%H:%M:%S")
 
         with self._lock:
+            # 1. Update in-memory openpyxl sheet
+            row_num = self.symbol_row_map.get(symbol)
+            if self.ws1 and row_num:
+                self.ws1.cell(row=row_num, column=2, value=ltp)
+                self.ws1.cell(row=row_num, column=3, value=change_pct / 100.0)
+                if volume > 0:
+                    self.ws1.cell(row=row_num, column=4, value=volume)
+                self.ws1.cell(row=row_num, column=17, value=time_str)
+
+            # 2. Queue for COM updater
             self._live_cache[symbol] = {
                 "ltp": ltp,
                 "volume": volume,
@@ -190,10 +201,65 @@ class LiveExcelManager:
 
     def add_signal(self, signal: SignalEvent):
         """
-        Appends an actionable signal row into the Excel sheet.
+        Appends an actionable signal row into both in-memory openpyxl Sheet 2 and COM queue.
         """
+        ts_str = signal.timestamp.strftime("%H:%M:%S") if isinstance(signal.timestamp, datetime) else str(signal.timestamp)
+
+        fill_green = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+        fill_red = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+        font_green = Font(name="Calibri", size=10, bold=True, color="006100")
+        font_red = Font(name="Calibri", size=10, bold=True, color="9C0006")
+
         with self._lock:
+            # 1. Append directly to in-memory openpyxl Sheet 2
+            if self.ws2:
+                self.ws2.append([
+                    ts_str,
+                    signal.symbol,
+                    signal.direction,
+                    signal.pattern,
+                    round(signal.price, 2),
+                    signal.score,
+                    round(signal.pivot, 2),
+                    round(signal.pdh, 2),
+                    round(signal.pdl, 2),
+                    round(signal.r1, 2),
+                    round(signal.s1, 2),
+                    round(signal.relative_volume, 2),
+                    ", ".join(signal.conditions_met),
+                ])
+                row_idx = self.ws2.max_row
+                cell_sig = self.ws2.cell(row=row_idx, column=3)
+                if "BULLISH" in signal.direction:
+                    cell_sig.fill = fill_green
+                    cell_sig.font = font_green
+                elif "BEARISH" in signal.direction:
+                    cell_sig.fill = fill_red
+                    cell_sig.font = font_red
+
+            # 2. Queue for COM
             self._signals_cache.append(signal)
+
+    def save_to_disk(self):
+        """
+        Saves the current in-memory openpyxl workbook directly to disk.
+        """
+        if not self.wb:
+            return
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.wb.save(self.file_path)
+            logger.debug(f"Excel workbook saved to: {self.file_path.name}")
+        except PermissionError:
+            # If Excel currently has the file open and locked, save to parallel updated file
+            alt_path = self.file_path.with_name(f"{self.file_path.stem}_all_signals.xlsx")
+            try:
+                self.wb.save(alt_path)
+                logger.info(f"Primary file open in Excel. Saved updated copy to: {alt_path.name}")
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug(f"Could not save workbook to disk: {e}")
 
     def _start_live_updater_thread(self):
         """
@@ -206,7 +272,6 @@ class LiveExcelManager:
     def _com_updater_loop(self):
         """
         Background loop using win32com to update open Excel cells live.
-        Resilient against Excel cell edit mode and transient COM busy errors.
         """
         import pythoncom
         pythoncom.CoInitialize()
@@ -263,7 +328,7 @@ class LiveExcelManager:
                 next_signal_row = 2
 
             while not self._stop_com_thread:
-                # 1. Flush Price Updates
+                # 1. Flush Price Updates to COM
                 updates_to_push = {}
                 with self._lock:
                     if self._live_cache:
@@ -281,10 +346,9 @@ class LiveExcelManager:
                                     self._sheet1_com.Cells(row_num, 4).Value = data["volume"]
                                 self._sheet1_com.Cells(row_num, 17).Value = data["time"]
                             except Exception:
-                                # Cell edit mode or temporary COM busy - ignore and retry next cycle
                                 pass
 
-                # 2. Flush Signals
+                # 2. Flush Signals to COM
                 signals_to_push = []
                 with self._lock:
                     if self._signals_cache:
@@ -320,9 +384,7 @@ class LiveExcelManager:
 
                             next_signal_row += 1
                         except Exception:
-                            # Re-queue signal if COM write was interrupted
-                            with self._lock:
-                                self._signals_cache.append(sig)
+                            pass
 
                 time.sleep(config.EXCEL_UPDATE_INTERVAL_SECONDS)
 
@@ -331,68 +393,11 @@ class LiveExcelManager:
         finally:
             pythoncom.CoUninitialize()
 
-    def save_all_signals_to_file(self):
-        """
-        Loads workbook from disk via openpyxl and persists any signals directly to Sheet 2.
-        """
-        if not self.file_path.exists():
-            return
-        try:
-            wb = openpyxl.load_workbook(self.file_path)
-            if self.SHEET2_NAME not in wb.sheetnames:
-                return
-            ws2 = wb[self.SHEET2_NAME]
-
-            fill_green = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-            fill_red = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-            font_green = Font(name="Calibri", size=10, bold=True, color="006100")
-            font_red = Font(name="Calibri", size=10, bold=True, color="9C0006")
-
-            with self._lock:
-                pending = list(self._signals_cache)
-
-            for sig in pending:
-                ts_str = sig.timestamp.strftime("%H:%M:%S") if isinstance(sig.timestamp, datetime) else str(sig.timestamp)
-                ws2.append([
-                    ts_str,
-                    sig.symbol,
-                    sig.direction,
-                    sig.pattern,
-                    round(sig.price, 2),
-                    sig.score,
-                    round(sig.pivot, 2),
-                    round(sig.pdh, 2),
-                    round(sig.pdl, 2),
-                    round(sig.r1, 2),
-                    round(sig.s1, 2),
-                    round(sig.relative_volume, 2),
-                    ", ".join(sig.conditions_met),
-                ])
-                row_num = ws2.max_row
-                cell_sig = ws2.cell(row=row_num, column=3)
-                if "BULLISH" in sig.direction:
-                    cell_sig.fill = fill_green
-                    cell_sig.font = font_green
-                elif "BEARISH" in sig.direction:
-                    cell_sig.fill = fill_red
-                    cell_sig.font = font_red
-
-            wb.save(self.file_path)
-        except Exception as e:
-            logger.debug(f"Error saving signals to disk: {e}")
-
     def close(self):
-        """Stops live updater and saves workbook cleanly."""
+        """Stops live updater and saves in-memory workbook to disk."""
         self._stop_com_thread = True
         if self._bg_thread and self._bg_thread.is_alive():
             self._bg_thread.join(timeout=2.0)
 
-        # Save via COM if workbook was open
-        try:
-            if self._workbook_com:
-                self._workbook_com.Save()
-        except Exception:
-            pass
-
-        # Also ensure saved to disk file
-        self.save_all_signals_to_file()
+        # Final disk save
+        self.save_to_disk()
