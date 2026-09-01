@@ -24,12 +24,20 @@ class DatabaseRepository:
 
     def _get_connection(self) -> sqlite3.Connection:
         if not hasattr(self._local, "conn") or self._local.conn is None:
-            self._local.conn = sqlite3.connect(
+            conn = sqlite3.connect(
                 str(self.db_path),
                 check_same_thread=False,
                 timeout=30.0,
             )
-            self._local.conn.row_factory = sqlite3.Row
+            conn.row_factory = sqlite3.Row
+            try:
+                conn.execute("PRAGMA journal_mode = WAL;")
+                conn.execute("PRAGMA synchronous = NORMAL;")
+                conn.execute("PRAGMA cache_size = -64000;")
+                conn.execute("PRAGMA temp_store = MEMORY;")
+            except Exception:
+                pass
+            self._local.conn = conn
         return self._local.conn
 
     def init_schema(self):
@@ -171,3 +179,43 @@ class DatabaseRepository:
                 """, signal_dict)
         except Exception as e:
             logger.error(f"DB error saving signal: {e}")
+
+    def get_top_signals(self, min_score: int = 4, limit: int = 100) -> List[Dict[str, Any]]:
+        """Returns highest scored reversal setups ordered by timestamp descending."""
+        conn = self._get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM scanner_signals
+            WHERE score >= ?
+            ORDER BY timestamp DESC, score DESC
+            LIMIT ?
+        """, (min_score, limit))
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_signals_by_symbol(self, symbol: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """Returns all reversal signals for a specific symbol."""
+        conn = self._get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM scanner_signals
+            WHERE symbol = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (symbol.upper(), limit))
+        return [dict(row) for row in cur.fetchall()]
+
+    def get_signal_stats(self) -> Dict[str, Any]:
+        """Returns aggregated signal counts grouped by direction and pattern."""
+        conn = self._get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                COUNT(*) as total_signals,
+                SUM(CASE WHEN direction LIKE '%BULLISH%' THEN 1 ELSE 0 END) as bullish_count,
+                SUM(CASE WHEN direction LIKE '%BEARISH%' THEN 1 ELSE 0 END) as bearish_count,
+                AVG(score) as avg_score,
+                MAX(score) as max_score
+            FROM scanner_signals
+        """)
+        row = cur.fetchone()
+        return dict(row) if row else {}
