@@ -88,7 +88,7 @@ class WebDashboardState:
     def add_signal(self, signal: Any):
         """Appends a new detected signal and broadcasts to WebSockets."""
         sig_dict = signal.to_dict() if hasattr(signal, "to_dict") else dict(signal)
-        # Format signal timestamp in IST if it is a datetime object
+        # Format signal timestamp in IST as HH:MM:SS
         ts_val = sig_dict.get("timestamp")
         if isinstance(ts_val, datetime):
             if ts_val.tzinfo is None:
@@ -96,6 +96,14 @@ class WebDashboardState:
             else:
                 ts_val = ts_val.astimezone(IST_TZ)
             sig_dict["timestamp"] = ts_val.strftime("%H:%M:%S")
+        elif isinstance(ts_val, str) and "T" in ts_val:
+            try:
+                dt = datetime.fromisoformat(ts_val)
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(IST_TZ)
+                sig_dict["timestamp"] = dt.strftime("%H:%M:%S")
+            except Exception:
+                pass
 
         with self._lock:
             self.signals.insert(0, sig_dict)  # Newest first

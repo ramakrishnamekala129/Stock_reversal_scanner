@@ -75,10 +75,7 @@ class UpstoxWebSocketStreamer:
         self.streamer.on(MarketDataStreamerV3.Event["ERROR"], self._handle_error)
         self.streamer.on(MarketDataStreamerV3.Event["CLOSE"], self._handle_close)
         self.streamer.on(MarketDataStreamerV3.Event["RECONNECTING"], self._handle_reconnecting)
-        self.streamer.on(MarketDataStreamerV3.Event["AUTO_RECONNECT_STOPPED"], self._handle_reconnect_stopped)
-
-        # Connect synchronously/starts background thread
-        self.streamer.auto_reconnect(True, 10, 5)
+        # Connect streamer
         self.streamer.connect()
 
     def disconnect(self):

@@ -198,6 +198,11 @@ function handlePriceTick(tick) {
         if (row) {
             updateMarketRowCells(row, existing, oldPrice);
         }
+
+        const note = document.getElementById('lastUpdatedNote');
+        if (note && tick.time) {
+            note.innerText = `Last sync: ${tick.time}`;
+        }
     }
 }
 
@@ -273,9 +278,17 @@ function renderSignalsTable() {
 
         const condTags = (sig.conditions_met || []).map(c => `<span class="tag">${c}</span>`).join('');
 
+        let timeDisplay = sig.timestamp || '--';
+        if (typeof timeDisplay === 'string' && timeDisplay.includes('T')) {
+            const parts = timeDisplay.split('T');
+            if (parts.length > 1) {
+                timeDisplay = parts[1].split('+')[0].split('.')[0].split('Z')[0];
+            }
+        }
+
         return `
             <tr>
-                <td class="mono">${sig.timestamp || '--'}</td>
+                <td class="mono"><strong>${timeDisplay}</strong></td>
                 <td><strong>${sig.symbol}</strong></td>
                 <td><span class="badge ${badgeClass}">${sig.direction}</span></td>
                 <td><span class="badge badge-pattern">${sig.pattern}</span></td>
