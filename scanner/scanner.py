@@ -48,7 +48,7 @@ class FNOIntradayScanner:
         self._universe: Dict[str, dict] = {}
         self._is_running = False
 
-    def startup(self, force_refresh: bool = False):
+    def startup(self, force_refresh: bool = False, symbols: Optional[List[str]] = None):
         """
         Executes complete application startup sequence.
         """
@@ -61,6 +61,10 @@ class FNOIntradayScanner:
 
         # 2. Load NSE F&O Universe
         self._universe = self.instrument_mgr.load_fno_universe(force_refresh=force_refresh)
+        if symbols:
+            symbols_set = set(symbols)
+            self._universe = {k: v for k, v in self._universe.items() if k in symbols_set}
+
         fno_count = len(self._universe)
         if fno_count == 0:
             logger.error("No F&O instruments discovered! Exiting startup.")

@@ -58,7 +58,7 @@ def main():
     auth = UpstoxAuth()
     scanner = FNOIntradayScanner(auth=auth)
 
-    success = scanner.startup(force_refresh=args.refresh_cache)
+    success = scanner.startup(force_refresh=args.refresh_cache, symbols=args.symbols)
     if not success:
         logger.error("Failed to start scanner.")
         sys.exit(1)

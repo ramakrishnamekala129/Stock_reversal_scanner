@@ -136,55 +136,13 @@ class HistoricalDataLoader:
         universe: Dict[str, Dict[str, Any]],
     ) -> Dict[str, pd.DataFrame]:
         """
-        Loads today's historical 1-minute candles and aggregates them into 5-minute OHLCV DataFrames.
+        Loads today's official broker-side 5-minute historical candles.
         Provides historical candle lookback at startup.
         """
-        logger.info("Loading initial 5-minute historical candles for today's session...")
-        dfs: Dict[str, pd.DataFrame] = {}
-        kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
-
-        def _fetch_and_aggregate(symbol: str, item: Dict[str, Any]) -> Optional[pd.DataFrame]:
-            inst_key = item["instrument_key"]
-            raw_1m = self.rest_client.get_intraday_1m_candles(inst_key)
-            if not raw_1m:
-                return None
-
-            # Build DataFrame
-            records = []
-            for c in raw_1m:
-                # Upstox format: [ts, open, high, low, close, volume, oi]
-                ts = pd.to_datetime(c[0])
-                if ts.tzinfo is None:
-                    ts = ts.tz_localize("UTC").tz_convert(kolkata_tz)
-                else:
-                    ts = ts.tz_convert(kolkata_tz)
-
-                records.append({
-                    "timestamp": ts,
-                    "open": float(c[1]),
-                    "high": float(c[2]),
-                    "low": float(c[3]),
-                    "close": float(c[4]),
-                    "volume": int(c[5]),
-                })
-
-            if not records:
-                return None
-
-            df_1m = pd.DataFrame(records).sort_values("timestamp").set_index("timestamp")
-            
-            # Resample into 5-minute candles aligned to market open 09:15
-            # origin='start_day', offset='15min' aligns boundaries 09:15, 09:20, etc.
-            df_5m = df_1m.resample("5min", origin="start_day", offset="15min").agg({
-                "open": "first",
-                "high": "max",
-                "low": "min",
-                "close": "last",
-                "volume": "sum",
-            }).dropna()
-
-            df_5m = df_5m.reset_index()
-            return df_5m
+        logger.info("Loading initial 5-minute historical candles directly from broker...")
+        dfs = self.refresh_latest_broker_candles(universe)
+        logger.info(f"Loaded 5M broker DataFrames for {len(dfs)} symbols.")
+        return dfs
 
     def load_symbol_broker_5m(self, symbol: str, instrument_key: str) -> Optional[pd.DataFrame]:
         """
