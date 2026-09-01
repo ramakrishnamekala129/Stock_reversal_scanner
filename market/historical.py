@@ -43,28 +43,27 @@ class PreviousDayOHLCV:
 
 class AsyncUpstoxRateLimiter:
     """
-    Token bucket / leaky bucket rate limiter enforcing Upstox API rate limits.
-    Default: 25 requests/second (Upstox Market Data tier).
-    Non-blocking: computes future time slot inside lock, sleeps outside lock.
+    Token bucket rate limiter strictly enforcing Upstox max 25 requests/second limit.
+    Enables initial burst capacity up to 25 and continuous smooth token refill at 25 req/sec.
     """
-    def __init__(self, rate_per_sec: int = 25):
-        self.rate_per_sec = max(1, rate_per_sec)
-        self.interval = 1.0 / float(self.rate_per_sec)
+    def __init__(self, rate_per_sec: float = 25.0, burst_capacity: float = 25.0):
+        self.rate = float(rate_per_sec)
+        self.capacity = float(burst_capacity)
+        self.tokens = float(burst_capacity)
+        self.last_update = time.monotonic()
         self._lock = asyncio.Lock()
-        self._next_time = 0.0
 
     async def acquire(self):
-        async with self._lock:
-            loop = asyncio.get_running_loop()
-            now = loop.time()
-            if self._next_time <= now:
-                self._next_time = now + self.interval
-                wait_time = 0.0
-            else:
-                wait_time = self._next_time - now
-                self._next_time += self.interval
-
-        if wait_time > 0:
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                elapsed = now - self.last_update
+                self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+                self.last_update = now
+                if self.tokens >= 1.0:
+                    self.tokens -= 1.0
+                    return
+                wait_time = (1.0 - self.tokens) / self.rate
             await asyncio.sleep(wait_time)
 
 
@@ -294,7 +293,7 @@ class HistoricalDataLoader:
             async with httpx.AsyncClient(
                 headers=headers,
                 timeout=10.0,
-                limits=httpx.Limits(max_connections=50, max_keepalive_connections=25),
+                limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
             ) as client:
                 async def _fetch_one(sym: str, item: Dict[str, Any]):
                     inst_key = item["instrument_key"]
