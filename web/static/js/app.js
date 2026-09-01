@@ -242,6 +242,20 @@ function updateStatsHeader(stats) {
 // ==========================================================================
 // 4. Table Builders
 // ==========================================================================
+let signalFilterDirection = 'ALL';
+let signalFilterPattern = 'ALL';
+let signalFilterCpr = 'ALL';
+let marketFilterCpr = 'ALL';
+let searchQuery = '';
+
+function applySignalFilters() {
+    signalFilterDirection = document.getElementById('signalDirectionFilter').value;
+    signalFilterPattern = document.getElementById('signalPatternFilter').value;
+    const cprEl = document.getElementById('signalCprFilter');
+    signalFilterCpr = cprEl ? cprEl.value : 'ALL';
+    renderSignalsTable();
+}
+
 function renderSignalsTable() {
     const tbody = document.getElementById('signalsTableBody');
     if (!tbody) return;
@@ -255,6 +269,14 @@ function renderSignalsTable() {
         if (signalFilterPattern !== 'ALL') {
             if (sig.pattern !== signalFilterPattern) return false;
         }
+        // Filter by CPR / Trap
+        if (signalFilterCpr === 'NARROW') {
+            const hasNarrow = (sig.conditions_met || []).some(c => c.includes('Narrow CPR')) || (sig.zone || '').includes('Narrow CPR');
+            if (!hasNarrow) return false;
+        } else if (signalFilterCpr === 'TRAP') {
+            if (!(sig.zone || '').includes('Trap')) return false;
+        }
+
         // Search Query
         if (searchQuery) {
             const q = searchQuery.toUpperCase();
@@ -264,7 +286,7 @@ function renderSignalsTable() {
     });
 
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="13">No matching signals detected yet.</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="14">No matching signals detected.</td></tr>`;
         return;
     }
 
@@ -276,7 +298,12 @@ function renderSignalsTable() {
         if (scoreVal >= 7) scoreClass = 'score-high';
         else if (scoreVal <= 0) scoreClass = 'score-bearish';
 
-        const condTags = (sig.conditions_met || []).map(c => `<span class="tag">${c}</span>`).join('');
+        const condTags = (sig.conditions_met || []).map(c => {
+            const isNarrow = c.includes('Narrow CPR');
+            const isTrap = c.includes('Trap');
+            const tagClass = isNarrow ? 'tag tag-narrow' : isTrap ? 'tag tag-trap' : 'tag';
+            return `<span class="${tagClass}">${c}</span>`;
+        }).join('');
 
         let timeDisplay = sig.timestamp || '--';
         if (typeof timeDisplay === 'string' && timeDisplay.includes('T')) {
@@ -310,7 +337,17 @@ function renderMarketTable() {
     const tbody = document.getElementById('marketTableBody');
     if (!tbody) return;
 
+    const mCprEl = document.getElementById('marketCprFilter');
+    marketFilterCpr = mCprEl ? mCprEl.value : 'ALL';
+
     const items = Array.from(marketDataMap.values()).filter(item => {
+        // CPR Filter
+        if (marketFilterCpr === 'NARROW') {
+            if ((item.cpr_width_pct || 0) > 0.10) return false;
+        } else if (marketFilterCpr === 'TRAP') {
+            if (!(item.zone || '').includes('Trap')) return false;
+        }
+
         if (searchQuery) {
             return (item.symbol || '').includes(searchQuery.toUpperCase());
         }
@@ -318,7 +355,7 @@ function renderMarketTable() {
     });
 
     if (items.length === 0) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="20">No instruments found matching search.</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="20">No instruments found matching criteria.</td></tr>`;
         return;
     }
 
@@ -327,7 +364,12 @@ function renderMarketTable() {
         const chgClass = chgVal > 0 ? 'val-pos' : chgVal < 0 ? 'val-neg' : '';
         const chgPrefix = chgVal > 0 ? '+' : '';
         const cprWidth = item.cpr_width_pct || 0;
-        const cprClass = cprWidth <= 0.25 ? 'val-pos' : cprWidth >= 0.6 ? 'val-neg' : '';
+        const isNarrow = cprWidth <= 0.10;
+
+        let cprDisplay = `${formatNumber(cprWidth)}%`;
+        if (isNarrow) {
+            cprDisplay = `<span class="badge badge-narrow">⚡ ${formatNumber(cprWidth)}% (Narrow)</span>`;
+        }
 
         return `
             <tr id="market-row-${item.symbol}">
@@ -339,7 +381,7 @@ function renderMarketTable() {
                 <td class="num"><strong>${formatNumber(item.pp)}</strong></td>
                 <td class="num">${formatNumber(item.tc)}</td>
                 <td class="num">${formatNumber(item.bc)}</td>
-                <td class="num ${cprClass}">${formatNumber(cprWidth)}%</td>
+                <td class="num">${cprDisplay}</td>
                 <td class="num">${formatNumber(item.r1)}</td>
                 <td class="num">${formatNumber(item.r2)}</td>
                 <td class="num">${formatNumber(item.r3)}</td>
@@ -393,16 +435,19 @@ function switchTab(tabName) {
     document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
 
     const signalFilters = document.getElementById('signalFilters');
+    const marketFilters = document.getElementById('marketFilters');
 
     if (tabName === 'signals') {
         document.getElementById('tabBtnSignals').classList.add('active');
         document.getElementById('tabSignals').classList.add('active');
         if (signalFilters) signalFilters.style.display = 'flex';
+        if (marketFilters) marketFilters.style.display = 'none';
         renderSignalsTable();
     } else {
         document.getElementById('tabBtnMarket').classList.add('active');
         document.getElementById('tabMarket').classList.add('active');
         if (signalFilters) signalFilters.style.display = 'none';
+        if (marketFilters) marketFilters.style.display = 'flex';
         renderMarketTable();
     }
 }
@@ -414,12 +459,6 @@ function handleSearch(val) {
     } else {
         renderMarketTable();
     }
-}
-
-function applySignalFilters() {
-    signalFilterDirection = document.getElementById('signalDirectionFilter').value;
-    signalFilterPattern = document.getElementById('signalPatternFilter').value;
-    renderSignalsTable();
 }
 
 function exportCurrentTableToCSV() {

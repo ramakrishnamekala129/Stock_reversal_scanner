@@ -24,6 +24,7 @@ class DailyPivots:
     cpr_top: float     # max(tc, bc)
     cpr_bottom: float  # min(tc, bc)
     cpr_width_pct: float  # abs(tc - bc) / pp * 100
+    is_narrow_cpr: bool   # CPR width <= 0.10%
 
     r1: float   # Resistance 1
     r2: float   # Resistance 2
@@ -54,6 +55,7 @@ class DailyPivots:
             "cpr_top": self.cpr_top,
             "cpr_bottom": self.cpr_bottom,
             "cpr_width_pct": self.cpr_width_pct,
+            "is_narrow_cpr": self.is_narrow_cpr,
             "r1": self.r1,
             "r2": self.r2,
             "r3": self.r3,
@@ -72,7 +74,7 @@ def get_pivot_zone(price: float, pivots: DailyPivots) -> str:
     Returns high-precision technical zone classification including:
     - Bull Trap Zone (R1 - PDH Resistance)
     - Bear Trap Zone (S1 - PDL Support)
-    - Central Pivot Range (Inside CPR)
+    - Central Pivot Range (Inside Narrow CPR / CPR Base)
     - Standard Expansion / Breakout levels
     """
     # 1. Check Bull Trap Zone (R1 & PDH Confluence)
@@ -85,6 +87,8 @@ def get_pivot_zone(price: float, pivots: DailyPivots) -> str:
 
     # 3. Check CPR Zone (Central Pivot Range)
     if pivots.cpr_bottom <= price <= pivots.cpr_top:
+        if pivots.is_narrow_cpr:
+            return "Inside Narrow CPR (<0.1%)"
         return "Inside CPR Zone (Choppy / Base)"
 
     # 4. Expansion / Breakout Levels
@@ -95,7 +99,7 @@ def get_pivot_zone(price: float, pivots: DailyPivots) -> str:
     elif price > pivots.bull_trap_top:
         return "Above R1/PDH (Strong Bullish)"
     elif price >= pivots.pp:
-        return "PP - R1 (Bullish Bias)"
+        return "PP - R1 (Bullish Territory)"
     elif price < pivots.bear_trap_bottom:
         return "Below S1/PDL (Strong Breakdown)"
     elif price <= pivots.s2:
@@ -115,6 +119,7 @@ def calculate_daily_pivots(
 ) -> DailyPivots:
     """
     Calculates Standard Floor Pivots, Central Pivot Range (CPR), and Trap Zones.
+    Narrow CPR is flagged when CPR width <= 0.10% of price.
     PP = (H + L + C) / 3
     BC = (H + L) / 2
     TC = (PP - BC) + PP
@@ -126,6 +131,7 @@ def calculate_daily_pivots(
     cpr_top = max(tc, bc)
     cpr_bottom = min(tc, bc)
     cpr_width = round((abs(tc - bc) / pp) * 100.0, 3) if pp > 0 else 0.0
+    is_narrow_cpr = cpr_width <= 0.10
 
     r1 = round(2.0 * pp - low_p, 2)
     s1 = round(2.0 * pp - high_p, 2)
@@ -156,6 +162,7 @@ def calculate_daily_pivots(
         cpr_top=cpr_top,
         cpr_bottom=cpr_bottom,
         cpr_width_pct=cpr_width,
+        is_narrow_cpr=is_narrow_cpr,
         r1=r1,
         r2=r2,
         r3=r3,

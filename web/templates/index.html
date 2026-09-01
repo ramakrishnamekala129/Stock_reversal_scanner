@@ -96,6 +96,20 @@
                         <option value="INVERSE HAMMER">Inverse Hammer</option>
                         <option value="HANGING MAN">Hanging Man</option>
                     </select>
+                    <select id="signalCprFilter" onchange="applySignalFilters()">
+                        <option value="ALL">All CPR Types</option>
+                        <option value="NARROW">⚡ Narrow CPR (<= 0.1%) Only</option>
+                        <option value="TRAP">🪤 Trap Zones Only</option>
+                    </select>
+                </div>
+
+                <!-- Market Filter Options (Visible on Market Tab) -->
+                <div class="filter-group" id="marketFilters" style="display: none;">
+                    <select id="marketCprFilter" onchange="renderMarketTable()">
+                        <option value="ALL">All 210 F&O Stocks</option>
+                        <option value="NARROW">⚡ Narrow CPR (<= 0.1%) Trending Stocks</option>
+                        <option value="TRAP">🪤 Active in Trap Zones</option>
+                    </select>
                 </div>
 
                 <!-- Export Button -->

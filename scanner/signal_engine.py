@@ -205,7 +205,17 @@ class SignalEngine:
 
             # 3. CPR (Central Pivot Range) Confluence
             if pivots.cpr_bottom <= curr_close <= pivots.cpr_top:
-                conditions_met.append("🎯 Inside CPR Zone")
+                if pivots.is_narrow_cpr:
+                    conditions_met.append("⚡ Inside Narrow CPR (<0.1%)")
+                else:
+                    conditions_met.append("🎯 Inside CPR Zone")
+
+            # 4. Narrow CPR Trending Day Candidate (< 0.10% width)
+            if pivots.is_narrow_cpr:
+                w = 2
+                score += (w if pat.pattern_direction == "BULLISH" else -w)
+                score_breakdown.append(f"Narrow CPR ({pivots.cpr_width_pct}% <= 0.1%) ({w:+d})")
+                conditions_met.append(f"⚡ Narrow CPR ({pivots.cpr_width_pct}%)")
 
             # Near support bounce check for Hammer / Reversals
             if abs(curr_low - pivots.s1) / pivots.s1 < 0.003 and curr_close > pivots.s1:

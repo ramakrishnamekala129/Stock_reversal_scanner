@@ -518,6 +518,29 @@ body {
     border-radius: 4px;
     font-size: 10px;
     color: #93c5fd;
+    white-space: nowrap;
+}
+
+.tag-narrow {
+    background: rgba(234, 179, 8, 0.15) !important;
+    border-color: rgba(234, 179, 8, 0.4) !important;
+    color: #facc15 !important;
+    font-weight: 700;
+}
+
+.tag-trap {
+    background: rgba(244, 63, 94, 0.15) !important;
+    border-color: rgba(244, 63, 94, 0.4) !important;
+    color: #fb7185 !important;
+    font-weight: 700;
+}
+
+.badge-narrow {
+    background: rgba(234, 179, 8, 0.18);
+    color: #fde047;
+    border: 1px solid rgba(234, 179, 8, 0.45);
+    font-weight: 700;
+    font-size: 11px;
 }
 
 .val-pos {
