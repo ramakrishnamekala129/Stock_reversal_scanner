@@ -1,19 +1,29 @@
-"""
-FastAPI Server Runner.
-Runs Uvicorn server in a background thread and opens the browser.
-"""
-
-from __future__ import annotations
-
 import logging
+import socket
 import threading
 import time
+from typing import Optional
 import webbrowser
 import uvicorn
 
 import config
 
 logger = logging.getLogger(__name__)
+
+
+def is_port_in_use(host: str, port: int) -> bool:
+    """Checks if a TCP port is already open/bound on the host."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex((host, port)) == 0
+
+
+def find_available_port(host: str, start_port: int = 8000, max_attempts: int = 20) -> int:
+    """Finds the next available port starting from start_port."""
+    for p in range(start_port, start_port + max_attempts):
+        if not is_port_in_use(host, p):
+            return p
+    return start_port
 
 
 class WebServerManager:
@@ -28,6 +38,12 @@ class WebServerManager:
 
     def start(self):
         """Starts Uvicorn server in a background thread."""
+        if is_port_in_use(self.host, self.port):
+            free_port = find_available_port(self.host, self.port + 1)
+            logger.warning(f"Port {self.port} in use. Switching to port {free_port}.")
+            self.port = free_port
+            config.WEB_PORT = free_port
+
         server_config = uvicorn.Config(
             "web.app:app",
             host=self.host,

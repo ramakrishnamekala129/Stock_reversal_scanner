@@ -10,6 +10,8 @@ echo Starting scanner and launching FastAPI Web Dashboard...
 echo Web Dashboard URL: http://127.0.0.1:8000
 echo.
 
+powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
+
 python main.py %*
 
 if %ERRORLEVEL% NEQ 0 (
