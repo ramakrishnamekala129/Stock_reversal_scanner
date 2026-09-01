@@ -211,6 +211,9 @@ class SignalEngine:
             candle_touches_bear_trap = (curr_low <= pivots.bear_trap_top and curr_high >= pivots.bear_trap_bottom)
             if candle_touches_bear_trap and not is_bearish:
                 w = 3
+                if pivots.is_narrow_bear_trap:
+                    w += 1
+                    conditions_met.append(f"⚡ Narrow Bear Trap ({pivots.bear_trap_width_pct:.2f}%)")
                 score += w
                 score_breakdown.append(f"Bear Trap S1-PDL Touch & Bounce (+{w})")
                 conditions_met.append("🪤 Bear Trap Reversal (S1-PDL)")
@@ -219,6 +222,9 @@ class SignalEngine:
             candle_touches_bull_trap = (curr_high >= pivots.bull_trap_bottom and curr_low <= pivots.bull_trap_top)
             if candle_touches_bull_trap and is_bearish:
                 w = 3
+                if pivots.is_narrow_bull_trap:
+                    w += 1
+                    conditions_met.append(f"⚡ Narrow Bull Trap ({pivots.bull_trap_width_pct:.2f}%)")
                 score += w
                 score_breakdown.append(f"Bull Trap R1-PDH Touch & Rejection (+{w})")
                 conditions_met.append("🪤 Bull Trap Rejection (R1-PDH)")
