@@ -206,15 +206,28 @@ class LiveExcelManager:
     def _com_updater_loop(self):
         """
         Background loop using win32com to update open Excel cells live.
+        Resilient against Excel cell edit mode and transient COM busy errors.
         """
         import pythoncom
         pythoncom.CoInitialize()
 
         try:
             import win32com.client
-            self._excel_app = win32com.client.Dispatch("Excel.Application")
-            self._excel_app.Visible = True
-            self._excel_app.DisplayAlerts = False
+            try:
+                self._excel_app = win32com.client.Dispatch("Excel.Application")
+            except Exception as e:
+                logger.debug(f"Could not dispatch Excel application: {e}")
+                return
+
+            try:
+                self._excel_app.Visible = True
+            except Exception:
+                pass
+
+            try:
+                self._excel_app.DisplayAlerts = False
+            except Exception:
+                pass
 
             # Check if workbook is already open in Excel, else Open it
             abs_path = str(self.file_path.resolve())
@@ -227,18 +240,26 @@ class LiveExcelManager:
             except Exception:
                 pass
 
-            if wb_found:
-                self._workbook_com = wb_found
-            else:
-                self._workbook_com = self._excel_app.Workbooks.Open(abs_path)
+            try:
+                if wb_found:
+                    self._workbook_com = wb_found
+                else:
+                    self._workbook_com = self._excel_app.Workbooks.Open(abs_path)
 
-            self._sheet1_com = self._workbook_com.Worksheets(self.SHEET1_NAME)
-            self._sheet2_com = self._workbook_com.Worksheets(self.SHEET2_NAME)
-            self._com_initialized = True
-            logger.info("Live Excel window connected via COM automation.")
+                self._sheet1_com = self._workbook_com.Worksheets(self.SHEET1_NAME)
+                self._sheet2_com = self._workbook_com.Worksheets(self.SHEET2_NAME)
+                self._com_initialized = True
+                logger.info("Live Excel window connected via COM automation.")
+            except Exception as e:
+                logger.debug(f"Could not attach sheets via COM: {e}")
+                return
 
-            next_signal_row = self._sheet2_com.UsedRange.Rows.Count + 1
-            if next_signal_row < 2:
+            next_signal_row = 2
+            try:
+                next_signal_row = self._sheet2_com.UsedRange.Rows.Count + 1
+                if next_signal_row < 2:
+                    next_signal_row = 2
+            except Exception:
                 next_signal_row = 2
 
             while not self._stop_com_thread:
@@ -260,6 +281,7 @@ class LiveExcelManager:
                                     self._sheet1_com.Cells(row_num, 4).Value = data["volume"]
                                 self._sheet1_com.Cells(row_num, 17).Value = data["time"]
                             except Exception:
+                                # Cell edit mode or temporary COM busy - ignore and retry next cycle
                                 pass
 
                 # 2. Flush Signals
@@ -297,13 +319,15 @@ class LiveExcelManager:
                                 cell_sig.Font.Color = 0x9C0006      # Dark Red Text
 
                             next_signal_row += 1
-                        except Exception as e:
-                            logger.debug(f"Error appending signal to Excel COM: {e}")
+                        except Exception:
+                            # Re-queue signal if COM write was interrupted
+                            with self._lock:
+                                self._signals_cache.append(sig)
 
                 time.sleep(config.EXCEL_UPDATE_INTERVAL_SECONDS)
 
         except Exception as e:
-            logger.warning(f"Excel COM automation not available or closed: {e}")
+            logger.debug(f"Excel COM background loop note: {e}")
         finally:
             pythoncom.CoUninitialize()
 
