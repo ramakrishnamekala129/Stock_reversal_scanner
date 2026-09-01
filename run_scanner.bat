@@ -5,12 +5,9 @@ cd /d "%~dp0"
 echo ============================================================
 echo   UPSTOX 5-MINUTE F^&O INTRADAY REVERSAL SCANNER
 echo ============================================================
+echo Starting scanner and launching Native Tkinter Desktop Dashboard...
+echo Mode: Native Desktop GUI (Tab 1: Reversal Signals | Tab 2: 210 Market Pivots)
 echo.
-echo Starting scanner and launching FastAPI Web Dashboard...
-echo Web Dashboard URL: http://127.0.0.1:8000
-echo.
-
-powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
 
 python main.py %*
 

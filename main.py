@@ -6,6 +6,7 @@ Backend Only - No UI.
 import argparse
 import logging
 import sys
+import threading
 import time
 
 # Ensure UTF-8 output encoding on Windows consoles
@@ -59,6 +60,16 @@ def parse_args():
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Set logging verbosity level.",
     )
+    parser.add_argument(
+        "--no-gui",
+        action="store_true",
+        help="Run without desktop GUI (console terminal only).",
+    )
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="Run FastAPI Web Dashboard instead of Tkinter Desktop GUI.",
+    )
     return parser.parse_args()
 
 
@@ -69,6 +80,13 @@ def main():
     numeric_level = getattr(logging, args.log_level.upper(), logging.INFO)
     logging.getLogger().setLevel(numeric_level)
 
+    if args.web:
+        config.ENABLE_WEB_DASHBOARD = True
+        config.ENABLE_TKINTER_GUI = False
+    elif args.no_gui:
+        config.ENABLE_TKINTER_GUI = False
+        config.ENABLE_WEB_DASHBOARD = False
+
     auth = UpstoxAuth()
     scanner = FNOIntradayScanner(auth=auth)
 
@@ -77,6 +95,35 @@ def main():
         logger.error("Failed to start scanner.")
         sys.exit(1)
 
+    # Launch Desktop GUI if enabled
+    if config.ENABLE_TKINTER_GUI:
+        try:
+            import tkinter as tk
+            from gui.app import ScannerTkinterGUI
+
+            logger.info("Launching Native Tkinter Desktop Dashboard...")
+            root = tk.Tk()
+            gui = ScannerTkinterGUI(root, scanner=scanner)
+
+            if not args.dry_run:
+                # Start live WebSocket feed in background
+                threading.Thread(target=scanner.run_live, daemon=True).start()
+
+            def on_closing():
+                logger.info("Closing Tkinter GUI and stopping scanner...")
+                try:
+                    scanner.stop()
+                except Exception:
+                    pass
+                root.destroy()
+
+            root.protocol("WM_DELETE_WINDOW", on_closing)
+            root.mainloop()
+            return
+        except Exception as e:
+            logger.error(f"Failed to start Tkinter GUI: {e}")
+
+    # Fallback / Web / Headless Mode
     if args.dry_run:
         logger.info("Dry-run candle scan completed successfully.")
         if config.ENABLE_WEB_DASHBOARD:
@@ -94,7 +141,7 @@ def main():
         scanner.stop()
         return
 
-    # Live Mode
+    # Live Mode (Headless / Web)
     scanner.run_live()
 
 

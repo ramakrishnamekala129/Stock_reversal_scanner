@@ -6,11 +6,9 @@ echo ============================================================
 echo   UPSTOX F^&O SCANNER - DRY RUN / TODAY'S HISTORY
 echo ============================================================
 echo.
-echo Launching full-day historical analysis & Web Dashboard...
-echo Web Dashboard URL: http://127.0.0.1:8000
+echo Launching full-day historical analysis ^& Native Tkinter Desktop Dashboard...
+echo Mode: Native Desktop GUI (Tab 1: Reversal Signals | Tab 2: 210 Market Pivots)
 echo.
-
-powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
 
 python main.py --dry-run %*
 

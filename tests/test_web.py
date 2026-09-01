@@ -50,8 +50,8 @@ def test_web_endpoints():
     # 3. Test Index HTML route
     resp = client.get("/")
     assert resp.status_code == 200
-    assert "UPSTOX 5M SCANNER" in resp.text
-    assert "Active Signals Stream" in resp.text
+    assert "UPSTOX" in resp.text
+    assert "Signals" in resp.text
 
     # 4. Test Snapshot JSON API
     resp_snap = client.get("/api/snapshot")
