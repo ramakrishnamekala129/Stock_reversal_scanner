@@ -106,6 +106,7 @@ class FNOIntradayScanner:
         historical_5m = self.hist_loader.load_initial_5m_candles(self._universe)
         key_map = {sym: item["instrument_key"] for sym, item in self._universe.items()}
         self.candle_engine.initialize_history(historical_5m, key_map=key_map)
+        self.evaluate_initial_history()
 
         # 5. Connect WebSocket
         ws_status = "READY"
@@ -130,7 +131,7 @@ class FNOIntradayScanner:
             ws_status = "NO ACCESS TOKEN (SIMULATION / DRY-RUN ONLY)"
             dashboard_state.update_stats(ws_status="DRY RUN / SIMULATION")
 
-        # 6. Start FastAPI Web Dashboard (after history & websocket are ready)
+        # 6. Start FastAPI Web Dashboard (after history, signals & websocket are ready)
         if self.web_server:
             self.web_server.start()
 
@@ -205,6 +206,23 @@ class FNOIntradayScanner:
             dashboard_state.add_signal(sig)
             if self.excel_mgr:
                 self.excel_mgr.add_signal(sig)
+
+    def evaluate_initial_history(self):
+        """
+        Scans all 5-minute historical candles from 09:15 up to current time across the universe,
+        detecting all pattern & reversal signals that occurred today.
+        """
+        logger.info("Scanning existing 5-minute candles of today's session for reversal setups...")
+        total_eval = 0
+        for sym, candles in list(self.candle_engine._history.items()):
+            df_full = self.candle_engine.get_candle_history_df(sym)
+            if len(candles) >= 2:
+                for i in range(2, len(candles) + 1):
+                    sub_candle = candles[i - 1]
+                    sub_df = df_full.iloc[:i]
+                    self._handle_candle_closed(sym, sub_candle, sub_df)
+                    total_eval += 1
+        logger.info(f"Startup candle scan complete: Evaluated {total_eval} historical candles, detected {len(self.dedup._seen_events)} signals.")
 
     def sync_broker_candles_for_all(self):
         """

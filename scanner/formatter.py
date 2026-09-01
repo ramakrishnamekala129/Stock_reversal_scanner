@@ -4,6 +4,7 @@ Produces clean, readable ASCII signal cards and startup banners.
 """
 
 from datetime import datetime
+import sys
 from scanner.signal_engine import SignalEvent
 
 
@@ -81,6 +82,11 @@ class ConsoleFormatter:
 
     @staticmethod
     def print_signal(signal: SignalEvent):
-        """Directly prints a formatted signal card to stdout."""
+        """Directly prints a formatted signal card to stdout safely across all encodings."""
         card = ConsoleFormatter.format_signal(signal)
-        print("\n" + card + "\n")
+        try:
+            print("\n" + card + "\n")
+        except UnicodeEncodeError:
+            encoding = sys.stdout.encoding or "utf-8"
+            safe_card = card.encode(encoding, errors="replace").decode(encoding)
+            print("\n" + safe_card + "\n")

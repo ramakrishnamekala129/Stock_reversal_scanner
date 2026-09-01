@@ -45,21 +45,27 @@ class AsyncUpstoxRateLimiter:
     """
     Token bucket / leaky bucket rate limiter enforcing Upstox API rate limits.
     Default: 25 requests/second (Upstox Market Data tier).
+    Non-blocking: computes future time slot inside lock, sleeps outside lock.
     """
     def __init__(self, rate_per_sec: int = 25):
         self.rate_per_sec = max(1, rate_per_sec)
         self.interval = 1.0 / float(self.rate_per_sec)
         self._lock = asyncio.Lock()
-        self._last_time = 0.0
+        self._next_time = 0.0
 
     async def acquire(self):
         async with self._lock:
             loop = asyncio.get_running_loop()
             now = loop.time()
-            elapsed = now - self._last_time
-            if elapsed < self.interval:
-                await asyncio.sleep(self.interval - elapsed)
-            self._last_time = loop.time()
+            if self._next_time <= now:
+                self._next_time = now + self.interval
+                wait_time = 0.0
+            else:
+                wait_time = self._next_time - now
+                self._next_time += self.interval
+
+        if wait_time > 0:
+            await asyncio.sleep(wait_time)
 
 
 class HistoricalDataLoader:

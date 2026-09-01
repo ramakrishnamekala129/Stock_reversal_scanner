@@ -19,8 +19,21 @@ let reconnectTimer = null;
 document.addEventListener('DOMContentLoaded', () => {
     initClock();
     initAudioToggle();
+    fetchInitialSnapshot();
     connectWebSocket();
 });
+
+async function fetchInitialSnapshot() {
+    try {
+        const res = await fetch('/api/snapshot');
+        if (res.ok) {
+            const data = await res.json();
+            renderInitialSnapshot(data);
+        }
+    } catch (err) {
+        console.warn('Failed to fetch initial snapshot:', err);
+    }
+}
 
 // ==========================================================================
 // 1. Clock & Audio
