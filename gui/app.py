@@ -274,7 +274,11 @@ class ScannerTkinterGUI:
             "ALL",
             "⚡ Narrow CPR (<= 0.1%)",
             "🪤 Trap Zones Only",
-        ], state="readonly", width=22)
+            "🎯 Narrow CPR + Trap Zones",
+            "🐂 Bull Trap (R1 - PDH)",
+            "🐻 Bear Trap (S1 - PDL)",
+            "📌 Inside CPR / Pivot Test",
+        ], state="readonly", width=25)
         cpr_combo.pack(side=tk.LEFT, padx=(0, 12))
         cpr_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
@@ -378,7 +382,11 @@ class ScannerTkinterGUI:
             "ALL",
             "⚡ Narrow CPR (<= 0.1%) Trending",
             "🪤 In Trap Zones",
-        ], state="readonly", width=28)
+            "🎯 Narrow CPR + In Trap Zone",
+            "🐂 In Bull Trap (R1 - PDH)",
+            "🐻 In Bear Trap (S1 - PDL)",
+            "📌 Inside CPR Zone",
+        ], state="readonly", width=30)
         m_cpr_combo.pack(side=tk.LEFT, padx=(0, 12))
         m_cpr_combo.bind("<<ComboboxSelected>>", lambda e: self._render_market())
 
@@ -606,13 +614,24 @@ class ScannerTkinterGUI:
                 continue
 
             # Apply CPR / Trap Filter
-            if cpr_filter == "⚡ Narrow CPR (<= 0.1%)":
-                has_narrow = any("Narrow CPR" in str(c) for c in conds) or "Narrow CPR" in zone
-                if not has_narrow:
-                    continue
-            elif cpr_filter == "🪤 Trap Zones Only":
-                if "Trap" not in zone:
-                    continue
+            has_narrow = any("Narrow CPR" in str(c) for c in conds) or "Narrow CPR" in zone
+            is_trap = "Trap" in zone or any("Trap" in str(c) for c in conds)
+            is_bull_trap = "Bull Trap" in zone or any("Bull Trap" in str(c) for c in conds)
+            is_bear_trap = "Bear Trap" in zone or any("Bear Trap" in str(c) for c in conds)
+            is_cpr_test = "CPR" in zone or any("CPR" in str(c) for c in conds)
+
+            if cpr_filter == "⚡ Narrow CPR (<= 0.1%)" and not has_narrow:
+                continue
+            elif cpr_filter == "🪤 Trap Zones Only" and not is_trap:
+                continue
+            elif cpr_filter == "🎯 Narrow CPR + Trap Zones" and not (has_narrow and is_trap):
+                continue
+            elif cpr_filter == "🐂 Bull Trap (R1 - PDH)" and not is_bull_trap:
+                continue
+            elif cpr_filter == "🐻 Bear Trap (S1 - PDL)" and not is_bear_trap:
+                continue
+            elif cpr_filter == "📌 Inside CPR / Pivot Test" and not is_cpr_test:
+                continue
 
             # Apply Search Query
             if search_query:
@@ -710,7 +729,15 @@ class ScannerTkinterGUI:
 
             if cpr_filter == "⚡ Narrow CPR (<= 0.1%) Trending" and not is_narrow:
                 continue
-            if cpr_filter == "🪤 In Trap Zones" and "Trap" not in zone:
+            elif cpr_filter == "🪤 In Trap Zones" and "Trap" not in zone:
+                continue
+            elif cpr_filter == "🎯 Narrow CPR + In Trap Zone" and not (is_narrow and "Trap" in zone):
+                continue
+            elif cpr_filter == "🐂 In Bull Trap (R1 - PDH)" and "Bull Trap" not in zone:
+                continue
+            elif cpr_filter == "🐻 In Bear Trap (S1 - PDL)" and "Bear Trap" not in zone:
+                continue
+            elif cpr_filter == "📌 Inside CPR Zone" and "Inside CPR" not in zone:
                 continue
             if search_query and search_query not in symbol:
                 continue
