@@ -64,15 +64,17 @@ def main():
         sys.exit(1)
 
     if args.dry_run:
-        logger.info("Running dry-run evaluation on loaded 5M historical candles...")
-        # Evaluate each symbol's initial history
-        for sym, df_history in list(scanner.candle_engine._history.items()):
+        logger.info("Running dry-run evaluation across all 5M historical candles of today's session...")
+        # Replay all 5M candles from 09:15 to current time across all symbols
+        for sym, candles in list(scanner.candle_engine._history.items()):
             if args.symbols and sym not in args.symbols:
                 continue
-            if len(df_history) >= 2:
-                last_candle = df_history[-1]
-                df_df = scanner.candle_engine.get_candle_history_df(sym)
-                scanner._handle_candle_closed(sym, last_candle, df_df)
+            df_full = scanner.candle_engine.get_candle_history_df(sym)
+            if len(candles) >= 2:
+                for i in range(2, len(candles) + 1):
+                    sub_candle = candles[i - 1]
+                    sub_df = df_full.iloc[:i]
+                    scanner._handle_candle_closed(sym, sub_candle, sub_df)
 
         scanner.stop()
         logger.info("Dry-run evaluation complete.")

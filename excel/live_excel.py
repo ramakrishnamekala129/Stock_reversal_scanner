@@ -157,10 +157,15 @@ class LiveExcelManager:
             col_letter = get_column_letter(col[0].column)
             ws2.column_dimensions[col_letter].width = max(max_len + 4, 14)
 
-        # Save template to disk
+        # Save template to disk if not already open by Excel
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
-        wb.save(self.file_path)
-        logger.info(f"Excel workbook template initialized and saved at: {self.file_path.name}")
+        try:
+            wb.save(self.file_path)
+            logger.info(f"Excel workbook template initialized and saved at: {self.file_path.name}")
+        except PermissionError:
+            logger.info("Workbook is currently open in Excel. Attaching live via COM automation...")
+        except Exception as e:
+            logger.warning(f"Could not overwrite Excel template: {e}")
 
         # Start live background updating & COM integration
         if self.auto_open:
@@ -211,9 +216,22 @@ class LiveExcelManager:
             self._excel_app.Visible = True
             self._excel_app.DisplayAlerts = False
 
-            # Open the workbook in Excel
+            # Check if workbook is already open in Excel, else Open it
             abs_path = str(self.file_path.resolve())
-            self._workbook_com = self._excel_app.Workbooks.Open(abs_path)
+            wb_found = None
+            try:
+                for open_wb in self._excel_app.Workbooks:
+                    if open_wb.FullName.lower() == abs_path.lower() or open_wb.Name.lower() == self.file_path.name.lower():
+                        wb_found = open_wb
+                        break
+            except Exception:
+                pass
+
+            if wb_found:
+                self._workbook_com = wb_found
+            else:
+                self._workbook_com = self._excel_app.Workbooks.Open(abs_path)
+
             self._sheet1_com = self._workbook_com.Worksheets(self.SHEET1_NAME)
             self._sheet2_com = self._workbook_com.Worksheets(self.SHEET2_NAME)
             self._com_initialized = True
@@ -289,15 +307,68 @@ class LiveExcelManager:
         finally:
             pythoncom.CoUninitialize()
 
+    def save_all_signals_to_file(self):
+        """
+        Loads workbook from disk via openpyxl and persists any signals directly to Sheet 2.
+        """
+        if not self.file_path.exists():
+            return
+        try:
+            wb = openpyxl.load_workbook(self.file_path)
+            if self.SHEET2_NAME not in wb.sheetnames:
+                return
+            ws2 = wb[self.SHEET2_NAME]
+
+            fill_green = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+            fill_red = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+            font_green = Font(name="Calibri", size=10, bold=True, color="006100")
+            font_red = Font(name="Calibri", size=10, bold=True, color="9C0006")
+
+            with self._lock:
+                pending = list(self._signals_cache)
+
+            for sig in pending:
+                ts_str = sig.timestamp.strftime("%H:%M:%S") if isinstance(sig.timestamp, datetime) else str(sig.timestamp)
+                ws2.append([
+                    ts_str,
+                    sig.symbol,
+                    sig.direction,
+                    sig.pattern,
+                    round(sig.price, 2),
+                    sig.score,
+                    round(sig.pivot, 2),
+                    round(sig.pdh, 2),
+                    round(sig.pdl, 2),
+                    round(sig.r1, 2),
+                    round(sig.s1, 2),
+                    round(sig.relative_volume, 2),
+                    ", ".join(sig.conditions_met),
+                ])
+                row_num = ws2.max_row
+                cell_sig = ws2.cell(row=row_num, column=3)
+                if "BULLISH" in sig.direction:
+                    cell_sig.fill = fill_green
+                    cell_sig.font = font_green
+                elif "BEARISH" in sig.direction:
+                    cell_sig.fill = fill_red
+                    cell_sig.font = font_red
+
+            wb.save(self.file_path)
+        except Exception as e:
+            logger.debug(f"Error saving signals to disk: {e}")
+
     def close(self):
         """Stops live updater and saves workbook cleanly."""
         self._stop_com_thread = True
         if self._bg_thread and self._bg_thread.is_alive():
             self._bg_thread.join(timeout=2.0)
 
-        # Final disk save with openpyxl if desired
+        # Save via COM if workbook was open
         try:
             if self._workbook_com:
                 self._workbook_com.Save()
         except Exception:
             pass
+
+        # Also ensure saved to disk file
+        self.save_all_signals_to_file()
