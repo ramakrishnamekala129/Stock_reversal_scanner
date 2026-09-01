@@ -61,14 +61,20 @@ class ScannerTkinterGUI:
         self.cached_signals: List[dict] = []
         self.cached_market: List[dict] = []
 
-        # Filters
+        # Filters & Sorting
         self.signal_direction_var = tk.StringVar(value="ALL")
         self.signal_pattern_var = tk.StringVar(value="ALL")
         self.signal_cpr_var = tk.StringVar(value="ALL")
         self.signal_search_var = tk.StringVar(value="")
+        self.signal_sort_var = tk.StringVar(value="⏱️ Time (Newest First)")
+        self.signals_sort_col = "time"
+        self.signals_sort_rev = True
 
         self.market_cpr_var = tk.StringVar(value="ALL")
         self.market_search_var = tk.StringVar(value="")
+        self.market_sort_var = tk.StringVar(value="⚡ CPR % (Narrowest First)")
+        self.market_sort_col = "cpr_pct"
+        self.market_sort_rev = False
 
         # Setup Styling & UI Components
         self._setup_styles()
@@ -272,6 +278,19 @@ class ScannerTkinterGUI:
         cpr_combo.pack(side=tk.LEFT, padx=(0, 12))
         cpr_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
+        # Sort Dropdown
+        tk.Label(toolbar, text="Sort:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        sort_combo = ttk.Combobox(toolbar, textvariable=self.signal_sort_var, values=[
+            "⏱️ Time (Newest First)",
+            "⏱️ Time (Oldest First)",
+            "🔥 Score (Highest First)",
+            "📊 Rel Vol (Highest First)",
+            "🔤 Symbol (A to Z)",
+            "💰 Price (Highest First)",
+        ], state="readonly", width=22)
+        sort_combo.pack(side=tk.LEFT, padx=(0, 12))
+        sort_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
+
         # Search Box
         tk.Label(toolbar, text="🔍 Search:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         search_entry = tk.Entry(toolbar, textvariable=self.signal_search_var, bg=CARD_BG, fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief="flat", font=("Segoe UI", 9), width=18)
@@ -324,7 +343,7 @@ class ScannerTkinterGUI:
         )
 
         for col_id, col_name, width, align in cols:
-            self.signals_tree.heading(col_id, text=col_name, anchor=align)
+            self.signals_tree.heading(col_id, text=col_name, anchor=align, command=lambda c=col_id: self._on_signals_column_click(c))
             self.signals_tree.column(col_id, width=width, anchor=align, stretch=(col_id in ("factors", "zone")))
 
         # Scrollbars
@@ -360,12 +379,25 @@ class ScannerTkinterGUI:
             "⚡ Narrow CPR (<= 0.1%) Trending",
             "🪤 In Trap Zones",
         ], state="readonly", width=28)
-        m_cpr_combo.pack(side=tk.LEFT, padx=(0, 16))
+        m_cpr_combo.pack(side=tk.LEFT, padx=(0, 12))
         m_cpr_combo.bind("<<ComboboxSelected>>", lambda e: self._render_market())
 
+        # Market Sort Options
+        tk.Label(toolbar, text="Sort:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        m_sort_combo = ttk.Combobox(toolbar, textvariable=self.market_sort_var, values=[
+            "⚡ CPR % (Narrowest First)",
+            "📈 Change % (Top Gainers)",
+            "📉 Change % (Top Losers)",
+            "📊 Volume (Highest First)",
+            "🔤 Symbol (A to Z)",
+            "💰 LTP (Highest First)",
+        ], state="readonly", width=24)
+        m_sort_combo.pack(side=tk.LEFT, padx=(0, 12))
+        m_sort_combo.bind("<<ComboboxSelected>>", lambda e: self._render_market())
+
         # Search Box
-        tk.Label(toolbar, text="🔍 Search Symbol:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        m_search_entry = tk.Entry(toolbar, textvariable=self.market_search_var, bg=CARD_BG, fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief="flat", font=("Segoe UI", 9), width=20)
+        tk.Label(toolbar, text="🔍 Search:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        m_search_entry = tk.Entry(toolbar, textvariable=self.market_search_var, bg=CARD_BG, fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief="flat", font=("Segoe UI", 9), width=18)
         m_search_entry.pack(side=tk.LEFT, padx=(0, 12), ipady=3)
         self.market_search_var.trace_add("write", lambda *args: self._render_market())
 
@@ -421,7 +453,7 @@ class ScannerTkinterGUI:
         )
 
         for col_id, col_name, width, align in m_cols:
-            self.market_tree.heading(col_id, text=col_name, anchor=align)
+            self.market_tree.heading(col_id, text=col_name, anchor=align, command=lambda c=col_id: self._on_market_column_click(c))
             self.market_tree.column(col_id, width=width, anchor=align, stretch=(col_id == "zone"))
 
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.market_tree.yview)
@@ -545,7 +577,7 @@ class ScannerTkinterGUI:
         self.root.after(300, self._poll_data)
 
     def _render_signals(self):
-        """Renders signals in Treeview according to active filters."""
+        """Renders signals in Treeview according to active filters and sort order."""
         # Clear existing items
         for item in self.signals_tree.get_children():
             self.signals_tree.delete(item)
@@ -554,8 +586,10 @@ class ScannerTkinterGUI:
         pat_filter = self.signal_pattern_var.get()
         cpr_filter = self.signal_cpr_var.get()
         search_query = self.signal_search_var.get().strip().upper()
+        sort_mode = self.signal_sort_var.get()
 
-        for idx, s in enumerate(self.cached_signals):
+        filtered = []
+        for s in self.cached_signals:
             direction = str(s.get("direction", ""))
             pattern = str(s.get("pattern", ""))
             symbol = str(s.get("symbol", ""))
@@ -584,6 +618,30 @@ class ScannerTkinterGUI:
             if search_query:
                 if search_query not in symbol and search_query not in pattern:
                     continue
+
+            filtered.append(s)
+
+        # Apply Sorting
+        if "Newest First" in sort_mode:
+            filtered.sort(key=lambda s: str(s.get("timestamp", "")), reverse=True)
+        elif "Oldest First" in sort_mode:
+            filtered.sort(key=lambda s: str(s.get("timestamp", "")), reverse=False)
+        elif "Score" in sort_mode:
+            filtered.sort(key=lambda s: (int(s.get("score", 0)), str(s.get("timestamp", ""))), reverse=True)
+        elif "Rel Vol" in sort_mode:
+            filtered.sort(key=lambda s: float(s.get("relative_volume", 0.0)), reverse=True)
+        elif "Symbol" in sort_mode:
+            filtered.sort(key=lambda s: str(s.get("symbol", "")))
+        elif "Price" in sort_mode:
+            filtered.sort(key=lambda s: float(s.get("price", 0.0)), reverse=True)
+
+        for idx, s in enumerate(filtered):
+            direction = str(s.get("direction", ""))
+            pattern = str(s.get("pattern", ""))
+            symbol = str(s.get("symbol", ""))
+            zone = str(s.get("zone", ""))
+            conds = s.get("conditions_met", [])
+            score = s.get("score", 0)
 
             time_str = str(s.get("timestamp", "--"))
             if "T" in time_str:
@@ -635,14 +693,16 @@ class ScannerTkinterGUI:
                 ))
 
     def _render_market(self):
-        """Renders 210-stock market pivot data in Treeview."""
+        """Renders 210-stock market pivot data in Treeview according to filters and sort."""
         for item in self.market_tree.get_children():
             self.market_tree.delete(item)
 
         cpr_filter = self.market_cpr_var.get()
         search_query = self.market_search_var.get().strip().upper()
+        m_sort = self.market_sort_var.get()
 
-        for idx, m in enumerate(self.cached_market):
+        filtered_m = []
+        for m in self.cached_market:
             symbol = str(m.get("symbol", ""))
             zone = str(m.get("zone", ""))
             cpr_width = float(m.get("cpr_width_pct", 0.0))
@@ -654,6 +714,28 @@ class ScannerTkinterGUI:
                 continue
             if search_query and search_query not in symbol:
                 continue
+
+            filtered_m.append(m)
+
+        # Apply Sorting to Market data
+        if "Narrowest First" in m_sort:
+            filtered_m.sort(key=lambda x: float(x.get("cpr_width_pct", 999.0)))
+        elif "Top Gainers" in m_sort:
+            filtered_m.sort(key=lambda x: float(x.get("change_pct", -999.0)), reverse=True)
+        elif "Top Losers" in m_sort:
+            filtered_m.sort(key=lambda x: float(x.get("change_pct", 999.0)))
+        elif "Volume" in m_sort:
+            filtered_m.sort(key=lambda x: int(x.get("volume", 0)), reverse=True)
+        elif "Symbol" in m_sort:
+            filtered_m.sort(key=lambda x: str(x.get("symbol", "")))
+        elif "LTP" in m_sort:
+            filtered_m.sort(key=lambda x: float(x.get("ltp", 0.0)), reverse=True)
+
+        for idx, m in enumerate(filtered_m):
+            symbol = str(m.get("symbol", ""))
+            zone = str(m.get("zone", ""))
+            cpr_width = float(m.get("cpr_width_pct", 0.0))
+            is_narrow = cpr_width <= 0.10
 
             chg = float(m.get("change_pct", 0.0))
             chg_str = f"+{chg:.2f}%" if chg > 0 else f"{chg:.2f}%"
@@ -712,6 +794,40 @@ class ScannerTkinterGUI:
                     "NONE", "--", "--", "--", "No instruments matching current search/filter.",
                     "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
                 ))
+
+    def _on_signals_column_click(self, col_id: str):
+        """Toggles sort order when column heading is clicked in Signals tab."""
+        if col_id == "time":
+            if self.signal_sort_var.get() == "⏱️ Time (Newest First)":
+                self.signal_sort_var.set("⏱️ Time (Oldest First)")
+            else:
+                self.signal_sort_var.set("⏱️ Time (Newest First)")
+        elif col_id == "score":
+            self.signal_sort_var.set("🔥 Score (Highest First)")
+        elif col_id == "rel_vol":
+            self.signal_sort_var.set("📊 Rel Vol (Highest First)")
+        elif col_id == "symbol":
+            self.signal_sort_var.set("🔤 Symbol (A to Z)")
+        elif col_id == "price":
+            self.signal_sort_var.set("💰 Price (Highest First)")
+        self._render_signals()
+
+    def _on_market_column_click(self, col_id: str):
+        """Toggles sort order when column heading is clicked in Market tab."""
+        if col_id in ("cpr_pct", "tc", "bc"):
+            self.market_sort_var.set("⚡ CPR % (Narrowest First)")
+        elif col_id == "chg":
+            if self.market_sort_var.get() == "📈 Change % (Top Gainers)":
+                self.market_sort_var.set("📉 Change % (Top Losers)")
+            else:
+                self.market_sort_var.set("📈 Change % (Top Gainers)")
+        elif col_id == "volume":
+            self.market_sort_var.set("📊 Volume (Highest First)")
+        elif col_id == "symbol":
+            self.market_sort_var.set("🔤 Symbol (A to Z)")
+        elif col_id == "ltp":
+            self.market_sort_var.set("💰 LTP (Highest First)")
+        self._render_market()
 
     def _export_signals_csv(self):
         """Exports currently loaded signals into a CSV file."""
