@@ -1,14 +1,12 @@
-"""
-Historical Data Loading & Previous Session Resolution Module.
-Handles downloading previous trading-day OHLCV and today's initial 5M candles.
-"""
-
+import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, datetime
 import json
 import logging
+import time
 from typing import Any, Dict, List, Optional
+import httpx
 import pandas as pd
 import pytz
 
@@ -44,7 +42,7 @@ class PreviousDayOHLCV:
 
 
 class HistoricalDataLoader:
-    """Loads previous-day session data and builds initial 5M history."""
+    """Loads previous-day session data and builds initial 5M history with asyncio acceleration."""
 
     def __init__(self, rest_client: UpstoxRestClient):
         self.rest_client = rest_client
@@ -78,46 +76,98 @@ class HistoricalDataLoader:
             except Exception as e:
                 logger.warning(f"Failed to read previous-day cache: {e}. Fetching via REST...")
 
-        logger.info(f"Fetching previous trading-day OHLCV for {len(universe)} symbols...")
+        logger.info(f"Fetching previous trading-day OHLCV for {len(universe)} symbols via asyncio...")
+        token = self.rest_client.access_token
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         results: Dict[str, PreviousDayOHLCV] = {}
 
-        def _fetch_single(symbol: str, item: Dict[str, Any]) -> Optional[PreviousDayOHLCV]:
-            inst_key = item["instrument_key"]
-            daily_candles = self.rest_client.get_historical_daily_candles(inst_key)
-            if not daily_candles:
+        async def _fetch_all_daily():
+            sem = asyncio.Semaphore(50)
+            async with httpx.AsyncClient(
+                headers=headers,
+                timeout=12.0,
+                limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
+            ) as client:
+                async def _fetch_one(sym: str, item: Dict[str, Any]):
+                    inst_key = item["instrument_key"]
+                    url = f"https://api.upstox.com/v2/historical-candle/{inst_key}/day/2026-09-01/2025-01-01"
+                    async with sem:
+                        try:
+                            resp = await client.get(url)
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                daily_candles = data.get("data", {}).get("candles", [])
+                                for candle in daily_candles:
+                                    candle_date = candle[0].split("T")[0]
+                                    if candle_date < today_str:
+                                        return (sym, PreviousDayOHLCV(
+                                            symbol=sym,
+                                            instrument_key=inst_key,
+                                            date=candle_date,
+                                            open=float(candle[1]),
+                                            high=float(candle[2]),
+                                            low=float(candle[3]),
+                                            close=float(candle[4]),
+                                            volume=int(candle[5]),
+                                        ))
+                        except Exception as e:
+                            logger.debug(f"Error fetching daily candle for {sym}: {e}")
+                    return (sym, None)
+
+                tasks = [_fetch_one(sym, item) for sym, item in universe.items()]
+                res_list = await asyncio.gather(*tasks)
+                for sym, pd_obj in res_list:
+                    if pd_obj:
+                        results[sym] = pd_obj
+
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                # In running event loop, create task or run in thread
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(asyncio.run, _fetch_all_daily()).result()
+            else:
+                asyncio.run(_fetch_all_daily())
+        except Exception as e:
+            logger.warning(f"Async daily fetch fallback error: {e}. Running threaded fallback...")
+            # Fallback to ThreadPoolExecutor
+            def _fetch_single_sync(symbol: str, item: Dict[str, Any]) -> Optional[PreviousDayOHLCV]:
+                inst_key = item["instrument_key"]
+                daily_candles = self.rest_client.get_historical_daily_candles(inst_key)
+                if not daily_candles:
+                    return None
+                for candle in daily_candles:
+                    candle_date = candle[0].split("T")[0]
+                    if candle_date < today_str:
+                        return PreviousDayOHLCV(
+                            symbol=symbol,
+                            instrument_key=inst_key,
+                            date=candle_date,
+                            open=float(candle[1]),
+                            high=float(candle[2]),
+                            low=float(candle[3]),
+                            close=float(candle[4]),
+                            volume=int(candle[5]),
+                        )
                 return None
 
-            # Daily candles format: [timestamp, open, high, low, close, volume, oi]
-            # Upstox returns newest first or chronological. Find the most recent date BEFORE today.
-            for candle in daily_candles:
-                ts_str = candle[0]
-                candle_date = ts_str.split("T")[0]
-                if candle_date < today_str:
-                    return PreviousDayOHLCV(
-                        symbol=symbol,
-                        instrument_key=inst_key,
-                        date=candle_date,
-                        open=float(candle[1]),
-                        high=float(candle[2]),
-                        low=float(candle[3]),
-                        close=float(candle[4]),
-                        volume=int(candle[5]),
-                    )
-            return None
-
-        with ThreadPoolExecutor(max_workers=config.MAX_CONCURRENT_REQUESTS) as executor:
-            future_to_sym = {
-                executor.submit(_fetch_single, sym, item): sym
-                for sym, item in universe.items()
-            }
-            for future in as_completed(future_to_sym):
-                sym = future_to_sym[future]
-                try:
-                    res = future.result()
-                    if res:
-                        results[sym] = res
-                except Exception as e:
-                    logger.warning(f"Error fetching previous-day data for {sym}: {e}")
+            with ThreadPoolExecutor(max_workers=config.MAX_CONCURRENT_REQUESTS) as executor:
+                future_to_sym = {
+                    executor.submit(_fetch_single_sync, sym, item): sym
+                    for sym, item in universe.items()
+                }
+                for future in as_completed(future_to_sym):
+                    sym = future_to_sym[future]
+                    try:
+                        res = future.result()
+                        if res:
+                            results[sym] = res
+                    except Exception as err:
+                        logger.warning(f"Error fetching previous-day data for {sym}: {err}")
 
         self._pd_cache = results
         logger.info(f"Successfully retrieved previous-day OHLCV for {len(results)} symbols.")
@@ -136,23 +186,22 @@ class HistoricalDataLoader:
         universe: Dict[str, Dict[str, Any]],
     ) -> Dict[str, pd.DataFrame]:
         """
-        Loads today's official broker-side 5-minute historical candles.
-        Provides historical candle lookback at startup.
+        Loads today's official broker-side 5-minute historical candles using asyncio concurrency.
+        Provides ultra-fast candle lookback at startup.
         """
-        logger.info("Loading initial 5-minute historical candles directly from broker...")
+        logger.info("Loading initial 5-minute historical candles directly from broker via asyncio...")
+        start_t = time.time()
         dfs = self.refresh_latest_broker_candles(universe)
-        logger.info(f"Loaded 5M broker DataFrames for {len(dfs)} symbols.")
+        elapsed = time.time() - start_t
+        logger.info(f"Loaded 5M broker DataFrames for {len(dfs)}/{len(universe)} symbols in {elapsed:.2f}s.")
         return dfs
 
-    def load_symbol_broker_5m(self, symbol: str, instrument_key: str) -> Optional[pd.DataFrame]:
-        """
-        Fetches today's official broker candles for a single symbol and returns 5-minute DataFrame.
-        """
-        kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
-        raw_1m = self.rest_client.get_intraday_1m_candles(instrument_key)
+    def _process_raw_1m_to_5m(self, raw_1m: List[List[Any]]) -> Optional[pd.DataFrame]:
+        """Converts raw 1-minute candle tuples into 5-minute resampled DataFrame."""
         if not raw_1m:
             return None
 
+        kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
         records = []
         for c in raw_1m:
             ts = pd.to_datetime(c[0])
@@ -184,27 +233,78 @@ class HistoricalDataLoader:
 
         return df_5m
 
+    def load_symbol_broker_5m(self, symbol: str, instrument_key: str) -> Optional[pd.DataFrame]:
+        """
+        Fetches today's official broker candles for a single symbol and returns 5-minute DataFrame (synchronous).
+        """
+        raw_1m = self.rest_client.get_intraday_1m_candles(instrument_key)
+        return self._process_raw_1m_to_5m(raw_1m)
+
     def refresh_latest_broker_candles(
         self,
         universe: Dict[str, Dict[str, Any]],
     ) -> Dict[str, pd.DataFrame]:
         """
-        Fetches the latest official broker-side 5-minute candles for all universe stocks.
+        Fetches the latest official broker-side 5-minute candles for all universe stocks in parallel using asyncio.
         """
+        token = self.rest_client.access_token
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         results: Dict[str, pd.DataFrame] = {}
 
-        with ThreadPoolExecutor(max_workers=config.MAX_CONCURRENT_REQUESTS) as executor:
-            future_to_sym = {
-                executor.submit(self.load_symbol_broker_5m, sym, item["instrument_key"]): sym
-                for sym, item in universe.items()
-            }
-            for future in as_completed(future_to_sym):
-                sym = future_to_sym[future]
-                try:
-                    df = future.result()
-                    if df is not None and not df.empty:
+        async def _fetch_all_async():
+            sem = asyncio.Semaphore(50)
+            async with httpx.AsyncClient(
+                headers=headers,
+                timeout=10.0,
+                limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
+            ) as client:
+                async def _fetch_one(sym: str, item: Dict[str, Any]):
+                    inst_key = item["instrument_key"]
+                    url = f"https://api.upstox.com/v2/historical-candle/intraday/{inst_key}/1minute"
+                    async with sem:
+                        try:
+                            resp = await client.get(url)
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                candles = data.get("data", {}).get("candles", [])
+                                df = self._process_raw_1m_to_5m(candles)
+                                if df is not None and not df.empty:
+                                    return (sym, df)
+                        except Exception as e:
+                            logger.debug(f"Async fetch failed for {sym}: {e}")
+                    return (sym, None)
+
+                tasks = [_fetch_one(sym, item) for sym, item in universe.items()]
+                res_list = await asyncio.gather(*tasks)
+                for sym, df in res_list:
+                    if df is not None:
                         results[sym] = df
-                except Exception as e:
-                    logger.debug(f"Error fetching broker candles for {sym}: {e}")
+
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(asyncio.run, _fetch_all_async()).result()
+            else:
+                asyncio.run(_fetch_all_async())
+        except Exception as e:
+            logger.warning(f"Async candle fetch error: {e}. Falling back to ThreadPoolExecutor...")
+            with ThreadPoolExecutor(max_workers=30) as executor:
+                future_to_sym = {
+                    executor.submit(self.load_symbol_broker_5m, sym, item["instrument_key"]): sym
+                    for sym, item in universe.items()
+                }
+                for future in as_completed(future_to_sym):
+                    sym = future_to_sym[future]
+                    try:
+                        df = future.result()
+                        if df is not None and not df.empty:
+                            results[sym] = df
+                    except Exception as err:
+                        logger.debug(f"Error fetching broker candles for {sym}: {err}")
 
         return results
