@@ -102,13 +102,6 @@ class FNOIntradayScanner:
 
         # Initialize Web Dashboard State & Optional Excel
         dashboard_state.initialize_pivots(self._pivots)
-        if self.excel_mgr:
-            self.excel_mgr.initialize_workbook(self._pivots)
-
-        # Start FastAPI Web Dashboard
-        if self.web_server:
-            self.web_server.start()
-
         # 4. Fetch today's historical 5M candles (from 1m history)
         historical_5m = self.hist_loader.load_initial_5m_candles(self._universe)
         key_map = {sym: item["instrument_key"] for sym, item in self._universe.items()}
@@ -137,7 +130,11 @@ class FNOIntradayScanner:
             ws_status = "NO ACCESS TOKEN (SIMULATION / DRY-RUN ONLY)"
             dashboard_state.update_stats(ws_status="DRY RUN / SIMULATION")
 
-        # 6. Display Startup Banner
+        # 6. Start FastAPI Web Dashboard (after history & websocket are ready)
+        if self.web_server:
+            self.web_server.start()
+
+        # 7. Display Startup Banner
         ConsoleFormatter.print_startup_banner(
             rest_status=rest_status,
             analytics_status=analytics_status,
