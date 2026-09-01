@@ -198,6 +198,98 @@ def is_inverse_hammer(
     return True
 
 
+def is_bearish_engulfing(
+    prev_candle: Union[CandleItem, pd.Series, dict],
+    candle: Union[CandleItem, pd.Series, dict],
+) -> bool:
+    """
+    Bearish Engulfing:
+    1. Previous candle is bullish.
+    2. Current candle is bearish.
+    3. Current candle's real body engulfs previous candle's real body.
+    """
+    p = _to_candle_item(prev_candle)
+    c = _to_candle_item(candle)
+
+    # 1. Previous bullish, Current bearish
+    if not p.is_bullish or not c.is_bearish:
+        return False
+
+    # 2. Body of current must be meaningful (not a doji)
+    if c.body / c.total_range < config.ENGULFING_MIN_BODY_PCT:
+        return False
+
+    # 3. Engulfs previous body
+    tolerance = p.body * 0.05
+    return (c.open >= p.close - tolerance) and (c.close <= p.open + tolerance)
+
+
+def is_bearish_harami(
+    prev_candle: Union[CandleItem, pd.Series, dict],
+    candle: Union[CandleItem, pd.Series, dict],
+    max_body_ratio: float = config.HARAMI_MAX_BODY_RATIO,
+) -> bool:
+    """
+    Bearish Harami:
+    1. Previous candle is bullish.
+    2. Current candle has a smaller real body.
+    3. Current real body is contained completely within previous candle's real body.
+    """
+    p = _to_candle_item(prev_candle)
+    c = _to_candle_item(candle)
+
+    # 1. Previous must be bullish
+    if not p.is_bullish or p.body <= 0:
+        return False
+
+    # 2. Current body must be smaller than previous body
+    if c.body > p.body * max_body_ratio:
+        return False
+
+    # 3. Current real body completely inside previous real body
+    curr_body_top = max(c.open, c.close)
+    curr_body_bottom = min(c.open, c.close)
+
+    tolerance = p.body * 0.05
+    if curr_body_top <= (p.close + tolerance) and curr_body_bottom >= (p.open - tolerance):
+        return True
+
+    return False
+
+
+def is_shooting_star(
+    candle: Union[CandleItem, pd.Series, dict],
+    context: str = "uptrend",
+    wick_ratio: float = config.INVERSE_HAMMER_WICK_BODY_RATIO,
+) -> bool:
+    """
+    Shooting Star:
+    1. Small real body near bottom of candle range.
+    2. Long upper wick (at least wick_ratio * real body).
+    3. Very small lower wick.
+    4. Trend context: Occurs at resistance or in an uptrend (bearish reversal).
+    """
+    c = _to_candle_item(candle)
+    if c.total_range <= 0:
+        return False
+
+    body = max(c.body, c.total_range * 0.05)
+
+    # Upper wick must be at least 2x body
+    if c.upper_wick < wick_ratio * body:
+        return False
+
+    # Lower wick should be small
+    if c.lower_wick > max(body * 0.75, c.total_range * 0.2):
+        return False
+
+    # Context filter: if trend context is enabled and in downtrend, reject
+    if config.ENABLE_TREND_CONTEXT and context == "downtrend":
+        return False
+
+    return True
+
+
 def is_hanging_man(
     prev_candle: Union[CandleItem, pd.Series, dict],
     candle: Union[CandleItem, pd.Series, dict],
@@ -236,21 +328,14 @@ def detect_candlestick_patterns(
 ) -> Dict[str, Any]:
     """
     Evaluates closed candle history and returns pattern detection dictionary.
-    
-    Expected result format:
-    {
-        "bullish_harami": False,
-        "bullish_engulfing": True,
-        "hanging_man": False,
-        "inverse_hammer": False,
-        "hammer": False,
-        "details": [PatternResult(...)]
-    }
     """
     results: Dict[str, Any] = {
         "bullish_harami": False,
+        "bearish_harami": False,
         "bullish_engulfing": False,
+        "bearish_engulfing": False,
         "hanging_man": False,
+        "shooting_star": False,
         "inverse_hammer": False,
         "hammer": False,
         "details": [],
@@ -277,7 +362,18 @@ def detect_candlestick_patterns(
             description="Bullish candle engulfs previous bearish candle.",
         ))
 
-    # 2. Bullish Harami
+    # 2. Bearish Engulfing
+    if is_bearish_engulfing(prev_c, curr_c):
+        results["bearish_engulfing"] = True
+        results["details"].append(PatternResult(
+            pattern_name="BEARISH ENGULFING",
+            pattern_direction="BEARISH",
+            timestamp=ts,
+            pattern_strength=3.0,
+            description="Bearish candle engulfs previous bullish candle.",
+        ))
+
+    # 3. Bullish Harami
     if is_bullish_harami(prev_c, curr_c):
         results["bullish_harami"] = True
         results["details"].append(PatternResult(
@@ -288,7 +384,18 @@ def detect_candlestick_patterns(
             description="Small candle contained inside previous bearish candle.",
         ))
 
-    # 3. Hammer (in downtrend/neutral)
+    # 4. Bearish Harami
+    if is_bearish_harami(prev_c, curr_c):
+        results["bearish_harami"] = True
+        results["details"].append(PatternResult(
+            pattern_name="BEARISH HARAMI",
+            pattern_direction="BEARISH",
+            timestamp=ts,
+            pattern_strength=2.0,
+            description="Small candle contained inside previous bullish candle.",
+        ))
+
+    # 5. Hammer (in downtrend/neutral)
     if is_hammer(curr_c, context=context):
         results["hammer"] = True
         results["details"].append(PatternResult(
@@ -299,7 +406,7 @@ def detect_candlestick_patterns(
             description="Hammer candlestick with long lower shadow at support/downtrend.",
         ))
 
-    # 4. Inverse Hammer (in downtrend/neutral)
+    # 6. Inverse Hammer (in downtrend/neutral)
     if is_inverse_hammer(curr_c, context=context):
         results["inverse_hammer"] = True
         results["details"].append(PatternResult(
@@ -310,7 +417,18 @@ def detect_candlestick_patterns(
             description="Inverse Hammer with long upper shadow.",
         ))
 
-    # 5. Hanging Man (in uptrend)
+    # 7. Shooting Star (in uptrend/resistance)
+    if is_shooting_star(curr_c, context=context):
+        results["shooting_star"] = True
+        results["details"].append(PatternResult(
+            pattern_name="SHOOTING STAR",
+            pattern_direction="BEARISH",
+            timestamp=ts,
+            pattern_strength=2.0,
+            description="Shooting Star with long upper shadow at resistance/uptrend.",
+        ))
+
+    # 8. Hanging Man (in uptrend)
     if is_hanging_man(prev_c, curr_c, context=context):
         results["hanging_man"] = True
         results["details"].append(PatternResult(

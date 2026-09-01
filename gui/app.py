@@ -260,11 +260,14 @@ class ScannerTkinterGUI:
         pat_combo = ttk.Combobox(toolbar, textvariable=self.signal_pattern_var, values=[
             "ALL",
             "BULLISH ENGULFING",
+            "BEARISH ENGULFING",
             "BULLISH HARAMI",
+            "BEARISH HARAMI",
             "HAMMER",
             "INVERSE HAMMER",
+            "SHOOTING STAR",
             "HANGING MAN",
-        ], state="readonly", width=18)
+        ], state="readonly", width=20)
         pat_combo.pack(side=tk.LEFT, padx=(0, 12))
         pat_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 

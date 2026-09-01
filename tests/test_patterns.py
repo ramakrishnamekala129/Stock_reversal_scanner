@@ -80,3 +80,33 @@ def test_detect_candlestick_patterns_dataframe():
     assert result["bullish_engulfing"] is True
     assert len(result["details"]) == 1
     assert result["details"][0].pattern_name == "BULLISH ENGULFING"
+
+
+def test_bearish_engulfing():
+    # Previous: Bullish (Open 95.0, Close 100.0, High 101.0, Low 94.0)
+    # Current: Bearish (Open 102.0, Close 93.0, High 103.0, Low 92.0) -> engulfs previous body (95 to 100)
+    prev = CandleItem(open=95.0, high=101.0, low=94.0, close=100.0, volume=1000)
+    curr = CandleItem(open=102.0, high=103.0, low=92.0, close=93.0, volume=2000)
+
+    from patterns.candlestick import is_bearish_engulfing
+    assert is_bearish_engulfing(prev, curr) is True
+
+
+def test_bearish_harami():
+    # Previous: Large Bullish (Open 90.0, Close 100.0, High 101.0, Low 89.0)
+    # Current: Small Bearish inside previous body (Open 97.0, Close 93.0, High 98.0, Low 92.0)
+    prev = CandleItem(open=90.0, high=101.0, low=89.0, close=100.0, volume=1000)
+    curr = CandleItem(open=97.0, high=98.0, low=92.0, close=93.0, volume=1500)
+
+    from patterns.candlestick import is_bearish_harami
+    assert is_bearish_harami(prev, curr) is True
+
+
+def test_shooting_star():
+    # Small body at bottom of range: Open 100.0, Close 99.0, High 106.0, Low 98.8
+    # Body = 1.0, Upper Wick = 6.0 (>= 2x body), Lower Wick = 0.2
+    c = CandleItem(open=100.0, high=106.0, low=98.8, close=99.0, volume=5000)
+
+    from patterns.candlestick import is_shooting_star
+    assert is_shooting_star(c, context="uptrend") is True
+    assert is_shooting_star(c, context="downtrend") is False

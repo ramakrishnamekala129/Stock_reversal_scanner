@@ -66,10 +66,13 @@ MIN_SIGNAL_SCORE = 4
 SCORE_WEIGHTS = {
     # Patterns
     "BULLISH_ENGULFING": 3,
+    "BEARISH_ENGULFING": 3,
     "BULLISH_HARAMI": 2,
+    "BEARISH_HARAMI": 2,
     "HAMMER": 2,
     "INVERSE_HAMMER": 2,
-    "HANGING_MAN": -2,
+    "SHOOTING_STAR": 2,
+    "HANGING_MAN": 2,
     
     # Pivot Context
     "CLOSE_ABOVE_PIVOT": 1,

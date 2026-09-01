@@ -144,66 +144,84 @@ class SignalEngine:
             score = 0
             score_breakdown: List[str] = []
             conditions_met: List[str] = []
+            is_bearish = (pat.pattern_direction == "BEARISH" or pat.pattern_name in ["HANGING MAN", "BEARISH ENGULFING", "BEARISH HARAMI", "SHOOTING STAR"])
 
             # --- Pattern Score ---
             pat_name = pat.pattern_name.replace(" ", "_")
-            pat_weight = self.weights.get(pat_name, 2)
+            pat_weight = abs(self.weights.get(pat_name, 2))
             score += pat_weight
-            score_breakdown.append(f"{pat.pattern_name} ({pat_weight:+d})")
+            score_breakdown.append(f"{pat.pattern_name} (+{pat_weight})")
 
             # --- Pivot & Level Context Score ---
-            if pivot_rel.above_pivot:
-                w = self.weights.get("CLOSE_ABOVE_PIVOT", 1)
-                score += w
-                score_breakdown.append(f"Price > Pivot ({w:+d})")
-                conditions_met.append("Price > Pivot")
-            elif pivot_rel.below_pivot:
-                w = self.weights.get("CLOSE_BELOW_PIVOT", -1)
-                score += w
-                score_breakdown.append(f"Price < Pivot ({w:+d})")
-                conditions_met.append("Price < Pivot")
+            if is_bearish:
+                # Bearish Context Points
+                if pivot_rel.below_pivot or curr_close < pivots.pp:
+                    w = 1
+                    score += w
+                    score_breakdown.append(f"Price < Pivot (+{w})")
+                    conditions_met.append("Price < Pivot")
 
-            if pivot_rel.above_pdh:
-                w = self.weights.get("BREAK_PDH", 2)
-                score += w
-                score_breakdown.append(f"Price > PDH ({w:+d})")
-                conditions_met.append("Price > PDH")
-            elif pivot_rel.below_pdl:
-                w = self.weights.get("BREAK_PDL", -2)
-                score += w
-                score_breakdown.append(f"Price < PDL ({w:+d})")
-                conditions_met.append("Price < PDL")
+                if pivot_rel.below_pdl or curr_close < pivots.pdl:
+                    w = 2
+                    score += w
+                    score_breakdown.append(f"Price < PDL (+{w})")
+                    conditions_met.append("Price < PDL")
 
-            if pivot_rel.crossed_r1 or curr_close > pivots.r1:
-                w = self.weights.get("BREAK_R1", 2)
-                score += w
-                score_breakdown.append(f"Price > R1 ({w:+d})")
-                conditions_met.append("Price > R1")
+                if pivot_rel.crossed_s1 or curr_close < pivots.s1:
+                    w = 2
+                    score += w
+                    score_breakdown.append(f"Price < S1 (+{w})")
+                    conditions_met.append("Price < S1")
 
-            if pivot_rel.crossed_s1 or curr_close < pivots.s1:
-                w = self.weights.get("BREAK_S1", -2)
-                score += w
-                score_breakdown.append(f"Price < S1 ({w:+d})")
-                conditions_met.append("Price < S1")
+                # Near R1 Resistance Rejection
+                if abs(curr_high - pivots.r1) / pivots.r1 < 0.004 and curr_close < pivots.r1:
+                    w = 2
+                    score += w
+                    score_breakdown.append(f"Near R1 Resistance Rejection (+{w})")
+                    conditions_met.append("Rejection near R1 Resistance")
+            else:
+                # Bullish Context Points
+                if pivot_rel.above_pivot or curr_close > pivots.pp:
+                    w = 1
+                    score += w
+                    score_breakdown.append(f"Price > Pivot (+{w})")
+                    conditions_met.append("Price > Pivot")
+
+                if pivot_rel.above_pdh or curr_close > pivots.pdh:
+                    w = 2
+                    score += w
+                    score_breakdown.append(f"Price > PDH (+{w})")
+                    conditions_met.append("Price > PDH")
+
+                if pivot_rel.crossed_r1 or curr_close > pivots.r1:
+                    w = 2
+                    score += w
+                    score_breakdown.append(f"Price > R1 (+{w})")
+                    conditions_met.append("Price > R1")
+
+                # Near S1 Support Bounce
+                if abs(curr_low - pivots.s1) / pivots.s1 < 0.004 and curr_close > pivots.s1:
+                    w = 2
+                    score += w
+                    score_breakdown.append(f"Near S1 Support Bounce (+{w})")
+                    conditions_met.append("Bounce near S1 Support")
 
             # --- Trap Zone Confluences (Candle Touch / Body / Wick) ---
             # 1. Bear Trap Zone (S1 & PDL Support Zone): Candle touches S1-PDL range
             candle_touches_bear_trap = (curr_low <= pivots.bear_trap_top and curr_high >= pivots.bear_trap_bottom)
-            if candle_touches_bear_trap:
-                if pat.pattern_direction == "BULLISH" or pat.pattern_name in ["HAMMER", "BULLISH ENGULFING", "INVERSE HAMMER", "BULLISH HARAMI"]:
-                    w = 3
-                    score += w
-                    score_breakdown.append(f"Bear Trap S1-PDL Touch & Bounce ({w:+d})")
-                    conditions_met.append("🪤 Bear Trap Reversal (S1-PDL)")
+            if candle_touches_bear_trap and not is_bearish:
+                w = 3
+                score += w
+                score_breakdown.append(f"Bear Trap S1-PDL Touch & Bounce (+{w})")
+                conditions_met.append("🪤 Bear Trap Reversal (S1-PDL)")
 
             # 2. Bull Trap Zone (R1 & PDH Resistance Zone): Candle touches R1-PDH range
             candle_touches_bull_trap = (curr_high >= pivots.bull_trap_bottom and curr_low <= pivots.bull_trap_top)
-            if candle_touches_bull_trap:
-                if pat.pattern_direction == "BEARISH" or pat.pattern_name == "HANGING MAN":
-                    w = -3
-                    score += w
-                    score_breakdown.append(f"Bull Trap R1-PDH Touch & Rejection ({w:+d})")
-                    conditions_met.append("🪤 Bull Trap Rejection (R1-PDH)")
+            if candle_touches_bull_trap and is_bearish:
+                w = 3
+                score += w
+                score_breakdown.append(f"Bull Trap R1-PDH Touch & Rejection (+{w})")
+                conditions_met.append("🪤 Bull Trap Rejection (R1-PDH)")
 
             # 3. CPR (Central Pivot Range) Confluence (Candle Touch / Test)
             candle_touches_cpr = (curr_low <= pivots.cpr_top and curr_high >= pivots.cpr_bottom)
@@ -216,32 +234,20 @@ class SignalEngine:
             # 4. Narrow CPR Trending Day Candidate (< 0.10% width)
             if pivots.is_narrow_cpr:
                 w = 2
-                score += (w if pat.pattern_direction == "BULLISH" else -w)
-                score_breakdown.append(f"Narrow CPR ({pivots.cpr_width_pct}% <= 0.1%) ({w:+d})")
-                conditions_met.append(f"⚡ Narrow CPR ({pivots.cpr_width_pct}%)")
-
-            # Near support bounce check for Hammer / Reversals
-            if abs(curr_low - pivots.s1) / pivots.s1 < 0.003 and curr_close > pivots.s1:
-                w = self.weights.get("NEAR_S1_S2_SUPPORT", 2)
                 score += w
-                score_breakdown.append(f"Near S1 Support Bounce ({w:+d})")
-                conditions_met.append("Bounce near S1 Support")
+                score_breakdown.append(f"Narrow CPR ({pivots.cpr_width_pct}% <= 0.1%) (+{w})")
+                conditions_met.append(f"⚡ Narrow CPR ({pivots.cpr_width_pct}%)")
 
             # --- Volume Confirmation Score ---
             if vol_metrics and vol_metrics.is_high_volume:
-                w = self.weights.get("HIGH_RELATIVE_VOLUME", 1)
+                w = 1
                 score += w
-                score_breakdown.append(f"Relative Vol {rel_vol}x > {config.MIN_RELATIVE_VOLUME}x ({w:+d})")
+                score_breakdown.append(f"Relative Vol {rel_vol}x > {config.MIN_RELATIVE_VOLUME}x (+{w})")
                 conditions_met.append(f"Volume Surge ({rel_vol}x)")
 
-            # Direction classification
-            if pat.pattern_direction == "BEARISH" or pat.pattern_name == "HANGING MAN":
-                direction = "BEARISH WARNING"
-                # For bearish warnings, check if absolute negative score reaches threshold
-                is_actionable = abs(score) >= (self.min_signal_score - 1)
-            else:
-                direction = "BULLISH SETUP"
-                is_actionable = score >= self.min_signal_score
+            # Direction classification & Actionability
+            direction = "BEARISH WARNING" if is_bearish else "BULLISH SETUP"
+            is_actionable = score >= self.min_signal_score
 
             if is_actionable:
                 pivot_zone = get_pivot_zone(curr_close, pivots, low=curr_low, high=curr_high)
