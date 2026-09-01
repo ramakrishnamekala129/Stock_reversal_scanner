@@ -172,11 +172,11 @@ def get_pivot_zone(
             return f"🪤 Narrow Bear Trap ({pivots.bear_trap_width_pct:.2f}%)"
         return "Bear Trap Zone (S1 - PDL)"
 
-    # 5. Check CPR Zone (Central Pivot Range) - price inside or candle wick touches
+    # 5. Check Candlestick Pattern at CPR Zone (Central Pivot Range) - price inside or candle wick touches
     if (pivots.cpr_bottom <= price <= pivots.cpr_top) or (c_low <= pivots.cpr_top and c_high >= pivots.cpr_bottom):
         if pivots.is_narrow_cpr:
-            return f"Inside Narrow CPR ({pivots.cpr_width_pct:.2f}%)"
-        return "Inside CPR Zone (Choppy / Base)"
+            return f"🎯 Pattern at Narrow CPR ({pivots.cpr_width_pct:.2f}%)"
+        return "🎯 Pattern at CPR Zone (Retest / Bounce)"
 
     # 6. Expansion / Breakout Levels
     if price >= pivots.r3:
