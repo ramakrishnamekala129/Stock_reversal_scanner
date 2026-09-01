@@ -31,7 +31,7 @@ class WebDashboardState:
             "patterns_detected": 0,
             "bullish_signals": 0,
             "bearish_signals": 0,
-            "ws_status": "CONNECTING",
+            "ws_status": "INITIALIZING...",
             "last_updated": "--",
         }
         self.active_websockets: Set[WebSocket] = set()

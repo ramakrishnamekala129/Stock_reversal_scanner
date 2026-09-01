@@ -90,24 +90,34 @@ def main():
     auth = UpstoxAuth()
     scanner = FNOIntradayScanner(auth=auth)
 
-    success = scanner.startup(force_refresh=args.refresh_cache, symbols=args.symbols)
-    if not success:
-        logger.error("Failed to start scanner.")
-        sys.exit(1)
-
-    # Launch Desktop GUI if enabled
+    # Launch Desktop GUI immediately if enabled (Zero-Wait Instant Window)
     if config.ENABLE_TKINTER_GUI:
         try:
             import tkinter as tk
             from gui.app import ScannerTkinterGUI
 
-            logger.info("Launching Native Tkinter Desktop Dashboard...")
+            logger.info("Launching Native Tkinter Desktop Dashboard (Instant Window)...")
             root = tk.Tk()
             gui = ScannerTkinterGUI(root, scanner=scanner)
 
-            if not args.dry_run:
-                # Start live WebSocket feed in background
-                threading.Thread(target=scanner.run_live, daemon=True).start()
+            def _background_startup():
+                try:
+                    dashboard_state.stats["ws_status"] = "INITIALIZING..."
+                    success = scanner.startup(force_refresh=args.refresh_cache, symbols=args.symbols)
+                    if success:
+                        if args.dry_run:
+                            dashboard_state.stats["ws_status"] = "DRY_RUN"
+                            logger.info("Dry-run candle scan completed successfully.")
+                        else:
+                            dashboard_state.stats["ws_status"] = "CONNECTED"
+                            scanner.run_live()
+                    else:
+                        dashboard_state.stats["ws_status"] = "ERROR"
+                except Exception as ex:
+                    logger.error(f"Startup error: {ex}")
+                    dashboard_state.stats["ws_status"] = "ERROR"
+
+            threading.Thread(target=_background_startup, daemon=True).start()
 
             def on_closing():
                 logger.info("Closing Tkinter GUI and stopping scanner...")
@@ -123,7 +133,12 @@ def main():
         except Exception as e:
             logger.error(f"Failed to start Tkinter GUI: {e}")
 
-    # Fallback / Web / Headless Mode
+    # Headless / Web Mode
+    success = scanner.startup(force_refresh=args.refresh_cache, symbols=args.symbols)
+    if not success:
+        logger.error("Failed to start scanner.")
+        sys.exit(1)
+
     if args.dry_run:
         logger.info("Dry-run candle scan completed successfully.")
         if config.ENABLE_WEB_DASHBOARD:

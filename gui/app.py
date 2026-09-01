@@ -507,13 +507,15 @@ class ScannerTkinterGUI:
             self.card_candles_val.set(str(stats.get("candles_processed", 0)))
             self.card_signals_val.set(str(len(signals)))
             self.card_bullish_val.set(str(stats.get("bullish_signals", 0)))
-            self.card_bearish_val.set(str(stats.get("bearish_signals", 0)))
-
-            ws_status = stats.get("ws_status", "CONNECTED")
+            ws_status = stats.get("ws_status", "INITIALIZING...")
             if ws_status == "CONNECTED":
                 self.card_status_val.set("🟢 LIVE CONNECTED")
             elif ws_status == "DRY_RUN":
                 self.card_status_val.set("🔵 DRY RUN COMPLETE")
+            elif ws_status == "INITIALIZING...":
+                self.card_status_val.set("🟡 LOADING F&O DATA...")
+            elif ws_status == "ERROR":
+                self.card_status_val.set("🔴 ERROR / CHECK TOKEN")
             else:
                 self.card_status_val.set(f"🟡 {ws_status}")
 
