@@ -56,3 +56,18 @@ def test_tkinter_gui_initialization(tk_root):
     # Verify market tree has item
     m_items = gui.market_tree.get_children()
     assert len(m_items) >= 1
+
+    # Verify MultiSelectDropdown
+    assert hasattr(gui, "signal_cpr_menu")
+    assert hasattr(gui, "market_cpr_menu")
+    assert gui.signal_cpr_menu.is_all_selected() is True
+
+    # Deselect all and select one option
+    gui.signal_cpr_menu.all_var.set(False)
+    gui.signal_cpr_menu._on_toggle_all()
+    assert gui.signal_cpr_menu.is_all_selected() is True  # 0 selected treated as ALL or none
+
+    gui.signal_cpr_menu.vars["⚡ Narrow CPR (<= 0.1%)"].set(True)
+    gui.signal_cpr_menu._on_toggle_option()
+    assert gui.signal_cpr_menu.is_all_selected() is False
+    assert "⚡ Narrow CPR (<= 0.1%)" in gui.signal_cpr_menu.get_selected()

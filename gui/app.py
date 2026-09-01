@@ -42,6 +42,89 @@ TREE_ALT = "#131f38"       # Alternating row background
 TREE_SEL = "#1e40af"       # Selected row
 
 
+class MultiSelectDropdown(tk.Menubutton):
+    """
+    A modern dark-themed multi-select dropdown widget with interactive checkboxes.
+    """
+    def __init__(self, master, title: str, options: List[str], on_change_callback=None, **kwargs):
+        super().__init__(
+            master,
+            text=f"{title}: ALL ▾",
+            relief="flat",
+            bg=CARD_BG,
+            fg=TEXT_MAIN,
+            activebackground=CARD_BORDER,
+            activeforeground=ACCENT_BLUE,
+            font=("Segoe UI", 9, "bold"),
+            highlightthickness=1,
+            highlightbackground=CARD_BORDER,
+            padx=10,
+            pady=3,
+            cursor="hand2",
+            **kwargs
+        )
+        self.title = title
+        self.options = options
+        self.on_change_callback = on_change_callback
+        self.menu = tk.Menu(
+            self,
+            tearoff=False,
+            bg=CARD_BG,
+            fg=TEXT_MAIN,
+            activebackground=TREE_SEL,
+            activeforeground=TEXT_MAIN,
+            font=("Segoe UI", 9)
+        )
+        self["menu"] = self.menu
+
+        self.all_var = tk.BooleanVar(value=True)
+        self.vars: Dict[str, tk.BooleanVar] = {}
+
+        # "Select ALL" checkbutton
+        self.menu.add_checkbutton(label="✓ (Select ALL)", variable=self.all_var, command=self._on_toggle_all)
+        self.menu.add_separator()
+
+        for opt in options:
+            var = tk.BooleanVar(value=True)
+            self.vars[opt] = var
+            self.menu.add_checkbutton(label=opt, variable=var, command=self._on_toggle_option)
+
+        self._update_button_text()
+
+    def _on_toggle_all(self):
+        val = self.all_var.get()
+        for var in self.vars.values():
+            var.set(val)
+        self._update_button_text()
+        if self.on_change_callback:
+            self.on_change_callback()
+
+    def _on_toggle_option(self):
+        all_checked = all(var.get() for var in self.vars.values())
+        self.all_var.set(all_checked)
+        self._update_button_text()
+        if self.on_change_callback:
+            self.on_change_callback()
+
+    def _update_button_text(self):
+        selected = [opt for opt, var in self.vars.items() if var.get()]
+        if len(selected) == len(self.options) or len(selected) == 0:
+            self.config(text=f"{self.title}: ALL ▾")
+        elif len(selected) == 1:
+            short_opt = selected[0].split("(")[0].strip()
+            self.config(text=f"{self.title}: {short_opt} ▾")
+        else:
+            self.config(text=f"{self.title}: {len(selected)} Selected ▾")
+
+    def get_selected(self) -> Set[str]:
+        """Returns the set of currently checked option strings."""
+        return {opt for opt, var in self.vars.items() if var.get()}
+
+    def is_all_selected(self) -> bool:
+        sel = self.get_selected()
+        return len(sel) == len(self.options) or len(sel) == 0
+
+
 class ScannerTkinterGUI:
     """High-performance Tkinter Desktop GUI for Upstox F&O Intraday Scanner."""
 
@@ -271,25 +354,28 @@ class ScannerTkinterGUI:
         pat_combo.pack(side=tk.LEFT, padx=(0, 12))
         pat_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
-        # CPR Filter
+        # Multi-Select CPR / Trap Filter
         tk.Label(toolbar, text="CPR / Trap:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        cpr_combo = ttk.Combobox(toolbar, textvariable=self.signal_cpr_var, values=[
-            "ALL",
+        signal_cpr_options = [
+            "⚡ Narrow CPR (<= 0.1%)",
+            "🪤 Narrow Trap Zones (<= 0.1%)",
             "🎯 Candlestick Pattern at CPR",
             "🎯 Bullish Pattern at CPR Support",
             "🎯 Bearish Pattern at CPR Resistance",
             "🚀 CPR Breakout (Bullish Close)",
             "💥 CPR Breakdown (Bearish Close)",
-            "⚡ Narrow CPR (<= 0.1%)",
-            "🪤 Narrow Trap Zones (<= 0.1%)",
             "🪤 All Trap Zones (R1-PDH / S1-PDL)",
-            "🎯 Narrow CPR + Narrow Trap",
             "🐂 Bull Trap (R1 - PDH)",
             "🐻 Bear Trap (S1 - PDL)",
-            "📌 Inside CPR / Pivot Test",
-        ], state="readonly", width=34)
-        cpr_combo.pack(side=tk.LEFT, padx=(0, 12))
-        cpr_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
+            "📌 Inside CPR Zone",
+        ]
+        self.signal_cpr_menu = MultiSelectDropdown(
+            toolbar,
+            title="CPR/Trap",
+            options=signal_cpr_options,
+            on_change_callback=self._render_signals
+        )
+        self.signal_cpr_menu.pack(side=tk.LEFT, padx=(0, 12))
 
         # Sort Dropdown
         tk.Label(toolbar, text="Sort:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
@@ -385,23 +471,26 @@ class ScannerTkinterGUI:
         toolbar = tk.Frame(self.tab_market, bg=BG_DARK, pady=8)
         toolbar.pack(fill=tk.X)
 
-        # Market CPR Filter
+        # Market Multi-Select CPR / Trap Filter
         tk.Label(toolbar, text="Filter Stocks:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        m_cpr_combo = ttk.Combobox(toolbar, textvariable=self.market_cpr_var, values=[
-            "ALL",
+        market_cpr_options = [
+            "⚡ Narrow CPR (<= 0.1%) Trending",
+            "🪤 Narrow Trap Zones (<= 0.1%)",
             "🎯 Pattern at CPR Zone",
             "🚀 CPR Breakout (Bullish Close)",
             "💥 CPR Breakdown (Bearish Close)",
-            "⚡ Narrow CPR (<= 0.1%) Trending",
-            "🪤 Narrow Trap Zones (<= 0.1%)",
             "🪤 In Trap Zones",
-            "🎯 Narrow CPR + Narrow Trap",
             "🐂 In Bull Trap (R1 - PDH)",
             "🐻 In Bear Trap (S1 - PDL)",
             "📌 Inside CPR Zone",
-        ], state="readonly", width=34)
-        m_cpr_combo.pack(side=tk.LEFT, padx=(0, 12))
-        m_cpr_combo.bind("<<ComboboxSelected>>", lambda e: self._render_market())
+        ]
+        self.market_cpr_menu = MultiSelectDropdown(
+            toolbar,
+            title="CPR/Trap",
+            options=market_cpr_options,
+            on_change_callback=self._render_market
+        )
+        self.market_cpr_menu.pack(side=tk.LEFT, padx=(0, 12))
 
         # Market Sort Options
         tk.Label(toolbar, text="Sort:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
@@ -605,7 +694,6 @@ class ScannerTkinterGUI:
 
         dir_filter = self.signal_direction_var.get()
         pat_filter = self.signal_pattern_var.get()
-        cpr_filter = self.signal_cpr_var.get()
         search_query = self.signal_search_var.get().strip().upper()
         sort_mode = self.signal_sort_var.get()
 
@@ -626,7 +714,7 @@ class ScannerTkinterGUI:
             if pat_filter != "ALL" and pattern != pat_filter:
                 continue
 
-            # Apply CPR / Trap Filter
+            # Apply Multi-Select CPR / Trap Filter
             has_cpr_pattern = "at CPR" in zone or any("at CPR" in str(c) or "at Narrow CPR" in str(c) for c in conds) or "Inside CPR" in zone
             has_cpr_bull = "CPR Support" in zone or any("CPR Support" in str(c) for c in conds)
             has_cpr_bear = "CPR Resistance" in zone or any("CPR Resistance" in str(c) for c in conds)
@@ -639,30 +727,34 @@ class ScannerTkinterGUI:
             is_bear_trap = "Bear Trap" in zone or any("Bear Trap" in str(c) for c in conds)
             is_cpr_test = "CPR" in zone or any("CPR" in str(c) for c in conds)
 
-            if cpr_filter == "🎯 Candlestick Pattern at CPR" and not has_cpr_pattern:
-                continue
-            elif cpr_filter == "🎯 Bullish Pattern at CPR Support" and not has_cpr_bull:
-                continue
-            elif cpr_filter == "🎯 Bearish Pattern at CPR Resistance" and not has_cpr_bear:
-                continue
-            elif cpr_filter == "🚀 CPR Breakout (Bullish Close)" and not has_cpr_breakout:
-                continue
-            elif cpr_filter == "💥 CPR Breakdown (Bearish Close)" and not has_cpr_breakdown:
-                continue
-            elif cpr_filter == "⚡ Narrow CPR (<= 0.1%)" and not has_narrow_cpr:
-                continue
-            elif cpr_filter == "🪤 Narrow Trap Zones (<= 0.1%)" and not has_narrow_trap:
-                continue
-            elif cpr_filter == "🪤 All Trap Zones (R1-PDH / S1-PDL)" and not is_trap:
-                continue
-            elif cpr_filter == "🎯 Narrow CPR + Narrow Trap" and not (has_narrow_cpr and (has_narrow_trap or is_trap)):
-                continue
-            elif cpr_filter == "🐂 Bull Trap (R1 - PDH)" and not is_bull_trap:
-                continue
-            elif cpr_filter == "🐻 Bear Trap (S1 - PDL)" and not is_bear_trap:
-                continue
-            elif cpr_filter == "📌 Inside CPR / Pivot Test" and not is_cpr_test:
-                continue
+            if hasattr(self, "signal_cpr_menu") and not self.signal_cpr_menu.is_all_selected():
+                sel = self.signal_cpr_menu.get_selected()
+                matched = False
+                if "⚡ Narrow CPR (<= 0.1%)" in sel and has_narrow_cpr:
+                    matched = True
+                if "🪤 Narrow Trap Zones (<= 0.1%)" in sel and has_narrow_trap:
+                    matched = True
+                if "🎯 Candlestick Pattern at CPR" in sel and has_cpr_pattern:
+                    matched = True
+                if "🎯 Bullish Pattern at CPR Support" in sel and has_cpr_bull:
+                    matched = True
+                if "🎯 Bearish Pattern at CPR Resistance" in sel and has_cpr_bear:
+                    matched = True
+                if "🚀 CPR Breakout (Bullish Close)" in sel and has_cpr_breakout:
+                    matched = True
+                if "💥 CPR Breakdown (Bearish Close)" in sel and has_cpr_breakdown:
+                    matched = True
+                if "🪤 All Trap Zones (R1-PDH / S1-PDL)" in sel and is_trap:
+                    matched = True
+                if "🐂 Bull Trap (R1 - PDH)" in sel and is_bull_trap:
+                    matched = True
+                if "🐻 Bear Trap (S1 - PDL)" in sel and is_bear_trap:
+                    matched = True
+                if "📌 Inside CPR Zone" in sel and is_cpr_test:
+                    matched = True
+
+                if not matched:
+                    continue
 
             # Apply Search Query
             if search_query:
@@ -747,7 +839,6 @@ class ScannerTkinterGUI:
         for item in self.market_tree.get_children():
             self.market_tree.delete(item)
 
-        cpr_filter = self.market_cpr_var.get()
         search_query = self.market_search_var.get().strip().upper()
         m_sort = self.market_sort_var.get()
 
@@ -762,26 +853,32 @@ class ScannerTkinterGUI:
             has_cpr_breakdown = "CPR Breakdown" in zone
             has_narrow_trap = ("Narrow" in zone and "Trap" in zone)
 
-            if cpr_filter == "🎯 Pattern at CPR Zone" and ("Pattern at CPR" not in zone and "Inside CPR" not in zone and "CPR" not in zone):
-                continue
-            elif cpr_filter == "🚀 CPR Breakout (Bullish Close)" and not has_cpr_breakout:
-                continue
-            elif cpr_filter == "💥 CPR Breakdown (Bearish Close)" and not has_cpr_breakdown:
-                continue
-            elif cpr_filter == "⚡ Narrow CPR (<= 0.1%) Trending" and not is_narrow:
-                continue
-            elif cpr_filter == "🪤 Narrow Trap Zones (<= 0.1%)" and not has_narrow_trap:
-                continue
-            elif cpr_filter == "🪤 In Trap Zones" and "Trap" not in zone:
-                continue
-            elif cpr_filter == "🎯 Narrow CPR + Narrow Trap" and not (is_narrow and ("Trap" in zone or has_narrow_trap)):
-                continue
-            elif cpr_filter == "🐂 In Bull Trap (R1 - PDH)" and "Bull Trap" not in zone:
-                continue
-            elif cpr_filter == "🐻 In Bear Trap (S1 - PDL)" and "Bear Trap" not in zone:
-                continue
-            elif cpr_filter == "📌 Inside CPR Zone" and "Inside CPR" not in zone:
-                continue
+            # Apply Market Multi-Select CPR / Trap Filter
+            if hasattr(self, "market_cpr_menu") and not self.market_cpr_menu.is_all_selected():
+                sel = self.market_cpr_menu.get_selected()
+                matched = False
+                if "⚡ Narrow CPR (<= 0.1%) Trending" in sel and is_narrow:
+                    matched = True
+                if "🪤 Narrow Trap Zones (<= 0.1%)" in sel and has_narrow_trap:
+                    matched = True
+                if "🎯 Pattern at CPR Zone" in sel and ("Pattern at CPR" in zone or "Inside CPR" in zone or "CPR" in zone):
+                    matched = True
+                if "🚀 CPR Breakout (Bullish Close)" in sel and has_cpr_breakout:
+                    matched = True
+                if "💥 CPR Breakdown (Bearish Close)" in sel and has_cpr_breakdown:
+                    matched = True
+                if "🪤 In Trap Zones" in sel and "Trap" in zone:
+                    matched = True
+                if "🐂 In Bull Trap (R1 - PDH)" in sel and "Bull Trap" in zone:
+                    matched = True
+                if "🐻 In Bear Trap (S1 - PDL)" in sel and "Bear Trap" in zone:
+                    matched = True
+                if "📌 Inside CPR Zone" in sel and "Inside CPR" in zone:
+                    matched = True
+
+                if not matched:
+                    continue
+
             if search_query and search_query not in symbol:
                 continue
 
