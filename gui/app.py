@@ -345,6 +345,7 @@ class ScannerTkinterGUI:
         self.signals_tree.tag_configure("high_score", background="#062e22", foreground="#34d399")
         self.signals_tree.tag_configure("narrow_cpr", background="#0c2d48", foreground=ACCENT_BLUE)
         self.signals_tree.tag_configure("alt_row", background=TREE_ALT)
+        self._render_signals()
 
     def _build_market_tab(self):
         """Builds Tab 2 toolbar and 210-stock market pivots treeview."""
@@ -440,6 +441,7 @@ class ScannerTkinterGUI:
         self.market_tree.tag_configure("up", foreground=ACCENT_GREEN)
         self.market_tree.tag_configure("down", foreground=ACCENT_RED)
         self.market_tree.tag_configure("alt_row", background=TREE_ALT)
+        self._render_market()
 
     def _build_footer(self):
         """Builds bottom status bar."""
@@ -522,19 +524,18 @@ class ScannerTkinterGUI:
             if stats.get("last_updated"):
                 self.footer_sync_lbl.config(text=f"Last sync: {stats.get('last_updated')}")
 
-            # Check if new signals arrived
-            if len(signals) > self.last_signal_count:
-                if self.last_signal_count > 0:
+            # Check if signals changed
+            if len(signals) != len(self.cached_signals):
+                if len(signals) > len(self.cached_signals) and len(self.cached_signals) > 0:
                     latest = signals[0]
                     is_bull = "BULLISH" in str(latest.get("direction", ""))
                     self._play_alert(is_bull)
-                self.last_signal_count = len(signals)
-                self.cached_signals = signals
+                self.cached_signals = list(signals)
                 self._render_signals()
 
             # Check if market data changed
-            if len(market) != len(self.cached_market) or not self.cached_market:
-                self.cached_market = market
+            if len(market) != len(self.cached_market):
+                self.cached_market = list(market)
                 self._render_market()
 
         except Exception as e:
@@ -621,6 +622,18 @@ class ScannerTkinterGUI:
                 tags=tuple(tags),
             )
 
+        if len(self.signals_tree.get_children()) == 0:
+            if not self.cached_signals:
+                self.signals_tree.insert("", tk.END, values=(
+                    "--:--:--", "SCANNING...", "INITIALIZING", "Downloading 5M Candles & Scanning Today's Setups...",
+                    "--", "--", "Loading Universe...", "--", "--", "--", "--", "--", "--", "Evaluating 210 F&O stocks in background..."
+                ), tags=("narrow_cpr",))
+            else:
+                self.signals_tree.insert("", tk.END, values=(
+                    "--:--:--", "--", "NO SIGNALS", "No reversal signals matching current filters.",
+                    "", "", "", "", "", "", "", "", "", "Try adjusting filters or search query."
+                ))
+
     def _render_market(self):
         """Renders 210-stock market pivot data in Treeview."""
         for item in self.market_tree.get_children():
@@ -687,6 +700,18 @@ class ScannerTkinterGUI:
                 ),
                 tags=tuple(tags),
             )
+
+        if len(self.market_tree.get_children()) == 0:
+            if not self.cached_market:
+                self.market_tree.insert("", tk.END, values=(
+                    "LOADING...", "--", "--", "--", "Calculating Daily Pivots & CPR for 210 stocks...",
+                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--"
+                ), tags=("narrow_cpr",))
+            else:
+                self.market_tree.insert("", tk.END, values=(
+                    "NONE", "--", "--", "--", "No instruments matching current search/filter.",
+                    "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
+                ))
 
     def _export_signals_csv(self):
         """Exports currently loaded signals into a CSV file."""

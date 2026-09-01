@@ -220,16 +220,51 @@ class HistoricalDataLoader:
     def load_initial_5m_candles(
         self,
         universe: Dict[str, Dict[str, Any]],
+        force_refresh: bool = False,
     ) -> Dict[str, pd.DataFrame]:
         """
         Loads today's official broker-side 5-minute historical candles using asyncio concurrency.
-        Provides ultra-fast candle lookback at startup.
+        Caches locally so dry runs and restarts load in milliseconds.
         """
+        today_str = datetime.now(pytz.timezone(config.MARKET_TIMEZONE)).strftime("%Y-%m-%d")
+        cache_file = self.cache_dir / f"intraday_5m_{today_str}.json"
+
+        if not force_refresh and cache_file.exists():
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                dfs = {}
+                kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
+                for sym, recs in data.items():
+                    if recs:
+                        df = pd.DataFrame(recs)
+                        df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_convert(kolkata_tz)
+                        dfs[sym] = df
+                if len(dfs) > 0:
+                    logger.info(f"Loaded {len(dfs)} 5-minute candle datasets from local cache: {cache_file.name}")
+                    return dfs
+            except Exception as e:
+                logger.warning(f"Failed to read 5M candle cache: {e}")
+
         logger.info("Loading initial 5-minute historical candles directly from broker via asyncio...")
         start_t = time.time()
         dfs = self.refresh_latest_broker_candles(universe)
         elapsed = time.time() - start_t
         logger.info(f"Loaded 5M broker DataFrames for {len(dfs)}/{len(universe)} symbols in {elapsed:.2f}s.")
+
+        # Save to disk cache
+        try:
+            serializable = {}
+            for sym, df in dfs.items():
+                if df is not None and not df.empty:
+                    df_copy = df.copy()
+                    df_copy["timestamp"] = df_copy["timestamp"].astype(str)
+                    serializable[sym] = df_copy.to_dict(orient="records")
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump(serializable, f)
+        except Exception as e:
+            logger.warning(f"Failed to write 5M candle cache: {e}")
+
         return dfs
 
     def _process_raw_1m_to_5m(self, raw_1m: List[List[Any]]) -> Optional[pd.DataFrame]:

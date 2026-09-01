@@ -103,7 +103,7 @@ class FNOIntradayScanner:
         # Initialize Web Dashboard State & Optional Excel
         dashboard_state.initialize_pivots(self._pivots)
         # 4. Fetch today's historical 5M candles (from 1m history)
-        historical_5m = self.hist_loader.load_initial_5m_candles(self._universe)
+        historical_5m = self.hist_loader.load_initial_5m_candles(self._universe, force_refresh=force_refresh)
         key_map = {sym: item["instrument_key"] for sym, item in self._universe.items()}
         self.candle_engine.initialize_history(historical_5m, key_map=key_map)
         self.evaluate_initial_history()
@@ -197,8 +197,9 @@ class FNOIntradayScanner:
             elif "BEARISH" in sig.direction:
                 self.session_mgr.stats.hanging_man_signals += 1
 
-            # Output formatted signal card to terminal
-            ConsoleFormatter.print_signal(sig)
+            # Output formatted signal card to terminal (if live)
+            if print_console:
+                ConsoleFormatter.print_signal(sig)
 
             # Save signal to database, broadcast to FastAPI Web Dashboard & optional Excel
             if self.db:
@@ -220,7 +221,7 @@ class FNOIntradayScanner:
                 for i in range(2, len(candles) + 1):
                     sub_candle = candles[i - 1]
                     sub_df = df_full.iloc[:i]
-                    self._handle_candle_closed(sym, sub_candle, sub_df)
+                    self._handle_candle_closed(sym, sub_candle, sub_df, print_console=False)
                     total_eval += 1
         logger.info(f"Startup candle scan complete: Evaluated {total_eval} historical candles, detected {len(self.dedup._seen_events)} signals.")
 
