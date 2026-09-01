@@ -76,8 +76,19 @@ def main():
                     sub_df = df_full.iloc[:i]
                     scanner._handle_candle_closed(sym, sub_candle, sub_df)
 
-        scanner.stop()
         logger.info("Dry-run evaluation complete.")
+        if config.ENABLE_WEB_DASHBOARD:
+            print("\n============================================================")
+            print(f"  WEB DASHBOARD ACTIVE: http://{config.WEB_HOST}:{config.WEB_PORT}")
+            print("  Press Ctrl+C in terminal to stop server.")
+            print("============================================================\n")
+            try:
+                while True:
+                    time.sleep(1.0)
+            except KeyboardInterrupt:
+                pass
+
+        scanner.stop()
         return
 
     # Live Mode

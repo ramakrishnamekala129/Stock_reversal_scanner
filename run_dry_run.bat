@@ -6,6 +6,9 @@ echo ============================================================
 echo   UPSTOX F^&O SCANNER - DRY RUN / TODAY'S HISTORY
 echo ============================================================
 echo.
+echo Launching full-day historical analysis & Web Dashboard...
+echo Web Dashboard URL: http://127.0.0.1:8000
+echo.
 
 python main.py --dry-run %*
 

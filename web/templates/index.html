@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upstox 5M F&O Intraday Reversal Scanner</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="dashboard-wrapper">
+        <!-- Top Navigation Header -->
+        <header class="top-navbar">
+            <div class="brand-section">
+                <div class="brand-logo">
+                    <span class="logo-icon">▲</span>
+                    <div class="brand-text">
+                        <span class="brand-title">UPSTOX 5M SCANNER</span>
+                        <span class="brand-subtitle">NSE F&O INTRADAY REVERSAL ENGINE</span>
+                    </div>
+                </div>
+                <div class="connection-status" id="connectionBadge">
+                    <span class="pulse-dot"></span>
+                    <span class="status-label" id="connectionText">CONNECTING...</span>
+                </div>
+            </div>
+
+            <!-- Header Quick Stats -->
+            <div class="header-stats">
+                <div class="stat-badge">
+                    <span class="stat-label">F&O Universe</span>
+                    <span class="stat-value" id="statSymbols">210</span>
+                </div>
+                <div class="stat-badge">
+                    <span class="stat-label">Candles Processed</span>
+                    <span class="stat-value" id="statCandles">0</span>
+                </div>
+                <div class="stat-badge bullish-badge">
+                    <span class="stat-label">Bullish Signals</span>
+                    <span class="stat-value" id="statBullish">0</span>
+                </div>
+                <div class="stat-badge bearish-badge">
+                    <span class="stat-label">Bearish Signals</span>
+                    <span class="stat-value" id="statBearish">0</span>
+                </div>
+                <div class="stat-badge time-badge">
+                    <span class="stat-label">Market Time (IST)</span>
+                    <span class="stat-value mono" id="liveClock">--:--:--</span>
+                </div>
+            </div>
+
+            <!-- Controls (Audio + Theme) -->
+            <div class="header-controls">
+                <button class="btn-ctrl" id="btnAudioToggle" title="Toggle Sound Alert on New Signal">
+                    <span id="audioIcon">🔔</span> Sound: ON
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Tab Navigation -->
+        <div class="tab-navigation-bar">
+            <div class="tab-buttons">
+                <button class="tab-btn active" id="tabBtnSignals" onclick="switchTab('signals')">
+                    <span class="tab-icon">⚡</span>
+                    <span class="tab-title">Active Signals Stream</span>
+                    <span class="tab-counter" id="signalsCountBadge">0</span>
+                </button>
+                <button class="tab-btn" id="tabBtnMarket" onclick="switchTab('market')">
+                    <span class="tab-icon">📊</span>
+                    <span class="tab-title">Live Market & Daily Pivots</span>
+                    <span class="tab-counter" id="marketCountBadge">210</span>
+                </button>
+            </div>
+
+            <!-- Search and Filter Bar -->
+            <div class="filter-search-container">
+                <div class="search-box">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" id="searchInput" placeholder="Search symbol or pattern..." oninput="handleSearch(this.value)">
+                </div>
+
+                <!-- Signal Filter Options (Visible on Signals Tab) -->
+                <div class="filter-group" id="signalFilters">
+                    <select id="signalDirectionFilter" onchange="applySignalFilters()">
+                        <option value="ALL">All Signals</option>
+                        <option value="BULLISH">Bullish Setups Only</option>
+                        <option value="BEARISH">Bearish Warnings Only</option>
+                    </select>
+                    <select id="signalPatternFilter" onchange="applySignalFilters()">
+                        <option value="ALL">All Patterns</option>
+                        <option value="BULLISH ENGULFING">Bullish Engulfing</option>
+                        <option value="BULLISH HARAMI">Bullish Harami</option>
+                        <option value="HAMMER">Hammer</option>
+                        <option value="INVERSE HAMMER">Inverse Hammer</option>
+                        <option value="HANGING MAN">Hanging Man</option>
+                    </select>
+                </div>
+
+                <!-- Export Button -->
+                <button class="btn-export" onclick="exportCurrentTableToCSV()">
+                    <span>📥</span> Export CSV
+                </button>
+            </div>
+        </div>
+
+        <!-- Tab 1: Signals Stream (Sheet 2 Equivalent) -->
+        <main class="tab-content active" id="tabSignals">
+            <div class="table-container">
+                <table class="data-table" id="signalsTable">
+                    <thead>
+                        <tr>
+                            <th style="width: 90px;">Time</th>
+                            <th style="width: 130px;">Symbol</th>
+                            <th style="width: 150px;">Signal</th>
+                            <th style="width: 180px;">Candlestick Pattern</th>
+                            <th class="num" style="width: 100px;">Price</th>
+                            <th class="num" style="width: 80px;">Score</th>
+                            <th class="num" style="width: 100px;">Pivot (PP)</th>
+                            <th class="num" style="width: 95px;">PDH</th>
+                            <th class="num" style="width: 95px;">PDL</th>
+                            <th class="num" style="width: 95px;">R1</th>
+                            <th class="num" style="width: 95px;">S1</th>
+                            <th class="num" style="width: 90px;">Rel Vol</th>
+                            <th>Conditions & Factors Met</th>
+                        </tr>
+                    </thead>
+                    <tbody id="signalsTableBody">
+                        <tr class="empty-row">
+                            <td colspan="13">Scanning 5-minute candles for reversal setups...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </main>
+
+        <!-- Tab 2: Live Market & Pivots (Sheet 1 Equivalent) -->
+        <main class="tab-content" id="tabMarket">
+            <div class="table-container">
+                <table class="data-table" id="marketTable">
+                    <thead>
+                        <tr>
+                            <th style="width: 140px;">Symbol</th>
+                            <th class="num" style="width: 110px;">LTP (₹)</th>
+                            <th class="num" style="width: 100px;">Change %</th>
+                            <th class="num" style="width: 120px;">Volume</th>
+                            <th class="num" style="width: 100px;">Pivot (PP)</th>
+                            <th class="num" style="width: 95px;">R1</th>
+                            <th class="num" style="width: 95px;">R2</th>
+                            <th class="num" style="width: 95px;">R3</th>
+                            <th class="num" style="width: 95px;">S1</th>
+                            <th class="num" style="width: 95px;">S2</th>
+                            <th class="num" style="width: 95px;">S3</th>
+                            <th class="num" style="width: 95px;">PDO</th>
+                            <th class="num" style="width: 95px;">PDH</th>
+                            <th class="num" style="width: 95px;">PDL</th>
+                            <th class="num" style="width: 95px;">PDC</th>
+                            <th style="width: 100px;">Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody id="marketTableBody">
+                        <tr class="empty-row">
+                            <td colspan="16">Loading F&O instruments and pivot levels...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </main>
+
+        <!-- Bottom Status Bar -->
+        <footer class="bottom-bar">
+            <div class="footer-left">
+                <span>Scanner Engine: <strong>Active (5-Minute Multi-Factor)</strong></span>
+                <span class="separator">•</span>
+                <span>WebSocket Mode: <strong>Full Protobuf (LTP, VTT, LTQ)</strong></span>
+                <span class="separator">•</span>
+                <span>Broker Candles: <strong>Upstox V2/V3 REST</strong></span>
+            </div>
+            <div class="footer-right">
+                <span id="lastUpdatedNote">Last sync: --:--:--</span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Audio Element for Signal Alerts -->
+    <audio id="signalAudio" preload="auto">
+        <source src="data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU..." type="audio/wav">
+    </audio>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

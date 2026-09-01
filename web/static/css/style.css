@@ -1,0 +1,571 @@
+/* ==========================================================================
+   Upstox 5M F&O Scanner Dashboard - Modern Dark Theme
+   ========================================================================== */
+
+:root {
+    --bg-primary: #080c14;
+    --bg-secondary: #0f172a;
+    --bg-card: #141e33;
+    --bg-hover: #1b2845;
+    --border-color: #223254;
+    --border-subtle: #192642;
+
+    --text-main: #f1f5f9;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+
+    --accent-blue: #38bdf8;
+    --accent-blue-bg: rgba(56, 189, 248, 0.12);
+
+    --bullish-green: #10b981;
+    --bullish-bg: rgba(16, 185, 129, 0.15);
+    --bullish-border: rgba(16, 185, 129, 0.35);
+
+    --bearish-red: #f43f5e;
+    --bearish-bg: rgba(244, 63, 94, 0.15);
+    --bearish-border: rgba(244, 63, 94, 0.35);
+
+    --amber-warning: #f59e0b;
+    --amber-bg: rgba(245, 158, 11, 0.15);
+
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    background-color: var(--bg-primary);
+    color: var(--text-main);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.4;
+    overflow-x: hidden;
+    height: 100vh;
+}
+
+.dashboard-wrapper {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+/* ==========================================================================
+   1. Top Navigation Bar
+   ========================================================================== */
+.top-navbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    background: linear-gradient(180deg, #111a2e 0%, var(--bg-secondary) 100%);
+    border-bottom: 1px solid var(--border-color);
+    gap: 16px;
+    flex-shrink: 0;
+}
+
+.brand-section {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.brand-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.logo-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(135deg, #0284c7 0%, #38bdf8 100%);
+    color: #ffffff;
+    font-weight: 800;
+    font-size: 16px;
+    border-radius: 8px;
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.4);
+}
+
+.brand-text {
+    display: flex;
+    flex-direction: column;
+}
+
+.brand-title {
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    color: #ffffff;
+}
+
+.brand-subtitle {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    color: var(--accent-blue);
+}
+
+.connection-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: rgba(16, 185, 129, 0.1);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.pulse-dot {
+    width: 8px;
+    height: 8px;
+    background-color: var(--bullish-green);
+    border-radius: 50%;
+    box-shadow: 0 0 8px var(--bullish-green);
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(1.2); }
+    100% { opacity: 1; transform: scale(1); }
+}
+
+.status-label {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--bullish-green);
+}
+
+/* Header Stats */
+.header-stats {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.stat-badge {
+    display: flex;
+    flex-direction: column;
+    padding: 4px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    min-width: 90px;
+}
+
+.stat-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.stat-value {
+    font-size: 13px;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+.bullish-badge {
+    border-color: var(--bullish-border);
+    background: var(--bullish-bg);
+}
+.bullish-badge .stat-value {
+    color: var(--bullish-green);
+}
+
+.bearish-badge {
+    border-color: var(--bearish-border);
+    background: var(--bearish-bg);
+}
+.bearish-badge .stat-value {
+    color: var(--bearish-red);
+}
+
+.time-badge .stat-value {
+    color: var(--accent-blue);
+}
+
+/* Header Controls */
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-ctrl {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-main);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-ctrl:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-blue);
+}
+
+/* ==========================================================================
+   2. Tab Navigation & Search Bar
+   ========================================================================== */
+.tab-navigation-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 20px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    gap: 16px;
+    flex-shrink: 0;
+}
+
+.tab-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.tab-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.tab-btn:hover {
+    background: var(--bg-card);
+    color: var(--text-main);
+}
+
+.tab-btn.active {
+    background: var(--bg-card);
+    border-color: var(--accent-blue);
+    color: #ffffff;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.15);
+}
+
+.tab-counter {
+    padding: 2px 8px;
+    background: var(--border-color);
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+}
+
+.tab-btn.active .tab-counter {
+    background: var(--accent-blue-bg);
+    color: var(--accent-blue);
+}
+
+/* Filters & Search */
+.filter-search-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.search-box {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 6px 12px;
+    width: 220px;
+}
+
+.search-icon {
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.search-box input {
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-main);
+    font-size: 12px;
+    font-family: var(--font-sans);
+    width: 100%;
+}
+
+.search-box input::placeholder {
+    color: var(--text-dim);
+}
+
+.filter-group {
+    display: flex;
+    gap: 8px;
+}
+
+.filter-group select {
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-main);
+    font-size: 12px;
+    font-family: var(--font-sans);
+    padding: 6px 10px;
+    outline: none;
+    cursor: pointer;
+}
+
+.btn-export {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-main);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-export:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent-blue);
+}
+
+/* ==========================================================================
+   3. Main Tables (Data Display)
+   ========================================================================== */
+.tab-content {
+    display: none;
+    flex: 1;
+    overflow: hidden;
+    background: var(--bg-primary);
+}
+
+.tab-content.active {
+    display: flex;
+    flex-direction: column;
+}
+
+.table-container {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: auto;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    text-align: left;
+}
+
+.data-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: #0f172a;
+    color: var(--text-muted);
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--border-color);
+    white-space: nowrap;
+}
+
+.data-table tbody tr {
+    border-bottom: 1px solid var(--border-subtle);
+    transition: background-color 0.15s ease;
+}
+
+.data-table tbody tr:hover {
+    background-color: var(--bg-hover) !important;
+}
+
+.data-table tbody tr:nth-child(even) {
+    background-color: rgba(20, 30, 51, 0.4);
+}
+
+.data-table td {
+    padding: 8px 14px;
+    white-space: nowrap;
+    color: var(--text-main);
+    font-variant-numeric: tabular-nums;
+}
+
+.data-table td.num {
+    text-align: right;
+    font-family: var(--font-mono);
+}
+
+.data-table th.num {
+    text-align: right;
+}
+
+.mono {
+    font-family: var(--font-mono);
+}
+
+/* Badge Styles */
+.badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.3px;
+}
+
+.badge-bullish {
+    background: var(--bullish-bg);
+    color: var(--bullish-green);
+    border: 1px solid var(--bullish-border);
+}
+
+.badge-bearish {
+    background: var(--bearish-bg);
+    color: var(--bearish-red);
+    border: 1px solid var(--bearish-border);
+}
+
+.badge-pattern {
+    background: var(--bg-card);
+    color: #e2e8f0;
+    border: 1px solid var(--border-color);
+    font-weight: 600;
+}
+
+.badge-score {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 22px;
+    border-radius: 11px;
+    font-family: var(--font-mono);
+    font-weight: 800;
+    font-size: 12px;
+}
+
+.score-high {
+    background: rgba(16, 185, 129, 0.25);
+    color: #10b981;
+    border: 1px solid #10b981;
+}
+
+.score-mid {
+    background: rgba(56, 189, 248, 0.2);
+    color: #38bdf8;
+    border: 1px solid #38bdf8;
+}
+
+.score-low {
+    background: rgba(245, 158, 11, 0.2);
+    color: #f59e0b;
+    border: 1px solid #f59e0b;
+}
+
+.score-bearish {
+    background: rgba(244, 63, 94, 0.25);
+    color: #f43f5e;
+    border: 1px solid #f43f5e;
+}
+
+.tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.tag {
+    padding: 2px 6px;
+    background: rgba(56, 189, 248, 0.08);
+    border: 1px solid rgba(56, 189, 248, 0.2);
+    border-radius: 4px;
+    font-size: 10px;
+    color: #93c5fd;
+}
+
+.val-pos {
+    color: var(--bullish-green) !important;
+}
+
+.val-neg {
+    color: var(--bearish-red) !important;
+}
+
+.empty-row td {
+    text-align: center;
+    padding: 40px !important;
+    color: var(--text-dim);
+    font-style: italic;
+}
+
+/* Live Tick Flashing Effects */
+@keyframes flashGreen {
+    0% { background-color: rgba(16, 185, 129, 0.4); }
+    100% { background-color: transparent; }
+}
+
+@keyframes flashRed {
+    0% { background-color: rgba(244, 63, 94, 0.4); }
+    100% { background-color: transparent; }
+}
+
+.flash-up {
+    animation: flashGreen 1s ease-out;
+}
+
+.flash-down {
+    animation: flashRed 1s ease-out;
+}
+
+/* ==========================================================================
+   4. Bottom Status Bar
+   ========================================================================== */
+.bottom-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 20px;
+    background: #0b111e;
+    border-top: 1px solid var(--border-color);
+    font-size: 11px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+}
+
+.footer-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.separator {
+    color: var(--border-color);
+}

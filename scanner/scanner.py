@@ -25,6 +25,8 @@ from scanner.signal_engine import SignalEngine, SignalEvent
 from upstox.auth import UpstoxAuth
 from upstox.rest import UpstoxRestClient
 from upstox.websocket import NormalizedTick, UpstoxWebSocketStreamer
+from web.server import WebServerManager
+from web.state import dashboard_state
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,12 @@ logger = logging.getLogger(__name__)
 class FNOIntradayScanner:
     """End-to-End Backend F&O Intraday Scanner."""
 
-    def __init__(self, auth: Optional[UpstoxAuth] = None, enable_excel: bool = config.ENABLE_EXCEL_EXPORT):
+    def __init__(
+        self,
+        auth: Optional[UpstoxAuth] = None,
+        enable_excel: bool = config.ENABLE_EXCEL_EXPORT,
+        enable_web: bool = config.ENABLE_WEB_DASHBOARD,
+    ):
         self.auth = auth or UpstoxAuth()
         self.rest_client = UpstoxRestClient(self.auth.get_api_client() if self.auth.has_access_token else None)
         self.instrument_mgr = InstrumentManager(self.rest_client)
@@ -42,6 +49,7 @@ class FNOIntradayScanner:
         self.signal_engine = SignalEngine()
         self.db = DatabaseRepository() if config.ENABLE_DB_STORAGE else None
         self.excel_mgr = LiveExcelManager() if enable_excel else None
+        self.web_server = WebServerManager() if enable_web else None
 
         self.candle_engine = CandleEngine(on_candle_closed=self._handle_candle_closed)
         self.ws_streamer: Optional[UpstoxWebSocketStreamer] = None
@@ -92,9 +100,14 @@ class FNOIntradayScanner:
 
         logger.info(f"Computed pivot levels for {len(self._pivots)} F&O symbols.")
 
-        # Initialize Live Excel Workbook with Sheet 1 & Sheet 2
+        # Initialize Web Dashboard State & Optional Excel
+        dashboard_state.initialize_pivots(self._pivots)
         if self.excel_mgr:
             self.excel_mgr.initialize_workbook(self._pivots)
+
+        # Start FastAPI Web Dashboard
+        if self.web_server:
+            self.web_server.start()
 
         # 4. Fetch today's historical 5M candles (from 1m history)
         historical_5m = self.hist_loader.load_initial_5m_candles(self._universe)
@@ -114,12 +127,15 @@ class FNOIntradayScanner:
                 inst_keys = self.instrument_mgr.get_instrument_keys()
                 self.ws_streamer.connect(inst_keys)
                 ws_status = "CONNECTED"
+                dashboard_state.update_stats(ws_status="CONNECTED")
             except Exception as e:
                 logger.error(f"Failed to start WebSocket streamer: {e}")
                 ws_status = f"ERROR ({e})"
+                dashboard_state.update_stats(ws_status=f"ERROR ({e})")
                 self.session_mgr.stats.websocket_errors += 1
         else:
             ws_status = "NO ACCESS TOKEN (SIMULATION / DRY-RUN ONLY)"
+            dashboard_state.update_stats(ws_status="DRY RUN / SIMULATION")
 
         # 6. Display Startup Banner
         ConsoleFormatter.print_startup_banner(
@@ -134,11 +150,12 @@ class FNOIntradayScanner:
 
     def _handle_live_tick(self, tick: NormalizedTick):
         """
-        Receives normalized ticks from WebSocket and forwards them to Candle Engine & Live Excel.
+        Receives normalized ticks from WebSocket and forwards them to Candle Engine & Web Dashboard.
         """
         if not self._is_running:
             return
         self.candle_engine.process_tick(tick)
+        dashboard_state.update_price(tick.symbol, tick.ltp, tick.volume, tick.timestamp)
         if self.excel_mgr:
             self.excel_mgr.update_price(tick.symbol, tick.ltp, tick.volume, tick.timestamp)
 
@@ -148,10 +165,12 @@ class FNOIntradayScanner:
         Runs pattern detection, pivot context scoring, and triggers deduplicated alerts.
         """
         self.session_mgr.stats.candles_processed += 1
+        dashboard_state.update_stats(candles_processed=self.session_mgr.stats.candles_processed)
 
-        # Persist closed candle in SQLite & update Live Excel price
+        # Persist closed candle in SQLite & update Web Dashboard price
         if self.db:
             self.db.save_candle(candle.to_dict())
+        dashboard_state.update_price(symbol, candle.close, candle.volume, candle.timestamp)
         if self.excel_mgr:
             self.excel_mgr.update_price(symbol, candle.close, candle.volume, candle.timestamp)
 
@@ -183,9 +202,10 @@ class FNOIntradayScanner:
             # Output formatted signal card to terminal
             ConsoleFormatter.print_signal(sig)
 
-            # Save signal to database & push to Live Excel Sheet 2
+            # Save signal to database, broadcast to FastAPI Web Dashboard & optional Excel
             if self.db:
                 self.db.save_signal(sig.to_dict())
+            dashboard_state.add_signal(sig)
             if self.excel_mgr:
                 self.excel_mgr.add_signal(sig)
 
@@ -253,6 +273,9 @@ class FNOIntradayScanner:
 
         if self.excel_mgr:
             self.excel_mgr.close()
+
+        if self.web_server:
+            self.web_server.stop()
 
         # Print Session Summary Statistics
         self.session_mgr.stats.print_summary()

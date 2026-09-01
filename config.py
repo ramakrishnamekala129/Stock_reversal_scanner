@@ -91,9 +91,15 @@ API_RETRY_ATTEMPTS = 3
 API_RETRY_BACKOFF_BASE = 1.0  # seconds
 CACHE_EXPIRY_HOURS = 12
 
-# Database & Excel Live Export Settings
+# Database, Excel & FastAPI Web Dashboard Settings
 ENABLE_DB_STORAGE = True
-ENABLE_EXCEL_EXPORT = True
+ENABLE_EXCEL_EXPORT = False  # Disabled in favor of FastAPI Web Dashboard
 EXCEL_FILE_PATH = BASE_DIR / "fno_scanner_live.xlsx"
-EXCEL_AUTO_OPEN = True
+EXCEL_AUTO_OPEN = False
 EXCEL_UPDATE_INTERVAL_SECONDS = 1.0
+
+# FastAPI Web Dashboard Settings
+ENABLE_WEB_DASHBOARD = True
+WEB_HOST = "127.0.0.1"
+WEB_PORT = 8000
+WEB_AUTO_OPEN = True
