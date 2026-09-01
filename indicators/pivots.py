@@ -69,24 +69,33 @@ class DailyPivots:
         }
 
 
-def get_pivot_zone(price: float, pivots: DailyPivots) -> str:
+def get_pivot_zone(
+    price: float,
+    pivots: DailyPivots,
+    low: Optional[float] = None,
+    high: Optional[float] = None,
+) -> str:
     """
     Returns high-precision technical zone classification including:
     - Bull Trap Zone (R1 - PDH Resistance)
     - Bear Trap Zone (S1 - PDL Support)
     - Central Pivot Range (Inside Narrow CPR / CPR Base)
     - Standard Expansion / Breakout levels
+    If low and high are provided, evaluates candle wick & body touches as well.
     """
-    # 1. Check Bull Trap Zone (R1 & PDH Confluence)
-    if pivots.bull_trap_bottom <= price <= pivots.bull_trap_top:
+    c_low = low if low is not None else price
+    c_high = high if high is not None else price
+
+    # 1. Check Bull Trap Zone (R1 & PDH Confluence) - price inside or candle wick touches
+    if (pivots.bull_trap_bottom <= price <= pivots.bull_trap_top) or (c_high >= pivots.bull_trap_bottom and c_low <= pivots.bull_trap_top):
         return "Bull Trap Zone (R1 - PDH)"
 
-    # 2. Check Bear Trap Zone (S1 & PDL Confluence)
-    if pivots.bear_trap_bottom <= price <= pivots.bear_trap_top:
+    # 2. Check Bear Trap Zone (S1 & PDL Confluence) - price inside or candle wick touches
+    if (pivots.bear_trap_bottom <= price <= pivots.bear_trap_top) or (c_low <= pivots.bear_trap_top and c_high >= pivots.bear_trap_bottom):
         return "Bear Trap Zone (S1 - PDL)"
 
-    # 3. Check CPR Zone (Central Pivot Range)
-    if pivots.cpr_bottom <= price <= pivots.cpr_top:
+    # 3. Check CPR Zone (Central Pivot Range) - price inside or candle wick touches
+    if (pivots.cpr_bottom <= price <= pivots.cpr_top) or (c_low <= pivots.cpr_top and c_high >= pivots.cpr_bottom):
         if pivots.is_narrow_cpr:
             return "Inside Narrow CPR (<0.1%)"
         return "Inside CPR Zone (Choppy / Base)"

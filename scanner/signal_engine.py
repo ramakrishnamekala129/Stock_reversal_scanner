@@ -186,29 +186,32 @@ class SignalEngine:
                 score_breakdown.append(f"Price < S1 ({w:+d})")
                 conditions_met.append("Price < S1")
 
-            # --- Trap Zone Confluences ---
-            # 1. Bear Trap Zone (S1 & PDL Support Zone): Bullish reversals here trap short sellers!
-            if pivots.bear_trap_bottom <= curr_close <= pivots.bear_trap_top:
+            # --- Trap Zone Confluences (Candle Touch / Body / Wick) ---
+            # 1. Bear Trap Zone (S1 & PDL Support Zone): Candle touches S1-PDL range
+            candle_touches_bear_trap = (curr_low <= pivots.bear_trap_top and curr_high >= pivots.bear_trap_bottom)
+            if candle_touches_bear_trap:
                 if pat.pattern_direction == "BULLISH" or pat.pattern_name in ["HAMMER", "BULLISH ENGULFING", "INVERSE HAMMER", "BULLISH HARAMI"]:
                     w = 3
                     score += w
-                    score_breakdown.append(f"Bear Trap S1-PDL Support Reversal ({w:+d})")
+                    score_breakdown.append(f"Bear Trap S1-PDL Touch & Bounce ({w:+d})")
                     conditions_met.append("🪤 Bear Trap Reversal (S1-PDL)")
 
-            # 2. Bull Trap Zone (R1 & PDH Resistance Zone): Bearish reversals here trap breakout buyers!
-            if pivots.bull_trap_bottom <= curr_close <= pivots.bull_trap_top:
+            # 2. Bull Trap Zone (R1 & PDH Resistance Zone): Candle touches R1-PDH range
+            candle_touches_bull_trap = (curr_high >= pivots.bull_trap_bottom and curr_low <= pivots.bull_trap_top)
+            if candle_touches_bull_trap:
                 if pat.pattern_direction == "BEARISH" or pat.pattern_name == "HANGING MAN":
                     w = -3
                     score += w
-                    score_breakdown.append(f"Bull Trap R1-PDH Resistance Rejection ({w:+d})")
+                    score_breakdown.append(f"Bull Trap R1-PDH Touch & Rejection ({w:+d})")
                     conditions_met.append("🪤 Bull Trap Rejection (R1-PDH)")
 
-            # 3. CPR (Central Pivot Range) Confluence
-            if pivots.cpr_bottom <= curr_close <= pivots.cpr_top:
+            # 3. CPR (Central Pivot Range) Confluence (Candle Touch / Test)
+            candle_touches_cpr = (curr_low <= pivots.cpr_top and curr_high >= pivots.cpr_bottom)
+            if candle_touches_cpr:
                 if pivots.is_narrow_cpr:
-                    conditions_met.append("⚡ Inside Narrow CPR (<0.1%)")
+                    conditions_met.append("⚡ Tested Narrow CPR (<0.1%)")
                 else:
-                    conditions_met.append("🎯 Inside CPR Zone")
+                    conditions_met.append("🎯 Tested CPR Zone")
 
             # 4. Narrow CPR Trending Day Candidate (< 0.10% width)
             if pivots.is_narrow_cpr:
@@ -241,7 +244,7 @@ class SignalEngine:
                 is_actionable = score >= self.min_signal_score
 
             if is_actionable:
-                pivot_zone = get_pivot_zone(curr_close, pivots)
+                pivot_zone = get_pivot_zone(curr_close, pivots, low=curr_low, high=curr_high)
                 signal_event = SignalEvent(
                     symbol=symbol,
                     timestamp=ts,
