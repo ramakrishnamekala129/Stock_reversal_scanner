@@ -41,8 +41,29 @@ class PreviousDayOHLCV:
         }
 
 
+class AsyncUpstoxRateLimiter:
+    """
+    Token bucket / leaky bucket rate limiter enforcing Upstox API rate limits.
+    Default: 25 requests/second (Upstox Market Data tier).
+    """
+    def __init__(self, rate_per_sec: int = 25):
+        self.rate_per_sec = max(1, rate_per_sec)
+        self.interval = 1.0 / float(self.rate_per_sec)
+        self._lock = asyncio.Lock()
+        self._last_time = 0.0
+
+    async def acquire(self):
+        async with self._lock:
+            loop = asyncio.get_running_loop()
+            now = loop.time()
+            elapsed = now - self._last_time
+            if elapsed < self.interval:
+                await asyncio.sleep(self.interval - elapsed)
+            self._last_time = loop.time()
+
+
 class HistoricalDataLoader:
-    """Loads previous-day session data and builds initial 5M history with asyncio acceleration."""
+    """Loads previous-day session data and builds initial 5M history with asyncio acceleration & rate limiting."""
 
     def __init__(self, rest_client: UpstoxRestClient):
         self.rest_client = rest_client
@@ -61,6 +82,7 @@ class HistoricalDataLoader:
         Retrieves previous trading session OHLCV for every F&O stock.
         Properly ignores current date and picks the most recent completed trading session.
         Uses local disk cache to avoid redundant API requests.
+        Enforces Upstox 25 req/sec rate limit.
         """
         today_str = date.today().isoformat()
         cache_file = config.CACHE_DIR / f"previous_day_ohlcv_{today_str}.json"
@@ -76,22 +98,23 @@ class HistoricalDataLoader:
             except Exception as e:
                 logger.warning(f"Failed to read previous-day cache: {e}. Fetching via REST...")
 
-        logger.info(f"Fetching previous trading-day OHLCV for {len(universe)} symbols via asyncio...")
+        logger.info(f"Fetching previous trading-day OHLCV for {len(universe)} symbols via asyncio (Rate Limit: {config.UPSTOX_RATE_LIMIT_PER_SEC} req/s)...")
         token = self.rest_client.access_token
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         results: Dict[str, PreviousDayOHLCV] = {}
 
         async def _fetch_all_daily():
-            sem = asyncio.Semaphore(50)
+            rate_limiter = AsyncUpstoxRateLimiter(config.UPSTOX_RATE_LIMIT_PER_SEC)
             async with httpx.AsyncClient(
                 headers=headers,
                 timeout=12.0,
-                limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
+                limits=httpx.Limits(max_connections=50, max_keepalive_connections=25),
             ) as client:
                 async def _fetch_one(sym: str, item: Dict[str, Any]):
                     inst_key = item["instrument_key"]
                     url = f"https://api.upstox.com/v2/historical-candle/{inst_key}/day/2026-09-01/2025-01-01"
-                    async with sem:
+                    for attempt in range(config.API_RETRY_ATTEMPTS):
+                        await rate_limiter.acquire()
                         try:
                             resp = await client.get(url)
                             if resp.status_code == 200:
@@ -110,8 +133,16 @@ class HistoricalDataLoader:
                                             close=float(candle[4]),
                                             volume=int(candle[5]),
                                         ))
+                                return (sym, None)
+                            elif resp.status_code == 429:
+                                retry_after = float(resp.headers.get("Retry-After", config.API_RETRY_BACKOFF_BASE * (2 ** attempt)))
+                                logger.warning(f"Upstox 429 Rate limit on {sym}, backing off for {retry_after:.1f}s...")
+                                await asyncio.sleep(retry_after)
+                            else:
+                                break
                         except Exception as e:
-                            logger.debug(f"Error fetching daily candle for {sym}: {e}")
+                            logger.debug(f"Attempt {attempt+1} daily fetch error for {sym}: {e}")
+                            await asyncio.sleep(config.API_RETRY_BACKOFF_BASE * (attempt + 1))
                     return (sym, None)
 
                 tasks = [_fetch_one(sym, item) for sym, item in universe.items()]
@@ -246,22 +277,24 @@ class HistoricalDataLoader:
     ) -> Dict[str, pd.DataFrame]:
         """
         Fetches the latest official broker-side 5-minute candles for all universe stocks in parallel using asyncio.
+        Enforces Upstox 25 req/sec rate limit with automatic exponential backoff.
         """
         token = self.rest_client.access_token
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         results: Dict[str, pd.DataFrame] = {}
 
         async def _fetch_all_async():
-            sem = asyncio.Semaphore(50)
+            rate_limiter = AsyncUpstoxRateLimiter(config.UPSTOX_RATE_LIMIT_PER_SEC)
             async with httpx.AsyncClient(
                 headers=headers,
                 timeout=10.0,
-                limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
+                limits=httpx.Limits(max_connections=50, max_keepalive_connections=25),
             ) as client:
                 async def _fetch_one(sym: str, item: Dict[str, Any]):
                     inst_key = item["instrument_key"]
                     url = f"https://api.upstox.com/v2/historical-candle/intraday/{inst_key}/1minute"
-                    async with sem:
+                    for attempt in range(config.API_RETRY_ATTEMPTS):
+                        await rate_limiter.acquire()
                         try:
                             resp = await client.get(url)
                             if resp.status_code == 200:
@@ -270,8 +303,16 @@ class HistoricalDataLoader:
                                 df = self._process_raw_1m_to_5m(candles)
                                 if df is not None and not df.empty:
                                     return (sym, df)
+                                return (sym, None)
+                            elif resp.status_code == 429:
+                                retry_after = float(resp.headers.get("Retry-After", config.API_RETRY_BACKOFF_BASE * (2 ** attempt)))
+                                logger.warning(f"Upstox 429 on {sym}, backing off for {retry_after:.1f}s...")
+                                await asyncio.sleep(retry_after)
+                            else:
+                                break
                         except Exception as e:
-                            logger.debug(f"Async fetch failed for {sym}: {e}")
+                            logger.debug(f"Attempt {attempt+1} async fetch failed for {sym}: {e}")
+                            await asyncio.sleep(config.API_RETRY_BACKOFF_BASE * (attempt + 1))
                     return (sym, None)
 
                 tasks = [_fetch_one(sym, item) for sym, item in universe.items()]
