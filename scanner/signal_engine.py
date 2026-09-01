@@ -186,6 +186,27 @@ class SignalEngine:
                 score_breakdown.append(f"Price < S1 ({w:+d})")
                 conditions_met.append("Price < S1")
 
+            # --- Trap Zone Confluences ---
+            # 1. Bear Trap Zone (S1 & PDL Support Zone): Bullish reversals here trap short sellers!
+            if pivots.bear_trap_bottom <= curr_close <= pivots.bear_trap_top:
+                if pat.pattern_direction == "BULLISH" or pat.pattern_name in ["HAMMER", "BULLISH ENGULFING", "INVERSE HAMMER", "BULLISH HARAMI"]:
+                    w = 3
+                    score += w
+                    score_breakdown.append(f"Bear Trap S1-PDL Support Reversal ({w:+d})")
+                    conditions_met.append("🪤 Bear Trap Reversal (S1-PDL)")
+
+            # 2. Bull Trap Zone (R1 & PDH Resistance Zone): Bearish reversals here trap breakout buyers!
+            if pivots.bull_trap_bottom <= curr_close <= pivots.bull_trap_top:
+                if pat.pattern_direction == "BEARISH" or pat.pattern_name == "HANGING MAN":
+                    w = -3
+                    score += w
+                    score_breakdown.append(f"Bull Trap R1-PDH Resistance Rejection ({w:+d})")
+                    conditions_met.append("🪤 Bull Trap Rejection (R1-PDH)")
+
+            # 3. CPR (Central Pivot Range) Confluence
+            if pivots.cpr_bottom <= curr_close <= pivots.cpr_top:
+                conditions_met.append("🎯 Inside CPR Zone")
+
             # Near support bounce check for Hammer / Reversals
             if abs(curr_low - pivots.s1) / pivots.s1 < 0.003 and curr_close > pivots.s1:
                 w = self.weights.get("NEAR_S1_S2_SUPPORT", 2)

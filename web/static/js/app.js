@@ -318,7 +318,7 @@ function renderMarketTable() {
     });
 
     if (items.length === 0) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="17">No instruments found matching search.</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="20">No instruments found matching search.</td></tr>`;
         return;
     }
 
@@ -326,6 +326,8 @@ function renderMarketTable() {
         const chgVal = item.change_pct || 0;
         const chgClass = chgVal > 0 ? 'val-pos' : chgVal < 0 ? 'val-neg' : '';
         const chgPrefix = chgVal > 0 ? '+' : '';
+        const cprWidth = item.cpr_width_pct || 0;
+        const cprClass = cprWidth <= 0.25 ? 'val-pos' : cprWidth >= 0.6 ? 'val-neg' : '';
 
         return `
             <tr id="market-row-${item.symbol}">
@@ -335,6 +337,9 @@ function renderMarketTable() {
                 <td class="num cell-vol">${formatVolume(item.volume)}</td>
                 <td><span class="badge badge-zone">${item.zone || '--'}</span></td>
                 <td class="num"><strong>${formatNumber(item.pp)}</strong></td>
+                <td class="num">${formatNumber(item.tc)}</td>
+                <td class="num">${formatNumber(item.bc)}</td>
+                <td class="num ${cprClass}">${formatNumber(cprWidth)}%</td>
                 <td class="num">${formatNumber(item.r1)}</td>
                 <td class="num">${formatNumber(item.r2)}</td>
                 <td class="num">${formatNumber(item.r3)}</td>
@@ -431,11 +436,11 @@ function exportCurrentTableToCSV() {
             ]);
         });
     } else {
-        rows.push(['Symbol', 'LTP', 'Change %', 'Volume', 'Pivot Zone', 'Pivot (PP)', 'R1', 'R2', 'R3', 'S1', 'S2', 'S3', 'PDO', 'PDH', 'PDL', 'PDC', 'Last Updated']);
+        rows.push(['Symbol', 'LTP', 'Change %', 'Volume', 'Pivot Zone', 'Pivot (PP)', 'TC', 'BC', 'CPR Width %', 'R1', 'R2', 'R3', 'S1', 'S2', 'S3', 'PDO', 'PDH', 'PDL', 'PDC', 'Last Updated']);
         marketDataMap.forEach(m => {
             rows.push([
-                m.symbol, m.ltp, m.change_pct, m.volume, `"${m.zone || ''}"`, m.pp, m.r1, m.r2, m.r3,
-                m.s1, m.s2, m.s3, m.pdo, m.pdh, m.pdl, m.pdc, m.time
+                m.symbol, m.ltp, m.change_pct, m.volume, `"${m.zone || ''}"`, m.pp, m.tc, m.bc, `${m.cpr_width_pct}%`,
+                m.r1, m.r2, m.r3, m.s1, m.s2, m.s3, m.pdo, m.pdh, m.pdl, m.pdc, m.time
             ]);
         });
     }

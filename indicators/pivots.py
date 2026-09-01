@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 @dataclass
 class DailyPivots:
-    """Standard Daily Pivot & Previous Day OHLCV Levels."""
+    """Standard Daily Pivot, CPR (Central Pivot Range), and Trap Zone Levels."""
     symbol: str
     date: str
     pdo: float  # Previous Day Open
@@ -18,13 +18,25 @@ class DailyPivots:
     pdc: float  # Previous Day Close
     pdv: int    # Previous Day Volume
 
-    pp: float   # Pivot Point
+    pp: float   # Pivot Point = (H + L + C) / 3
+    tc: float   # Top Central Pivot = (PP - BC) + PP
+    bc: float   # Bottom Central Pivot = (H + L) / 2
+    cpr_top: float     # max(tc, bc)
+    cpr_bottom: float  # min(tc, bc)
+    cpr_width_pct: float  # abs(tc - bc) / pp * 100
+
     r1: float   # Resistance 1
     r2: float   # Resistance 2
     r3: float   # Resistance 3
     s1: float   # Support 1
     s2: float   # Support 2
     s3: float   # Support 3
+
+    # Trap Zones
+    bull_trap_top: float     # max(r1, pdh)
+    bull_trap_bottom: float  # min(r1, pdh)
+    bear_trap_top: float     # max(s1, pdl)
+    bear_trap_bottom: float  # min(s1, pdl)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -37,35 +49,59 @@ class DailyPivots:
             "pdv": self.pdv,
             "pp": self.pp,
             "pivot": self.pp,
+            "tc": self.tc,
+            "bc": self.bc,
+            "cpr_top": self.cpr_top,
+            "cpr_bottom": self.cpr_bottom,
+            "cpr_width_pct": self.cpr_width_pct,
             "r1": self.r1,
             "r2": self.r2,
             "r3": self.r3,
             "s1": self.s1,
             "s2": self.s2,
             "s3": self.s3,
+            "bull_trap_top": self.bull_trap_top,
+            "bull_trap_bottom": self.bull_trap_bottom,
+            "bear_trap_top": self.bear_trap_top,
+            "bear_trap_bottom": self.bear_trap_bottom,
         }
 
 
 def get_pivot_zone(price: float, pivots: DailyPivots) -> str:
     """
-    Returns the technical pivot zone classification for a given price.
+    Returns high-precision technical zone classification including:
+    - Bull Trap Zone (R1 - PDH Resistance)
+    - Bear Trap Zone (S1 - PDL Support)
+    - Central Pivot Range (Inside CPR)
+    - Standard Expansion / Breakout levels
     """
+    # 1. Check Bull Trap Zone (R1 & PDH Confluence)
+    if pivots.bull_trap_bottom <= price <= pivots.bull_trap_top:
+        return "Bull Trap Zone (R1 - PDH)"
+
+    # 2. Check Bear Trap Zone (S1 & PDL Confluence)
+    if pivots.bear_trap_bottom <= price <= pivots.bear_trap_top:
+        return "Bear Trap Zone (S1 - PDL)"
+
+    # 3. Check CPR Zone (Central Pivot Range)
+    if pivots.cpr_bottom <= price <= pivots.cpr_top:
+        return "Inside CPR Zone (Choppy / Base)"
+
+    # 4. Expansion / Breakout Levels
     if price >= pivots.r3:
-        return "Above R3 (Breakout)"
+        return "Above R3 (Super Breakout)"
     elif price >= pivots.r2:
-        return "R2 - R3 (Bullish Zone)"
-    elif price >= pivots.r1:
-        return "R1 - R2 (Expansion)"
+        return "R2 - R3 (Bullish Extension)"
+    elif price > pivots.bull_trap_top:
+        return "Above R1/PDH (Strong Bullish)"
     elif price >= pivots.pp:
         return "PP - R1 (Bullish Bias)"
-    elif price >= pivots.s1:
-        return "S1 - PP (Support Zone)"
-    elif price >= pivots.s2:
-        return "S2 - S1 (Bearish Zone)"
-    elif price >= pivots.s3:
-        return "S3 - S2 (Oversold)"
+    elif price < pivots.bear_trap_bottom:
+        return "Below S1/PDL (Strong Breakdown)"
+    elif price <= pivots.s2:
+        return "Below S2 (Oversold / Crash)"
     else:
-        return "Below S3 (Breakdown)"
+        return "S1 - PP (Support / Retest)"
 
 
 def calculate_daily_pivots(
@@ -78,25 +114,33 @@ def calculate_daily_pivots(
     volume: int,
 ) -> DailyPivots:
     """
-    Calculates standard floor pivot levels:
+    Calculates Standard Floor Pivots, Central Pivot Range (CPR), and Trap Zones.
     PP = (H + L + C) / 3
-    R1 = 2 * PP - L
-    S1 = 2 * PP - H
-    R2 = PP + (H - L)
-    S2 = PP - (H - L)
-    R3 = H + 2 * (PP - L)
-    S3 = L - 2 * (H - PP)
+    BC = (H + L) / 2
+    TC = (PP - BC) + PP
     """
-    pp = (high_p + low_p + close_p) / 3.0
+    pp = round((high_p + low_p + close_p) / 3.0, 2)
+    bc = round((high_p + low_p) / 2.0, 2)
+    tc = round((pp - bc) + pp, 2)
 
-    r1 = 2.0 * pp - low_p
-    s1 = 2.0 * pp - high_p
+    cpr_top = max(tc, bc)
+    cpr_bottom = min(tc, bc)
+    cpr_width = round((abs(tc - bc) / pp) * 100.0, 3) if pp > 0 else 0.0
 
-    r2 = pp + (high_p - low_p)
-    s2 = pp - (high_p - low_p)
+    r1 = round(2.0 * pp - low_p, 2)
+    s1 = round(2.0 * pp - high_p, 2)
 
-    r3 = high_p + 2.0 * (pp - low_p)
-    s3 = low_p - 2.0 * (high_p - pp)
+    r2 = round(pp + (high_p - low_p), 2)
+    s2 = round(pp - (high_p - low_p), 2)
+
+    r3 = round(high_p + 2.0 * (pp - low_p), 2)
+    s3 = round(low_p - 2.0 * (high_p - pp), 2)
+
+    bull_trap_top = max(r1, high_p)
+    bull_trap_bottom = min(r1, high_p)
+
+    bear_trap_top = max(s1, low_p)
+    bear_trap_bottom = min(s1, low_p)
 
     return DailyPivots(
         symbol=symbol,
@@ -106,13 +150,22 @@ def calculate_daily_pivots(
         pdl=round(low_p, 2),
         pdc=round(close_p, 2),
         pdv=volume,
-        pp=round(pp, 2),
-        r1=round(r1, 2),
-        r2=round(r2, 2),
-        r3=round(r3, 2),
-        s1=round(s1, 2),
-        s2=round(s2, 2),
-        s3=round(s3, 2),
+        pp=pp,
+        tc=tc,
+        bc=bc,
+        cpr_top=cpr_top,
+        cpr_bottom=cpr_bottom,
+        cpr_width_pct=cpr_width,
+        r1=r1,
+        r2=r2,
+        r3=r3,
+        s1=s1,
+        s2=s2,
+        s3=s3,
+        bull_trap_top=bull_trap_top,
+        bull_trap_bottom=bull_trap_bottom,
+        bear_trap_top=bear_trap_top,
+        bear_trap_bottom=bear_trap_bottom,
     )
 
 

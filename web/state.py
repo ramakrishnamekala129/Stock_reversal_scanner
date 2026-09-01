@@ -141,23 +141,42 @@ class WebDashboardState:
                 s2 = p.get("s2", 0.0)
                 s3 = p.get("s3", 0.0)
 
-                zone = "PP - R1 (Bullish Bias)"
-                if r3 > 0 and ltp >= r3:
-                    zone = "Above R3 (Breakout)"
+                tc = p.get("tc", pp)
+                bc = p.get("bc", pp)
+                cpr_top = p.get("cpr_top", max(tc, bc))
+                cpr_bottom = p.get("cpr_bottom", min(tc, bc))
+                cpr_width_pct = p.get("cpr_width_pct", 0.0)
+
+                pdh = p.get("pdh", 0.0)
+                pdl = p.get("pdl", 0.0)
+
+                bull_trap_top = p.get("bull_trap_top", max(r1, pdh) if (r1 and pdh) else 0.0)
+                bull_trap_bottom = p.get("bull_trap_bottom", min(r1, pdh) if (r1 and pdh) else 0.0)
+
+                bear_trap_top = p.get("bear_trap_top", max(s1, pdl) if (s1 and pdl) else 0.0)
+                bear_trap_bottom = p.get("bear_trap_bottom", min(s1, pdl) if (s1 and pdl) else 0.0)
+
+                zone = "PP - R1 (Bullish Territory)"
+                if bull_trap_bottom > 0 and bull_trap_bottom <= ltp <= bull_trap_top:
+                    zone = "Bull Trap Zone (R1 - PDH)"
+                elif bear_trap_bottom > 0 and bear_trap_bottom <= ltp <= bear_trap_top:
+                    zone = "Bear Trap Zone (S1 - PDL)"
+                elif cpr_bottom > 0 and cpr_bottom <= ltp <= cpr_top:
+                    zone = "Inside CPR Zone (Choppy / Base)"
+                elif r3 > 0 and ltp >= r3:
+                    zone = "Above R3 (Super Breakout)"
                 elif r2 > 0 and ltp >= r2:
-                    zone = "R2 - R3 (Bullish Zone)"
-                elif r1 > 0 and ltp >= r1:
-                    zone = "R1 - R2 (Expansion)"
+                    zone = "R2 - R3 (Bullish Extension)"
+                elif bull_trap_top > 0 and ltp > bull_trap_top:
+                    zone = "Above R1/PDH (Strong Bullish)"
+                elif bear_trap_bottom > 0 and ltp < bear_trap_bottom:
+                    zone = "Below S1/PDL (Strong Breakdown)"
                 elif pp > 0 and ltp >= pp:
-                    zone = "PP - R1 (Bullish Bias)"
-                elif s1 > 0 and ltp >= s1:
-                    zone = "S1 - PP (Support Zone)"
-                elif s2 > 0 and ltp >= s2:
-                    zone = "S2 - S1 (Bearish Zone)"
-                elif s3 > 0 and ltp >= s3:
-                    zone = "S3 - S2 (Oversold)"
-                elif s3 > 0:
-                    zone = "Below S3 (Breakdown)"
+                    zone = "PP - R1 (Bullish Territory)"
+                elif s2 > 0 and ltp <= s2:
+                    zone = "Below S2 (Oversold / Crash)"
+                else:
+                    zone = "S1 - PP (Support / Retest)"
 
                 market_data.append({
                     "symbol": sym,
@@ -167,11 +186,16 @@ class WebDashboardState:
                     "zone": zone,
                     "time": lp.get("time", "--"),
                     "pdo": p.get("pdo", 0.0),
-                    "pdh": p.get("pdh", 0.0),
-                    "pdl": p.get("pdl", 0.0),
+                    "pdh": pdh,
+                    "pdl": pdl,
                     "pdc": p.get("pdc", 0.0),
                     "pdv": p.get("pdv", 0),
                     "pp": pp,
+                    "tc": tc,
+                    "bc": bc,
+                    "cpr_top": cpr_top,
+                    "cpr_bottom": cpr_bottom,
+                    "cpr_width_pct": cpr_width_pct,
                     "r1": r1,
                     "r2": r2,
                     "r3": r3,
