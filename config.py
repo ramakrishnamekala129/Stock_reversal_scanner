@@ -91,5 +91,9 @@ API_RETRY_ATTEMPTS = 3
 API_RETRY_BACKOFF_BASE = 1.0  # seconds
 CACHE_EXPIRY_HOURS = 12
 
-# Database Settings
+# Database & Excel Live Export Settings
 ENABLE_DB_STORAGE = True
+ENABLE_EXCEL_EXPORT = True
+EXCEL_FILE_PATH = BASE_DIR / "fno_scanner_live.xlsx"
+EXCEL_AUTO_OPEN = True
+EXCEL_UPDATE_INTERVAL_SECONDS = 1.0

@@ -13,6 +13,7 @@ import pandas as pd
 
 import config
 from database.repository import DatabaseRepository
+from excel.live_excel import LiveExcelManager
 from indicators.pivots import DailyPivots, calculate_daily_pivots
 from market.candle_engine import Candle, CandleEngine, CandleStatus
 from market.historical import HistoricalDataLoader, PreviousDayOHLCV
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 class FNOIntradayScanner:
     """End-to-End Backend F&O Intraday Scanner."""
 
-    def __init__(self, auth: Optional[UpstoxAuth] = None):
+    def __init__(self, auth: Optional[UpstoxAuth] = None, enable_excel: bool = config.ENABLE_EXCEL_EXPORT):
         self.auth = auth or UpstoxAuth()
         self.rest_client = UpstoxRestClient(self.auth.get_api_client() if self.auth.has_access_token else None)
         self.instrument_mgr = InstrumentManager(self.rest_client)
@@ -40,6 +41,7 @@ class FNOIntradayScanner:
         self.dedup = EventDeduplicator()
         self.signal_engine = SignalEngine()
         self.db = DatabaseRepository() if config.ENABLE_DB_STORAGE else None
+        self.excel_mgr = LiveExcelManager() if enable_excel else None
 
         self.candle_engine = CandleEngine(on_candle_closed=self._handle_candle_closed)
         self.ws_streamer: Optional[UpstoxWebSocketStreamer] = None
@@ -90,6 +92,10 @@ class FNOIntradayScanner:
 
         logger.info(f"Computed pivot levels for {len(self._pivots)} F&O symbols.")
 
+        # Initialize Live Excel Workbook with Sheet 1 & Sheet 2
+        if self.excel_mgr:
+            self.excel_mgr.initialize_workbook(self._pivots)
+
         # 4. Fetch today's historical 5M candles (from 1m history)
         historical_5m = self.hist_loader.load_initial_5m_candles(self._universe)
         key_map = {sym: item["instrument_key"] for sym, item in self._universe.items()}
@@ -128,11 +134,13 @@ class FNOIntradayScanner:
 
     def _handle_live_tick(self, tick: NormalizedTick):
         """
-        Receives normalized ticks from WebSocket and forwards them to the Candle Engine.
+        Receives normalized ticks from WebSocket and forwards them to Candle Engine & Live Excel.
         """
         if not self._is_running:
             return
         self.candle_engine.process_tick(tick)
+        if self.excel_mgr:
+            self.excel_mgr.update_price(tick.symbol, tick.ltp, tick.volume, tick.timestamp)
 
     def _handle_candle_closed(self, symbol: str, candle: Candle, df_history: pd.DataFrame):
         """
@@ -141,9 +149,11 @@ class FNOIntradayScanner:
         """
         self.session_mgr.stats.candles_processed += 1
 
-        # Persist closed candle in SQLite
+        # Persist closed candle in SQLite & update Live Excel price
         if self.db:
             self.db.save_candle(candle.to_dict())
+        if self.excel_mgr:
+            self.excel_mgr.update_price(symbol, candle.close, candle.volume, candle.timestamp)
 
         pivots = self._pivots.get(symbol)
         if not pivots:
@@ -173,9 +183,11 @@ class FNOIntradayScanner:
             # Output formatted signal card to terminal
             ConsoleFormatter.print_signal(sig)
 
-            # Save signal to database
+            # Save signal to database & push to Live Excel Sheet 2
             if self.db:
                 self.db.save_signal(sig.to_dict())
+            if self.excel_mgr:
+                self.excel_mgr.add_signal(sig)
 
     def sync_broker_candles_for_all(self):
         """
@@ -238,6 +250,9 @@ class FNOIntradayScanner:
 
         if self.ws_streamer:
             self.ws_streamer.disconnect()
+
+        if self.excel_mgr:
+            self.excel_mgr.close()
 
         # Print Session Summary Statistics
         self.session_mgr.stats.print_summary()
