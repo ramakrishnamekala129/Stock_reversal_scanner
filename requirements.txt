@@ -1,0 +1,9 @@
+upstox-python-sdk>=2.0.0
+httpx>=0.25.0
+pandas>=2.0.0
+pytz>=2023.3
+fastapi>=0.100.0
+uvicorn>=0.22.0
+websockets>=11.0
+openpyxl>=3.1.0
+pytest>=7.4.0

@@ -8,3 +8,5 @@ data/
 .pytest_cache/
 ~$*
 *.xlsx
+upstok_accesstoken.txt
+*token*.txt
