@@ -104,3 +104,12 @@ def test_tkinter_gui_initialization(tk_root):
     gui.chart_frame.auto_fit.set(True)
     gui.chart_frame._on_autofit_toggle()
     assert gui.chart_frame.auto_fit.get() is True
+
+    # Test TradingView-style price scale controls
+    gui.chart_frame.pan_y_up()
+    assert gui.chart_frame._custom_ylim is not None
+    gui.chart_frame.pan_y_down()
+    gui.chart_frame.scale_y_up()
+    gui.chart_frame.scale_y_down()
+    gui.chart_frame.reset_view()
+    assert gui.chart_frame._custom_ylim is None

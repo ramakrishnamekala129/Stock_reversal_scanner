@@ -67,9 +67,13 @@ class CandleChartFrame(tk.Frame):
         self.show_signals = tk.BooleanVar(value=True)
         self.show_ltp = tk.BooleanVar(value=True)
 
-        # Pan / Zoom state tracking
+        # Pan / Zoom / Price Scale state tracking (TradingView-style)
         self._is_panning = False
-        self._pan_start_x = 0
+        self._is_y_scaling = False
+        self._pan_start_x: Optional[float] = None
+        self._pan_start_y: Optional[float] = None
+        self._scale_start_y: Optional[float] = None
+        self._scale_start_ylim: Optional[Tuple[float, float]] = None
         self._custom_xlim: Optional[Tuple[float, float]] = None
         self._custom_ylim: Optional[Tuple[float, float]] = None
 
@@ -203,17 +207,21 @@ class CandleChartFrame(tk.Frame):
         row2 = tk.Frame(toolbar, bg=PANEL_BG)
         row2.pack(fill=tk.X, side=tk.TOP)
 
-        btn_style = dict(bg="#1f2937", fg=TEXT_COLOR, activebackground="#374151", activeforeground=TEXT_COLOR, font=("Segoe UI", 8, "bold"), relief="flat", padx=8, pady=2, cursor="hand2")
+        btn_style = dict(bg="#1f2937", fg=TEXT_COLOR, activebackground="#374151", activeforeground=TEXT_COLOR, font=("Segoe UI", 8, "bold"), relief="flat", padx=6, pady=2, cursor="hand2")
 
-        tk.Button(row2, text="🔍 Zoom In (+)", command=self.zoom_in, **btn_style).pack(side=tk.LEFT, padx=(0, 4))
-        tk.Button(row2, text="🔍 Zoom Out (-)", command=self.zoom_out, **btn_style).pack(side=tk.LEFT, padx=(0, 4))
-        tk.Button(row2, text="◀ Pan Left", command=self.pan_left, **btn_style).pack(side=tk.LEFT, padx=(0, 4))
-        tk.Button(row2, text="▶ Pan Right", command=self.pan_right, **btn_style).pack(side=tk.LEFT, padx=(0, 4))
-        tk.Button(row2, text="⟲ Reset View", command=self.reset_view, **btn_style).pack(side=tk.LEFT, padx=(0, 12))
+        tk.Button(row2, text="🔍 Zoom In (+)", command=self.zoom_in, **btn_style).pack(side=tk.LEFT, padx=(0, 3))
+        tk.Button(row2, text="🔍 Zoom Out (-)", command=self.zoom_out, **btn_style).pack(side=tk.LEFT, padx=(0, 3))
+        tk.Button(row2, text="◀ Time Left", command=self.pan_left, **btn_style).pack(side=tk.LEFT, padx=(0, 3))
+        tk.Button(row2, text="▶ Time Right", command=self.pan_right, **btn_style).pack(side=tk.LEFT, padx=(0, 3))
+        tk.Button(row2, text="▲ Price Up", command=self.pan_y_up, **btn_style).pack(side=tk.LEFT, padx=(0, 3))
+        tk.Button(row2, text="▼ Price Down", command=self.pan_y_down, **btn_style).pack(side=tk.LEFT, padx=(0, 3))
+        tk.Button(row2, text="↕ Stretch Price", command=self.scale_y_up, **btn_style).pack(side=tk.LEFT, padx=(0, 3))
+        tk.Button(row2, text="↕ Squeeze Price", command=self.scale_y_down, **btn_style).pack(side=tk.LEFT, padx=(0, 3))
+        tk.Button(row2, text="⟲ Reset View", command=self.reset_view, **btn_style).pack(side=tk.LEFT, padx=(0, 10))
 
         tk.Label(
             row2,
-            text="💡 Tip: Double-click any row in Signals or Market tab to inspect • Scroll wheel to zoom",
+            text="💡 Tip: Drag chart to pan time & price • Drag right margin (or Right-click drag) to stretch/squeeze price • Shift+Wheel to zoom price • Double-click to reset",
             font=("Segoe UI", 8),
             fg=TEXT_MUTED,
             bg=PANEL_BG,
@@ -232,16 +240,32 @@ class CandleChartFrame(tk.Frame):
         self.canvas_widget.pack(fill=tk.BOTH, expand=True)
 
     def _bind_mouse_events(self):
-        """Binds mouse scroll wheel and drag-to-pan events."""
+        """Binds mouse scroll wheel, price scale drag, and pan events."""
         self.canvas.mpl_connect("scroll_event", self._on_mouse_scroll)
         self.canvas.mpl_connect("button_press_event", self._on_mouse_press)
         self.canvas.mpl_connect("motion_notify_event", self._on_mouse_motion)
         self.canvas.mpl_connect("button_release_event", self._on_mouse_release)
 
     def _on_mouse_scroll(self, event):
-        """Handles mouse wheel zooming centered at the cursor."""
+        """Handles mouse wheel zooming (X-axis zoom or Shift+Wheel for Price Y-axis scale)."""
         if event.inaxes != self.ax_main and event.inaxes != self.ax_vol:
             return
+
+        # Check if Shift is held -> Zoom Price (Y) Scale
+        if getattr(event, "key", None) == "shift":
+            base_scale = 1.20
+            scale_factor = 1.0 / base_scale if event.button == "up" else base_scale
+            cur_ylim = self.ax_main.get_ylim()
+            ydata = event.ydata if event.ydata is not None else (cur_ylim[0] + cur_ylim[1]) / 2.0
+            new_height = (cur_ylim[1] - cur_ylim[0]) * scale_factor
+            rel_pos = (cur_ylim[1] - ydata) / (cur_ylim[1] - cur_ylim[0]) if (cur_ylim[1] - cur_ylim[0]) > 0 else 0.5
+            new_ylim = (ydata - new_height * (1 - rel_pos), ydata + new_height * rel_pos)
+            self._custom_ylim = new_ylim
+            self.ax_main.set_ylim(new_ylim)
+            self.canvas.draw_idle()
+            return
+
+        # Default: Zoom Time (X) Scale
         base_scale = 1.25
         scale_factor = 1.0 / base_scale if event.button == "up" else base_scale
 
@@ -255,23 +279,76 @@ class CandleChartFrame(tk.Frame):
         self.canvas.draw_idle()
 
     def _on_mouse_press(self, event):
-        if event.button == 1 and (event.inaxes == self.ax_main or event.inaxes == self.ax_vol):
+        """Detects 2D pan or TradingView-style price scale drag."""
+        if getattr(event, "dblclick", False):
+            self.reset_view()
+            return
+
+        bbox = getattr(self.ax_main, "bbox", None)
+        # Check if clicked on the right margin where price scale sits
+        is_near_right_scale = (
+            event.x is not None
+            and bbox is not None
+            and event.x > (bbox.x1 - 75)
+        )
+
+        if event.button == 3 or is_near_right_scale:
+            # Price Scale Drag mode (Stretch / Squeeze vertically)
+            self._is_y_scaling = True
+            self._scale_start_y = event.y
+            self._scale_start_ylim = self.ax_main.get_ylim()
+        elif event.button == 1 and (event.inaxes == self.ax_main or event.inaxes == self.ax_vol):
+            # 2D Pan mode (drag time and/or price)
             self._is_panning = True
             self._pan_start_x = event.xdata
+            self._pan_start_y = event.ydata
+            self._scale_start_ylim = self.ax_main.get_ylim()
 
     def _on_mouse_motion(self, event):
-        if self._is_panning and event.xdata is not None and self._pan_start_x is not None:
-            dx = self._pan_start_x - event.xdata
-            cur_xlim = self.ax_main.get_xlim()
-            new_xlim = (cur_xlim[0] + dx, cur_xlim[1] + dx)
-            self._custom_xlim = new_xlim
-            self.ax_main.set_xlim(new_xlim)
+        """Processes real-time dragging for price scale stretching or 2D panning."""
+        if self._is_y_scaling and event.y is not None and self._scale_start_y is not None and self._scale_start_ylim is not None:
+            # Vertical Price Scale Drag (TradingView style)
+            dy_pixel = event.y - self._scale_start_y
+            factor = 1.0 - (dy_pixel / 220.0)
+            factor = max(0.08, min(8.0, factor))
+            y_min, y_max = self._scale_start_ylim
+            y_center = (y_min + y_max) / 2.0
+            new_span = (y_max - y_min) * factor
+            self._custom_ylim = (y_center - new_span / 2.0, y_center + new_span / 2.0)
+            self.ax_main.set_ylim(self._custom_ylim)
             self.canvas.draw_idle()
 
+        elif self._is_panning:
+            redraw = False
+            # 1. Horizontal Time Pan
+            if event.xdata is not None and self._pan_start_x is not None:
+                dx = self._pan_start_x - event.xdata
+                cur_xlim = self.ax_main.get_xlim()
+                new_xlim = (cur_xlim[0] + dx, cur_xlim[1] + dx)
+                self._custom_xlim = new_xlim
+                self.ax_main.set_xlim(new_xlim)
+                self.ax_vol.set_xlim(new_xlim)
+                redraw = True
+
+            # 2. Vertical Price Pan (move up/down)
+            if event.ydata is not None and self._pan_start_y is not None and event.inaxes == self.ax_main:
+                dy = self._pan_start_y - event.ydata
+                cur_ylim = self.ax_main.get_ylim()
+                new_ylim = (cur_ylim[0] + dy, cur_ylim[1] + dy)
+                self._custom_ylim = new_ylim
+                self.ax_main.set_ylim(new_ylim)
+                redraw = True
+
+            if redraw:
+                self.canvas.draw_idle()
+
     def _on_mouse_release(self, event):
+        """Resets drag states on mouse release."""
         self._is_panning = False
+        self._is_y_scaling = False
 
     def zoom_in(self):
+        """Zooms into timeline horizontally."""
         cur_xlim = self.ax_main.get_xlim()
         span = (cur_xlim[1] - cur_xlim[0]) * 0.75
         mid = (cur_xlim[0] + cur_xlim[1]) / 2.0
@@ -280,6 +357,7 @@ class CandleChartFrame(tk.Frame):
         self.canvas.draw_idle()
 
     def zoom_out(self):
+        """Zooms out of timeline horizontally."""
         cur_xlim = self.ax_main.get_xlim()
         span = (cur_xlim[1] - cur_xlim[0]) * 1.35
         mid = (cur_xlim[0] + cur_xlim[1]) / 2.0
@@ -288,6 +366,7 @@ class CandleChartFrame(tk.Frame):
         self.canvas.draw_idle()
 
     def pan_left(self):
+        """Pans timeline left."""
         cur_xlim = self.ax_main.get_xlim()
         shift = (cur_xlim[1] - cur_xlim[0]) * 0.25
         self._custom_xlim = (cur_xlim[0] - shift, cur_xlim[1] - shift)
@@ -295,13 +374,49 @@ class CandleChartFrame(tk.Frame):
         self.canvas.draw_idle()
 
     def pan_right(self):
+        """Pans timeline right."""
         cur_xlim = self.ax_main.get_xlim()
         shift = (cur_xlim[1] - cur_xlim[0]) * 0.25
         self._custom_xlim = (cur_xlim[0] + shift, cur_xlim[1] + shift)
         self.ax_main.set_xlim(self._custom_xlim)
         self.canvas.draw_idle()
 
+    def pan_y_up(self):
+        """Pans price view upwards to view higher resistance levels."""
+        cur_ylim = self.ax_main.get_ylim()
+        shift = (cur_ylim[1] - cur_ylim[0]) * 0.20
+        self._custom_ylim = (cur_ylim[0] + shift, cur_ylim[1] + shift)
+        self.ax_main.set_ylim(self._custom_ylim)
+        self.canvas.draw_idle()
+
+    def pan_y_down(self):
+        """Pans price view downwards to view lower support levels."""
+        cur_ylim = self.ax_main.get_ylim()
+        shift = (cur_ylim[1] - cur_ylim[0]) * 0.20
+        self._custom_ylim = (cur_ylim[0] - shift, cur_ylim[1] - shift)
+        self.ax_main.set_ylim(self._custom_ylim)
+        self.canvas.draw_idle()
+
+    def scale_y_up(self):
+        """Stretches price scale vertically (candles appear taller)."""
+        cur_ylim = self.ax_main.get_ylim()
+        mid = (cur_ylim[0] + cur_ylim[1]) / 2.0
+        span = (cur_ylim[1] - cur_ylim[0]) * 0.80
+        self._custom_ylim = (mid - span / 2.0, mid + span / 2.0)
+        self.ax_main.set_ylim(self._custom_ylim)
+        self.canvas.draw_idle()
+
+    def scale_y_down(self):
+        """Compresses price scale vertically (candles appear shorter)."""
+        cur_ylim = self.ax_main.get_ylim()
+        mid = (cur_ylim[0] + cur_ylim[1]) / 2.0
+        span = (cur_ylim[1] - cur_ylim[0]) * 1.25
+        self._custom_ylim = (mid - span / 2.0, mid + span / 2.0)
+        self.ax_main.set_ylim(self._custom_ylim)
+        self.canvas.draw_idle()
+
     def reset_view(self):
+        """Resets both X and Y ranges back to standard Auto-Fit view."""
         self._custom_xlim = None
         self._custom_ylim = None
         self.redraw_chart()
