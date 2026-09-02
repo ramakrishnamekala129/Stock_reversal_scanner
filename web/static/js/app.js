@@ -369,7 +369,7 @@ function renderMarketTable() {
     const items = Array.from(marketDataMap.values()).filter(item => {
         // CPR Filter
         if (marketFilterCpr === 'NARROW') {
-            if ((item.cpr_width_pct || 0) > 0.10) return false;
+            if ((item.cpr_width_pct || 0) > 0.20) return false;
         } else if (marketFilterCpr === 'TRAP') {
             if (!(item.zone || '').includes('Trap')) return false;
         }
@@ -390,7 +390,7 @@ function renderMarketTable() {
         const chgClass = chgVal > 0 ? 'val-pos' : chgVal < 0 ? 'val-neg' : '';
         const chgPrefix = chgVal > 0 ? '+' : '';
         const cprWidth = item.cpr_width_pct || 0;
-        const isNarrow = cprWidth <= 0.10;
+        const isNarrow = cprWidth <= 0.20;
 
         let cprDisplay = `${formatNumber(cprWidth)}%`;
         if (isNarrow) {

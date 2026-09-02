@@ -5,6 +5,7 @@ Calculates Standard Daily Pivots (PP, R1-R3, S1-S3) and evaluates price relation
 
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
+import config
 
 
 @dataclass
@@ -24,7 +25,7 @@ class DailyPivots:
     cpr_top: float     # max(tc, bc)
     cpr_bottom: float  # min(tc, bc)
     cpr_width_pct: float  # abs(tc - bc) / pp * 100
-    is_narrow_cpr: bool   # CPR width <= 0.10%
+    is_narrow_cpr: bool   # CPR width <= 0.20%
 
     r1: float   # Resistance 1
     r2: float   # Resistance 2
@@ -41,9 +42,9 @@ class DailyPivots:
 
     bull_trap_width_pct: float = 0.0  # abs(r1 - pdh) / pp * 100
     bear_trap_width_pct: float = 0.0  # abs(s1 - pdl) / pp * 100
-    is_narrow_bull_trap: bool = False  # Bull Trap range <= 0.10% of price
-    is_narrow_bear_trap: bool = False  # Bear Trap range <= 0.10% of price
-    is_narrow_trap_zone: bool = False  # True if bull or bear trap <= 0.10%
+    is_narrow_bull_trap: bool = False  # Bull Trap range <= 0.20% of price
+    is_narrow_bear_trap: bool = False  # Bear Trap range <= 0.20% of price
+    is_narrow_trap_zone: bool = False  # True if bull or bear trap <= 0.20%
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -138,8 +139,8 @@ def get_pivot_zone(
     """
     Returns high-precision technical zone classification including:
     - CPR Breakout / Breakdown (Decisive close with >=60% of candle on breakout side)
-    - Bull Trap Zone (R1 - PDH Resistance) (Narrow if range <= 0.10% of price)
-    - Bear Trap Zone (S1 - PDL Support) (Narrow if range <= 0.10% of price)
+    - Bull Trap Zone (R1 - PDH Resistance) (Narrow if range <= 0.20% of price)
+    - Bear Trap Zone (S1 - PDL Support) (Narrow if range <= 0.20% of price)
     - Central Pivot Range (Inside Narrow CPR / CPR Base)
     - Standard Expansion / Breakout levels
     If low and high are provided, evaluates candle wick & body touches as well.
@@ -206,8 +207,8 @@ def calculate_daily_pivots(
 ) -> DailyPivots:
     """
     Calculates Standard Floor Pivots, Central Pivot Range (CPR), and Trap Zones.
-    Narrow CPR is flagged when CPR width <= 0.10% of price.
-    Narrow Trap Zone is flagged when Trap Range (R1-PDH or S1-PDL) <= 0.10% of price.
+    Narrow CPR is flagged when CPR width <= 0.20% of price.
+    Narrow Trap Zone is flagged when Trap Range (R1-PDH or S1-PDL) <= 0.20% of price.
     PP = (H + L + C) / 3
     BC = (H + L) / 2
     TC = (PP - BC) + PP
@@ -219,7 +220,8 @@ def calculate_daily_pivots(
     cpr_top = max(tc, bc)
     cpr_bottom = min(tc, bc)
     cpr_width = round((abs(tc - bc) / pp) * 100.0, 3) if pp > 0 else 0.0
-    is_narrow_cpr = cpr_width <= 0.10
+    cpr_thresh = getattr(config, "NARROW_CPR_THRESHOLD_PCT", 0.20)
+    is_narrow_cpr = cpr_width <= cpr_thresh
 
     r1 = round(2.0 * pp - low_p, 2)
     s1 = round(2.0 * pp - high_p, 2)
@@ -233,12 +235,13 @@ def calculate_daily_pivots(
     bull_trap_top = max(r1, high_p)
     bull_trap_bottom = min(r1, high_p)
     bull_trap_width_pct = round((abs(r1 - high_p) / pp) * 100.0, 3) if pp > 0 else 0.0
-    is_narrow_bull_trap = bull_trap_width_pct <= 0.10
+    trap_thresh = getattr(config, "NARROW_TRAP_ZONE_THRESHOLD_PCT", 0.20)
+    is_narrow_bull_trap = bull_trap_width_pct <= trap_thresh
 
     bear_trap_top = max(s1, low_p)
     bear_trap_bottom = min(s1, low_p)
     bear_trap_width_pct = round((abs(s1 - low_p) / pp) * 100.0, 3) if pp > 0 else 0.0
-    is_narrow_bear_trap = bear_trap_width_pct <= 0.10
+    is_narrow_bear_trap = bear_trap_width_pct <= trap_thresh
 
     is_narrow_trap_zone = is_narrow_bull_trap or is_narrow_bear_trap
 

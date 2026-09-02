@@ -256,23 +256,23 @@ class SignalEngine:
                 if not is_bearish:
                     if pivots.is_narrow_cpr:
                         score_breakdown.append(f"{pat.pattern_name} at Narrow CPR Support (+{w})")
-                        conditions_met.append(f"🎯 {pat.pattern_name} at Narrow CPR Support (<0.1%)")
+                        conditions_met.append(f"🎯 {pat.pattern_name} at Narrow CPR Support (<0.2%)")
                     else:
                         score_breakdown.append(f"{pat.pattern_name} at CPR Support Bounce (+{w})")
                         conditions_met.append(f"🎯 {pat.pattern_name} at CPR Support")
                 else:
                     if pivots.is_narrow_cpr:
                         score_breakdown.append(f"{pat.pattern_name} at Narrow CPR Resistance (+{w})")
-                        conditions_met.append(f"🎯 {pat.pattern_name} at Narrow CPR Resistance (<0.1%)")
+                        conditions_met.append(f"🎯 {pat.pattern_name} at Narrow CPR Resistance (<0.2%)")
                     else:
                         score_breakdown.append(f"{pat.pattern_name} at CPR Resistance Rejection (+{w})")
                         conditions_met.append(f"🎯 {pat.pattern_name} at CPR Resistance")
 
-            # 5. Narrow CPR Trending Day Candidate (< 0.10% width)
+            # 5. Narrow CPR Trending Day Candidate (< 0.20% width)
             if pivots.is_narrow_cpr:
                 w = 2
                 score += w
-                score_breakdown.append(f"Narrow CPR ({pivots.cpr_width_pct}% <= 0.1%) (+{w})")
+                score_breakdown.append(f"Narrow CPR ({pivots.cpr_width_pct}% <= 0.2%) (+{w})")
                 conditions_met.append(f"⚡ Narrow CPR ({pivots.cpr_width_pct}%)")
 
             # --- Volume Confirmation Score ---

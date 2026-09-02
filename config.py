@@ -59,6 +59,8 @@ HARAMI_MAX_BODY_RATIO = 0.6   # current body <= 60% of previous body
 ENABLE_PIVOT_CONTEXT = True
 ENABLE_TREND_CONTEXT = True
 TREND_LOOKBACK_CANDLES = 5
+NARROW_CPR_THRESHOLD_PCT = 0.20        # CPR width <= 0.20% of price
+NARROW_TRAP_ZONE_THRESHOLD_PCT = 0.20   # Trap width <= 0.20% of price
 
 # Signal Scoring Thresholds & Weights
 MIN_SIGNAL_SCORE = 4

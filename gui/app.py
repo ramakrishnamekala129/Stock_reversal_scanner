@@ -358,8 +358,8 @@ class ScannerTkinterGUI:
         # Multi-Select CPR / Trap Filter
         tk.Label(toolbar, text="CPR / Trap:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         signal_cpr_options = [
-            "⚡ Narrow CPR (<= 0.1%)",
-            "🪤 Narrow Trap Zones (<= 0.1%)",
+            "⚡ Narrow CPR (<= 0.2%)",
+            "🪤 Narrow Trap Zones (<= 0.2%)",
             "🎯 Candlestick Pattern at CPR",
             "🎯 Bullish Pattern at CPR Support",
             "🎯 Bearish Pattern at CPR Resistance",
@@ -475,8 +475,8 @@ class ScannerTkinterGUI:
         # Market Multi-Select CPR / Trap Filter
         tk.Label(toolbar, text="Filter Stocks:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         market_cpr_options = [
-            "⚡ Narrow CPR (<= 0.1%) Trending",
-            "🪤 Narrow Trap Zones (<= 0.1%)",
+            "⚡ Narrow CPR (<= 0.2%) Trending",
+            "🪤 Narrow Trap Zones (<= 0.2%)",
             "🎯 Pattern at CPR Zone",
             "🚀 CPR Breakout (Bullish Close)",
             "💥 CPR Breakdown (Bearish Close)",
@@ -733,9 +733,9 @@ class ScannerTkinterGUI:
             if hasattr(self, "signal_cpr_menu") and not self.signal_cpr_menu.is_all_selected():
                 sel = self.signal_cpr_menu.get_selected()
                 matched = False
-                if "⚡ Narrow CPR (<= 0.1%)" in sel and has_narrow_cpr:
+                if "⚡ Narrow CPR (<= 0.2%)" in sel and has_narrow_cpr:
                     matched = True
-                if "🪤 Narrow Trap Zones (<= 0.1%)" in sel and has_narrow_trap:
+                if "🪤 Narrow Trap Zones (<= 0.2%)" in sel and has_narrow_trap:
                     matched = True
                 if "🎯 Candlestick Pattern at CPR" in sel and has_cpr_pattern:
                     matched = True
@@ -847,7 +847,7 @@ class ScannerTkinterGUI:
             symbol = str(m.get("symbol", ""))
             zone = str(m.get("zone", ""))
             cpr_width = float(m.get("cpr_width_pct", 0.0))
-            is_narrow = cpr_width <= 0.10
+            is_narrow = cpr_width <= 0.20
 
             has_cpr_breakout = "CPR Breakout" in zone
             has_cpr_breakdown = "CPR Breakdown" in zone
@@ -857,9 +857,9 @@ class ScannerTkinterGUI:
             if hasattr(self, "market_cpr_menu") and not self.market_cpr_menu.is_all_selected():
                 sel = self.market_cpr_menu.get_selected()
                 matched = False
-                if "⚡ Narrow CPR (<= 0.1%) Trending" in sel and is_narrow:
+                if "⚡ Narrow CPR (<= 0.2%) Trending" in sel and is_narrow:
                     matched = True
-                if "🪤 Narrow Trap Zones (<= 0.1%)" in sel and has_narrow_trap:
+                if "🪤 Narrow Trap Zones (<= 0.2%)" in sel and has_narrow_trap:
                     matched = True
                 if "🎯 Pattern at CPR Zone" in sel and ("Pattern at CPR" in zone or "Inside CPR" in zone or "CPR" in zone):
                     matched = True
@@ -926,7 +926,7 @@ class ScannerTkinterGUI:
             symbol = str(m.get("symbol", ""))
             zone = str(m.get("zone", ""))
             cpr_width = float(m.get("cpr_width_pct", 0.0))
-            is_narrow = cpr_width <= 0.10
+            is_narrow = cpr_width <= 0.20
 
             chg = float(m.get("change_pct", 0.0))
             chg_str = f"+{chg:.2f}%" if chg > 0 else f"{chg:.2f}%"

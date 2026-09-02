@@ -84,9 +84,9 @@ def test_pivot_relationship_crossovers():
 
 def test_narrow_cpr_and_trap_zone():
     # H=1000.5, L=999.5, C=1000.0 (Extremely narrow range)
-    # PP = 1000.0, BC = 1000.0, TC = 1000.0 -> CPR width = 0.0% <= 0.10%
-    # R1 = 2000 - 999.5 = 1000.5, PDH = 1000.5 -> Bull Trap width = 0.0 <= 0.10%
-    # S1 = 2000 - 1000.5 = 999.5, PDL = 999.5 -> Bear Trap width = 0.0 <= 0.10%
+    # PP = 1000.0, BC = 1000.0, TC = 1000.0 -> CPR width = 0.0% <= 0.20%
+    # R1 = 2000 - 999.5 = 1000.5, PDH = 1000.5 -> Bull Trap width = 0.0 <= 0.20%
+    # S1 = 2000 - 1000.5 = 999.5, PDL = 999.5 -> Bear Trap width = 0.0 <= 0.20%
     p = calculate_daily_pivots(
         symbol="NIFTY",
         date_str="2026-09-01",
@@ -100,8 +100,8 @@ def test_narrow_cpr_and_trap_zone():
     assert p.is_narrow_bull_trap is True
     assert p.is_narrow_bear_trap is True
     assert p.is_narrow_trap_zone is True
-    assert p.bull_trap_width_pct <= 0.10
-    assert p.bear_trap_width_pct <= 0.10
+    assert p.bull_trap_width_pct <= 0.20
+    assert p.bear_trap_width_pct <= 0.20
 
 
 def test_cpr_breakout_and_breakdown_validation():

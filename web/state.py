@@ -199,7 +199,7 @@ class WebDashboardState:
                     "cpr_top": cpr_top,
                     "cpr_bottom": cpr_bottom,
                     "cpr_width_pct": cpr_width_pct,
-                    "is_narrow_cpr": p.get("is_narrow_cpr", cpr_width_pct <= 0.10),
+                    "is_narrow_cpr": p.get("is_narrow_cpr", cpr_width_pct <= 0.20),
                     "r1": r1,
                     "r2": r2,
                     "r3": r3,
