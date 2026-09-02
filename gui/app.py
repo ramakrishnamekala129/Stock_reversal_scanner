@@ -638,7 +638,12 @@ class ScannerTkinterGUI:
                 self.notebook.select(self.tab_chart)
 
     def _on_tab_changed(self, event=None):
-        """Immediately renders the newly selected tab with zero lag."""
+        """Non-blocking tab change handler allowing instant 60 FPS notebook transitions."""
+        # Defer rendering to the next event loop tick so the notebook tab switches instantly
+        self.root.after(20, self._process_tab_change)
+
+    def _process_tab_change(self):
+        """Processes data rendering for the newly selected tab without freezing the UI."""
         try:
             if not hasattr(self, "notebook"):
                 return
@@ -1019,9 +1024,13 @@ class ScannerTkinterGUI:
                 ))
             return
 
+        if not hasattr(self, "_market_row_cache"):
+            self._market_row_cache = {}
+
         # Check if full rebuild is needed (structure/order changed or initial populate)
         needs_full_rebuild = (existing_children != target_syms)
         if needs_full_rebuild:
+            self._market_row_cache.clear()
             for item in existing_children:
                 self.market_tree.delete(item)
 
@@ -1072,10 +1081,15 @@ class ScannerTkinterGUI:
                 str(m.get("time", "--")),
             )
 
+            tag_tuple = tuple(tags)
             if needs_full_rebuild:
-                self.market_tree.insert("", tk.END, iid=symbol, values=row_vals, tags=tuple(tags))
+                self.market_tree.insert("", tk.END, iid=symbol, values=row_vals, tags=tag_tuple)
+                self._market_row_cache[symbol] = (row_vals, tag_tuple)
             else:
-                self.market_tree.item(symbol, values=row_vals, tags=tuple(tags))
+                cached = self._market_row_cache.get(symbol)
+                if cached is None or cached[0] != row_vals or cached[1] != tag_tuple:
+                    self.market_tree.item(symbol, values=row_vals, tags=tag_tuple)
+                    self._market_row_cache[symbol] = (row_vals, tag_tuple)
 
     def _on_signals_column_click(self, col_id: str):
         """Toggles sort order when column heading is clicked in Signals tab."""
