@@ -124,14 +124,26 @@ def test_cpr_breakout_and_breakdown_validation():
 
 def test_zone_classification_below_bear_trap():
     from indicators.pivots import get_pivot_zone
-    # PP=2193.73, S1=2127.46, PDL=2156.20 -> Bear trap = 2127.46 to 2156.20
-    p = calculate_daily_pivots('HYUNDAI', '2026-09-01', 2250.0, 2260.0, 2156.2, 2165.0, 500000)
+    # Set up narrow trap zone: S1 and PDL within 0.20% of price, while CPR is above
+    # H=1010.0, L=990.0, C=1003.0 -> PP=(1010+990+1003)/3 = 1001.0
+    # BC=(1010+990)/2 = 1000.0, TC=(1001-1000)+1001 = 1002.0 -> CPR range: 1000.0 - 1002.0
+    # S1 = 2*1001 - 1010 = 992.0, PDL = 990.0 -> Bear trap = 990.0 to 992.0 -> width = 2.0 / 1001 = 0.1998% <= 0.20% (Narrow!)
+    p = calculate_daily_pivots('HYUNDAI', '2026-09-01', 1000.0, 1010.0, 990.0, 1003.0, 500000)
+    assert p.is_narrow_bear_trap is True
 
-    # 1. Candle tested trap (high=2130) and closed below (2120.0) -> Bear Trap Breakdown!
-    zone_breakdown = get_pivot_zone(2120.0, p, low=2118.0, high=2130.0, open_p=2129.0)
+    # 1. Candle tested narrow trap (high=991.5) and closed below (988.0) -> Bear Trap Breakdown!
+    zone_breakdown = get_pivot_zone(988.0, p, low=987.0, high=991.5, open_p=991.0)
     assert "Bear Trap Breakdown" in zone_breakdown
 
-    # 2. Candle completely below bear trap (high=2124 < 2127.46) -> Below S1/PDL
-    zone_below = get_pivot_zone(2120.0, p, low=2118.0, high=2124.0, open_p=2122.0)
+    # 2. Candle completely below bear trap (high=989.0 < 990.0) -> Below S1/PDL
+    zone_below = get_pivot_zone(985.0, p, low=984.0, high=989.0, open_p=988.0)
     assert "Below S1/PDL" in zone_below
     assert "CPR Breakdown" not in zone_below
+
+    # 3. Non-narrow trap (> 0.20% width) must NOT be classified as a trap zone
+    # H=1010.0, L=980.0, C=985.0 -> PP=(1010+980+985)/3 = 991.67
+    # S1 = 2*991.67 - 1010 = 973.34, PDL = 980.0 -> Bear trap = 973.34 to 980.0 -> width = 6.66 / 991.67 = 0.67% > 0.20% (Wide!)
+    p_wide = calculate_daily_pivots('WIDE', '2026-09-01', 1000.0, 1010.0, 980.0, 985.0, 500000)
+    assert p_wide.is_narrow_bear_trap is False
+    zone_wide = get_pivot_zone(978.0, p_wide, low=975.0, high=979.0, open_p=976.0)
+    assert "Trap" not in zone_wide

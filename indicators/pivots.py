@@ -171,27 +171,25 @@ def get_pivot_zone(
             return f"💥 Narrow CPR Breakdown ({pivots.cpr_width_pct:.2f}%)"
         return "💥 CPR Breakdown (Bearish Close)"
 
-    # 3. Check Bull Trap Zone (R1 & PDH Confluence)
-    if price > pivots.bull_trap_top:
-        if c_low <= pivots.bull_trap_top:
-            return "🚀 Bull Trap Breakout (Above R1/PDH)"
-    elif price < pivots.bull_trap_bottom and c_high >= pivots.bull_trap_bottom and price >= pivots.pp:
-        return "💥 Bull Trap Breakdown (Below R1/PDH)"
-    elif (pivots.bull_trap_bottom <= price <= pivots.bull_trap_top) or (c_high >= pivots.bull_trap_bottom and c_low <= pivots.bull_trap_top and price >= pivots.bull_trap_bottom):
-        if pivots.is_narrow_bull_trap:
+    # 3. Check Bull Trap Zone (R1 & PDH Confluence - must be <= 0.20% of price)
+    if pivots.is_narrow_bull_trap:
+        if price > pivots.bull_trap_top:
+            if c_low <= pivots.bull_trap_top:
+                return f"🚀 Bull Trap Breakout ({pivots.bull_trap_width_pct:.2f}%)"
+        elif price < pivots.bull_trap_bottom and c_high >= pivots.bull_trap_bottom and price >= pivots.pp:
+            return f"💥 Bull Trap Breakdown ({pivots.bull_trap_width_pct:.2f}%)"
+        elif (pivots.bull_trap_bottom <= price <= pivots.bull_trap_top) or (c_high >= pivots.bull_trap_bottom and c_low <= pivots.bull_trap_top and price >= pivots.bull_trap_bottom):
             return f"🪤 Narrow Bull Trap ({pivots.bull_trap_width_pct:.2f}%)"
-        return "Bull Trap Zone (R1 - PDH)"
 
-    # 4. Check Bear Trap Zone (S1 & PDL Confluence)
-    if price < pivots.bear_trap_bottom:
-        if c_high >= pivots.bear_trap_bottom:
-            return "💥 Bear Trap Breakdown (Below S1/PDL)"
-    elif price > pivots.bear_trap_top and c_low <= pivots.bear_trap_top and price <= pivots.pp:
-        return "🚀 Bear Trap Breakout (Above S1/PDL)"
-    elif (pivots.bear_trap_bottom <= price <= pivots.bear_trap_top) or (c_low <= pivots.bear_trap_top and c_high >= pivots.bear_trap_bottom and price <= pivots.bear_trap_top):
-        if pivots.is_narrow_bear_trap:
+    # 4. Check Bear Trap Zone (S1 & PDL Confluence - must be <= 0.20% of price)
+    if pivots.is_narrow_bear_trap:
+        if price < pivots.bear_trap_bottom:
+            if c_high >= pivots.bear_trap_bottom:
+                return f"💥 Bear Trap Breakdown ({pivots.bear_trap_width_pct:.2f}%)"
+        elif price > pivots.bear_trap_top and c_low <= pivots.bear_trap_top and price <= pivots.pp:
+            return f"🚀 Bear Trap Breakout ({pivots.bear_trap_width_pct:.2f}%)"
+        elif (pivots.bear_trap_bottom <= price <= pivots.bear_trap_top) or (c_low <= pivots.bear_trap_top and c_high >= pivots.bear_trap_bottom and price <= pivots.bear_trap_top):
             return f"🪤 Narrow Bear Trap ({pivots.bear_trap_width_pct:.2f}%)"
-        return "Bear Trap Zone (S1 - PDL)"
 
     # 5. Check Candlestick Pattern at CPR Zone (Central Pivot Range) - price inside or candle wick touches
     if (pivots.cpr_bottom <= price <= pivots.cpr_top) or (c_low <= pivots.cpr_top and c_high >= pivots.cpr_bottom):

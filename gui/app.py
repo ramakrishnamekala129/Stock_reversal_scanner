@@ -405,11 +405,10 @@ class ScannerTkinterGUI:
             "🎯 Bearish Pattern at CPR Resistance",
             "🚀 CPR Breakout (Bullish Close)",
             "💥 CPR Breakdown (Bearish Close)",
-            "🚀 Bear Trap Breakout (Above S1/PDL)",
-            "💥 Bull Trap Breakdown (Below R1/PDH)",
-            "🪤 All Trap Zones (R1-PDH / S1-PDL)",
-            "🐂 Bull Trap (R1 - PDH)",
-            "🐻 Bear Trap (S1 - PDL)",
+            "🚀 Bear Trap Breakout (<= 0.2%)",
+            "💥 Bull Trap Breakdown (<= 0.2%)",
+            "🐂 Bull Trap (<= 0.2%)",
+            "🐻 Bear Trap (<= 0.2%)",
             "📌 Inside CPR Zone",
         ]
         self.signal_cpr_menu = MultiSelectDropdown(
@@ -562,9 +561,8 @@ class ScannerTkinterGUI:
             "🎯 Pattern at CPR Zone",
             "🚀 CPR Breakout (Bullish Close)",
             "💥 CPR Breakdown (Bearish Close)",
-            "🪤 In Trap Zones",
-            "🐂 In Bull Trap (R1 - PDH)",
-            "🐻 In Bear Trap (S1 - PDL)",
+            "🐂 In Bull Trap (<= 0.2%)",
+            "🐻 In Bear Trap (<= 0.2%)",
             "📌 Inside CPR Zone",
         ]
         self.market_cpr_menu = MultiSelectDropdown(
@@ -961,11 +959,13 @@ class ScannerTkinterGUI:
                     matched = True
                 if "💥 CPR Breakdown (Bearish Close)" in sel and has_cpr_breakdown:
                     matched = True
-                if "🪤 All Trap Zones (R1-PDH / S1-PDL)" in sel and is_trap:
+                if "🚀 Bear Trap Breakout (<= 0.2%)" in sel and ("Bear Trap Breakout" in zone or any("Bear Trap Breakout" in str(c) for c in conds)):
                     matched = True
-                if "🐂 Bull Trap (R1 - PDH)" in sel and is_bull_trap:
+                if "💥 Bull Trap Breakdown (<= 0.2%)" in sel and ("Bull Trap Breakdown" in zone or any("Bull Trap Breakdown" in str(c) for c in conds)):
                     matched = True
-                if "🐻 Bear Trap (S1 - PDL)" in sel and is_bear_trap:
+                if "🐂 Bull Trap (<= 0.2%)" in sel and is_bull_trap:
+                    matched = True
+                if "🐻 Bear Trap (<= 0.2%)" in sel and is_bear_trap:
                     matched = True
                 if "📌 Inside CPR Zone" in sel and is_cpr_test:
                     matched = True
@@ -1099,11 +1099,9 @@ class ScannerTkinterGUI:
                     matched = True
                 if "💥 CPR Breakdown (Bearish Close)" in sel and has_cpr_breakdown:
                     matched = True
-                if "🪤 In Trap Zones" in sel and "Trap" in zone:
+                if "🐂 In Bull Trap (<= 0.2%)" in sel and "Bull Trap" in zone:
                     matched = True
-                if "🐂 In Bull Trap (R1 - PDH)" in sel and "Bull Trap" in zone:
-                    matched = True
-                if "🐻 In Bear Trap (S1 - PDL)" in sel and "Bear Trap" in zone:
+                if "🐻 In Bear Trap (<= 0.2%)" in sel and "Bear Trap" in zone:
                     matched = True
                 if "📌 Inside CPR Zone" in sel and "Inside CPR" in zone:
                     matched = True

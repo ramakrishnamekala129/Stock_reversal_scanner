@@ -174,15 +174,19 @@ class WebDashboardState:
 
                 bull_trap_top = p.get("bull_trap_top", max(r1, pdh) if (r1 and pdh) else 0.0)
                 bull_trap_bottom = p.get("bull_trap_bottom", min(r1, pdh) if (r1 and pdh) else 0.0)
+                bull_trap_width_pct = p.get("bull_trap_width_pct", round(abs(r1 - pdh) / pp * 100.0, 3) if pp > 0 else 0.0)
+                is_narrow_bull_trap = p.get("is_narrow_bull_trap", bull_trap_width_pct <= 0.20)
 
                 bear_trap_top = p.get("bear_trap_top", max(s1, pdl) if (s1 and pdl) else 0.0)
                 bear_trap_bottom = p.get("bear_trap_bottom", min(s1, pdl) if (s1 and pdl) else 0.0)
+                bear_trap_width_pct = p.get("bear_trap_width_pct", round(abs(s1 - pdl) / pp * 100.0, 3) if pp > 0 else 0.0)
+                is_narrow_bear_trap = p.get("is_narrow_bear_trap", bear_trap_width_pct <= 0.20)
 
                 zone = "PP - R1 (Bullish Territory)"
-                if bull_trap_bottom > 0 and bull_trap_bottom <= ltp <= bull_trap_top:
-                    zone = "Bull Trap Zone (R1 - PDH)"
-                elif bear_trap_bottom > 0 and bear_trap_bottom <= ltp <= bear_trap_top:
-                    zone = "Bear Trap Zone (S1 - PDL)"
+                if is_narrow_bull_trap and bull_trap_bottom > 0 and bull_trap_bottom <= ltp <= bull_trap_top:
+                    zone = f"🪤 Narrow Bull Trap ({bull_trap_width_pct:.2f}%)"
+                elif is_narrow_bear_trap and bear_trap_bottom > 0 and bear_trap_bottom <= ltp <= bear_trap_top:
+                    zone = f"🪤 Narrow Bear Trap ({bear_trap_width_pct:.2f}%)"
                 elif cpr_bottom > 0 and cpr_bottom <= ltp <= cpr_top:
                     zone = "Inside CPR Zone (Choppy / Base)"
                 elif r3 > 0 and ltp >= r3:
@@ -225,6 +229,15 @@ class WebDashboardState:
                     "s1": s1,
                     "s2": s2,
                     "s3": s3,
+                    "bull_trap_top": bull_trap_top,
+                    "bull_trap_bottom": bull_trap_bottom,
+                    "bear_trap_top": bear_trap_top,
+                    "bear_trap_bottom": bear_trap_bottom,
+                    "bull_trap_width_pct": bull_trap_width_pct,
+                    "bear_trap_width_pct": bear_trap_width_pct,
+                    "is_narrow_bull_trap": is_narrow_bull_trap,
+                    "is_narrow_bear_trap": is_narrow_bear_trap,
+                    "is_narrow_trap_zone": is_narrow_bull_trap or is_narrow_bear_trap,
                 })
 
             return {
