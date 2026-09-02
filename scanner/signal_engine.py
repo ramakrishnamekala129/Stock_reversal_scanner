@@ -169,6 +169,22 @@ class SignalEngine:
             if pat.pattern_name in ["BULLISH HARAMI", "BEARISH HARAMI"] and rel_vol < 0.75:
                 continue
 
+            # Invalidate Marubozu on dead/sub-average volume (< 1.0x) or tiny micro-ticks (< 0.15% range)
+            if pat.pattern_name in ["BULLISH MARUBOZU", "BEARISH MARUBOZU"]:
+                candle_range_pct = (curr_high - curr_low) / max(curr_close, 1.0) * 100.0
+                if candle_range_pct < 0.15 or rel_vol < 1.0:
+                    continue
+
+            # Invalidate Shooting Star or Hanging Man occurring at support (S1 / PDL)
+            # Bearish exhaustion wicks at major support are not valid resistance rejections
+            if pat.pattern_name in ["SHOOTING STAR", "HANGING MAN"] and curr_close <= pivots.bear_trap_top:
+                continue
+
+            # Invalidate Hammer or Inverse Hammer occurring at resistance (R1 / PDH)
+            # Bullish bounce wicks at major resistance are not valid support bounces
+            if pat.pattern_name in ["HAMMER", "INVERSE HAMMER"] and curr_close >= pivots.bull_trap_bottom:
+                continue
+
             # Invalidate Red-bodied Inverse Hammers collapsing to the lows
             if pat.pattern_name == "INVERSE HAMMER" and curr_close < curr_open:
                 # If closing in bottom 25% of candle range, this is selling pressure, not a bullish reversal
