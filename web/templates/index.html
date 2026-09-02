@@ -101,6 +101,12 @@
                         <option value="BULLISH MARUBOZU">Bullish Marubozu</option>
                         <option value="BEARISH MARUBOZU">Bearish Marubozu</option>
                     </select>
+                    <select id="signalStatusFilter" onchange="applySignalFilters()">
+                        <option value="ALL">All Status</option>
+                        <option value="TRIGGERED">✅ Triggered Only</option>
+                        <option value="PENDING">⏳ Pending Only</option>
+                        <option value="INVALIDATED">❌ Invalidated Only</option>
+                    </select>
                     <select id="signalCprFilter" onchange="applySignalFilters()">
                         <option value="ALL">All CPR Types</option>
                         <option value="NARROW">⚡ Narrow CPR (<= 0.2%) Only</option>
@@ -113,7 +119,7 @@
                     <select id="marketCprFilter" onchange="renderMarketTable()">
                         <option value="ALL">All 210 F&O Stocks</option>
                         <option value="NARROW">⚡ Narrow CPR (<= 0.2%) Trending Stocks</option>
-                        <option value="TRAP">🪤 Active in Trap Zones</option>
+                        <option value="TRAP">🪤 Trap Zones (R1-PDH / S1-PDL)</option>
                     </select>
                 </div>
 
@@ -131,24 +137,25 @@
                     <thead>
                         <tr>
                             <th style="width: 85px;">Time</th>
-                            <th style="width: 120px;">Symbol</th>
-                            <th style="width: 140px;">Signal</th>
-                            <th style="width: 160px;">Candlestick Pattern</th>
-                            <th class="num" style="width: 95px;">Price</th>
-                            <th class="num" style="width: 75px;">Score</th>
-                            <th style="width: 150px;">Pivot Zone</th>
-                            <th class="num" style="width: 95px;">Pivot (PP)</th>
-                            <th class="num" style="width: 90px;">PDH</th>
-                            <th class="num" style="width: 90px;">PDL</th>
-                            <th class="num" style="width: 90px;">R1</th>
-                            <th class="num" style="width: 90px;">S1</th>
-                            <th class="num" style="width: 85px;">Rel Vol</th>
+                            <th style="width: 110px;">Symbol</th>
+                            <th style="width: 130px;">Signal</th>
+                            <th style="width: 140px;">Candlestick Pattern</th>
+                            <th style="width: 135px; text-align: center;">Trigger Status</th>
+                            <th class="num" style="width: 90px;">Price</th>
+                            <th class="num" style="width: 70px;">Score</th>
+                            <th style="width: 140px;">Pivot Zone</th>
+                            <th class="num" style="width: 90px;">Pivot (PP)</th>
+                            <th class="num" style="width: 85px;">PDH</th>
+                            <th class="num" style="width: 85px;">PDL</th>
+                            <th class="num" style="width: 85px;">R1</th>
+                            <th class="num" style="width: 85px;">S1</th>
+                            <th class="num" style="width: 80px;">Rel Vol</th>
                             <th>Conditions & Factors Met</th>
                         </tr>
                     </thead>
                     <tbody id="signalsTableBody">
                         <tr class="empty-row">
-                            <td colspan="14">Scanning 5-minute candles for reversal setups...</td>
+                            <td colspan="15">Scanning 5-minute candles for reversal setups...</td>
                         </tr>
                     </tbody>
                 </table>

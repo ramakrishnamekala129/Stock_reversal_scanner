@@ -121,3 +121,13 @@ def test_tkinter_gui_initialization(tk_root):
     gui._render_signals()
     gui.strict_zones_var.set(True)
     gui._render_signals()
+
+    # Test Status filter
+    assert hasattr(gui, "signal_status_var")
+    assert gui.signal_status_var.get() == "ALL STATUS"
+    gui.signal_status_var.set("✅ Triggered Only")
+    gui._render_signals()
+    gui.signal_status_var.set("⏳ Pending Only")
+    gui._render_signals()
+    gui.signal_status_var.set("ALL STATUS")
+    gui._render_signals()

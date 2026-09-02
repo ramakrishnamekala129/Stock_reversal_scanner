@@ -23,6 +23,7 @@ from market.session import MarketSessionManager
 from scanner.dedup import EventDeduplicator
 from scanner.formatter import ConsoleFormatter
 from scanner.signal_engine import SignalEngine, SignalEvent
+from scanner.trigger_tracker import SignalTriggerTracker
 from upstox.auth import UpstoxAuth
 from upstox.rest import UpstoxRestClient
 from upstox.websocket import NormalizedTick, UpstoxWebSocketStreamer
@@ -48,6 +49,7 @@ class FNOIntradayScanner:
         self.session_mgr = MarketSessionManager()
         self.dedup = EventDeduplicator()
         self.signal_engine = SignalEngine()
+        self.trigger_tracker = SignalTriggerTracker()
         self.db = DatabaseRepository() if config.ENABLE_DB_STORAGE else None
         self.excel_mgr = LiveExcelManager() if enable_excel else None
         self.web_server = WebServerManager() if enable_web else None
@@ -173,11 +175,28 @@ class FNOIntradayScanner:
         if self.excel_mgr:
             self.excel_mgr.update_price(symbol, candle.close, candle.volume, candle.timestamp)
 
+        # 1. Check trigger confirmation/invalidation for previously pending signals on this symbol
+        triggered = self.trigger_tracker.check_candle_triggers(
+            symbol=symbol,
+            candle_high=candle.high,
+            candle_low=candle.low,
+            candle_close=candle.close,
+            candle_timestamp=candle.timestamp,
+        )
+        for trig_sig in triggered:
+            dashboard_state.update_signal_trigger(
+                symbol=symbol,
+                timestamp=str(trig_sig.get("timestamp", "")),
+                pattern=trig_sig.get("pattern", ""),
+                new_status=trig_sig.get("trigger_status", ""),
+                trigger_time=trig_sig.get("trigger_time", ""),
+            )
+
         pivots = self._pivots.get(symbol)
         if not pivots:
             return
 
-        # Run multi-factor signal detection
+        # 2. Run multi-factor signal detection on newly closed candle
         signals = self.signal_engine.evaluate_candle(symbol, df_history, pivots)
 
         for sig in signals:
@@ -199,14 +218,18 @@ class FNOIntradayScanner:
                 self.session_mgr.stats.bearish_signals += 1
                 self.session_mgr.stats.hanging_man_signals += 1
 
+            sig_dict = sig.to_dict()
+            # Register newly formed signal with trigger tracker
+            self.trigger_tracker.register_signal(sig_dict)
+
             # Output formatted signal card to terminal (if live)
             if print_console:
                 ConsoleFormatter.print_signal(sig)
 
             # Save signal to database, broadcast to FastAPI Web Dashboard & optional Excel
             if self.db:
-                self.db.save_signal(sig.to_dict())
-            dashboard_state.add_signal(sig)
+                self.db.save_signal(sig_dict)
+            dashboard_state.add_signal(sig_dict)
             if self.excel_mgr:
                 self.excel_mgr.add_signal(sig)
 

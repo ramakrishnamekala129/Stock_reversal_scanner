@@ -679,6 +679,8 @@ class CandleChartFrame(tk.Frame):
                 pattern = sig.get("pattern", "SIGNAL")
                 direction = sig.get("direction", "")
                 score = sig.get("score", 0)
+                trig_status = str(sig.get("trigger_status", "PENDING")).upper()
+                trig_lbl = " [✅]" if trig_status == "TRIGGERED" else " [❌]" if trig_status == "INVALIDATED" else " [⏳]"
 
                 # Match signal time to candle index
                 for c_idx in range(n_candles):
@@ -691,7 +693,7 @@ class CandleChartFrame(tk.Frame):
                             self.ax_main.text(
                                 c_idx,
                                 marker_y - (candle_range * 0.04),
-                                f"{pattern}\n(+{score})",
+                                f"{pattern}{trig_lbl}\n(+{score})",
                                 color=BULL_COLOR,
                                 fontsize=7,
                                 fontweight="bold",
@@ -706,7 +708,7 @@ class CandleChartFrame(tk.Frame):
                             self.ax_main.text(
                                 c_idx,
                                 marker_y + (candle_range * 0.04),
-                                f"{pattern}\n(+{score})",
+                                f"{pattern}{trig_lbl}\n(+{score})",
                                 color=BEAR_COLOR,
                                 fontsize=7,
                                 fontweight="bold",

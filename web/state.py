@@ -122,6 +122,25 @@ class WebDashboardState:
             "stats": self.get_stats(),
         })
 
+    def update_signal_trigger(self, symbol: str, timestamp: str, pattern: str, new_status: str, trigger_time: str = ""):
+        """Updates the trigger confirmation status of an existing signal and broadcasts update."""
+        updated_sig = None
+        with self._lock:
+            for s in self.signals:
+                s_ts = str(s.get("timestamp", ""))
+                if s.get("symbol") == symbol and s.get("pattern") == pattern:
+                    if timestamp in s_ts or s_ts in timestamp or not timestamp:
+                        s["trigger_status"] = new_status
+                        s["trigger_time"] = trigger_time
+                        updated_sig = dict(s)
+                        break
+
+        if updated_sig:
+            self._broadcast({
+                "type": "SIGNAL_TRIGGERED",
+                "data": updated_sig,
+            })
+
     def update_stats(self, **kwargs):
         """Updates session metadata."""
         with self._lock:

@@ -177,6 +177,12 @@ function handleWsMessage(msg) {
             }
             break;
 
+        case 'SIGNAL_TRIGGERED':
+            if (msg.data) {
+                handleSignalTriggered(msg.data);
+            }
+            break;
+
         case 'STATS_UPDATE':
             if (msg.stats) {
                 updateStatsHeader(msg.stats);
@@ -242,6 +248,16 @@ function handleNewSignal(sig, stats) {
     renderSignalsTable();
 }
 
+function handleSignalTriggered(updatedSig) {
+    // Find existing signal and update status
+    const match = signalsList.find(s => s.symbol === updatedSig.symbol && s.pattern === updatedSig.pattern && (s.timestamp === updatedSig.timestamp || !updatedSig.timestamp));
+    if (match) {
+        match.trigger_status = updatedSig.trigger_status;
+        match.trigger_time = updatedSig.trigger_time;
+    }
+    renderSignalsTable();
+}
+
 function updateStatsHeader(stats) {
     if (stats.symbols_scanned !== undefined) {
         document.getElementById('statSymbols').innerText = stats.symbols_scanned;
@@ -257,7 +273,7 @@ function updateStatsHeader(stats) {
         document.getElementById('statBearish').innerText = stats.bearish_signals;
     }
     if (stats.patterns_detected !== undefined) {
-        document.getElementById('signalsCountBadge').innerText = stats.patterns_detected;
+        document.getElementById('statPatterns').innerText = stats.patterns_detected;
     }
     if (stats.last_updated) {
         const note = document.getElementById('lastUpdatedNote');
@@ -270,6 +286,7 @@ function updateStatsHeader(stats) {
 // ==========================================================================
 let signalFilterDirection = 'ALL';
 let signalFilterPattern = 'ALL';
+let signalFilterStatus = 'ALL';
 let signalFilterCpr = 'ALL';
 let marketFilterCpr = 'ALL';
 let searchQuery = '';
@@ -277,6 +294,8 @@ let searchQuery = '';
 function applySignalFilters() {
     signalFilterDirection = document.getElementById('signalDirectionFilter').value;
     signalFilterPattern = document.getElementById('signalPatternFilter').value;
+    const statusEl = document.getElementById('signalStatusFilter');
+    signalFilterStatus = statusEl ? statusEl.value : 'ALL';
     const cprEl = document.getElementById('signalCprFilter');
     signalFilterCpr = cprEl ? cprEl.value : 'ALL';
     renderSignalsTable();
@@ -295,6 +314,11 @@ function renderSignalsTable() {
         if (signalFilterPattern !== 'ALL') {
             if (sig.pattern !== signalFilterPattern) return false;
         }
+        // Filter by Trigger Status
+        if (signalFilterStatus !== 'ALL') {
+            const trigStatus = (sig.trigger_status || 'PENDING').toUpperCase();
+            if (trigStatus !== signalFilterStatus) return false;
+        }
         // Filter by CPR / Trap
         if (signalFilterCpr === 'NARROW') {
             const hasNarrow = (sig.conditions_met || []).some(c => c.includes('Narrow CPR')) || (sig.zone || '').includes('Narrow CPR');
@@ -312,7 +336,7 @@ function renderSignalsTable() {
     });
 
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="14">No matching signals detected.</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="15">No matching signals detected.</td></tr>`;
         return;
     }
 
@@ -338,12 +362,28 @@ function renderSignalsTable() {
                 timeDisplay = parts[1].split('+')[0].split('.')[0].split('Z')[0];
             }
         }
+
+        // Status badge formatting
+        const trigStatus = (sig.trigger_status || 'PENDING').toUpperCase();
+        const trigTime = sig.trigger_time || '';
+        const trigPrice = Number(sig.trigger_price || (isBull ? sig.candle_high : sig.candle_low) || sig.price).toFixed(2);
+        let statusBadge = '';
+        if (trigStatus === 'TRIGGERED') {
+            statusBadge = `<span class="badge badge-triggered">✅ TRIGGERED${trigTime ? ' (' + trigTime + ')' : ''}</span>`;
+        } else if (trigStatus === 'INVALIDATED') {
+            statusBadge = `<span class="badge badge-invalidated">❌ INVALIDATED</span>`;
+        } else {
+            const comp = isBull ? '>' : '<';
+            statusBadge = `<span class="badge badge-pending">⏳ PENDING (${comp}${trigPrice})</span>`;
+        }
+
         return `
             <tr>
                 <td class="mono"><strong>${timeDisplay}</strong></td>
                 <td><strong>${sig.symbol}</strong></td>
                 <td><span class="badge ${badgeClass}">${sig.direction}</span></td>
                 <td><span class="badge badge-pattern">${sig.pattern}</span></td>
+                <td style="text-align: center;">${statusBadge}</td>
                 <td class="num"><strong>${formatNumber(sig.price)}</strong></td>
                 <td class="num"><span class="badge-score ${scoreClass}">${scoreVal}</span></td>
                 <td><span class="badge badge-zone">${sig.zone || '--'}</span></td>

@@ -469,6 +469,28 @@ body {
     letter-spacing: 0.2px;
 }
 
+.badge-triggered {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+    border: 1px solid #10b981;
+    font-weight: 700;
+}
+
+.badge-pending {
+    background: rgba(245, 158, 11, 0.18);
+    color: #fbbf24;
+    border: 1px solid #f59e0b;
+    font-weight: 700;
+}
+
+.badge-invalidated {
+    background: rgba(148, 163, 184, 0.12);
+    color: #94a3b8;
+    border: 1px solid #475569;
+    font-weight: 600;
+    text-decoration: line-through;
+}
+
 .badge-score {
     display: inline-flex;
     align-items: center;

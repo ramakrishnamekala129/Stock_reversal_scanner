@@ -162,6 +162,7 @@ class ScannerTkinterGUI:
         # Filters & Sorting
         self.signal_direction_var = tk.StringVar(value="ALL")
         self.signal_pattern_var = tk.StringVar(value="ALL")
+        self.signal_status_var = tk.StringVar(value="ALL STATUS")
         self.signal_vol_var = tk.StringVar(value="ALL VOLUMES")
         self.signal_score_var = tk.StringVar(value="ALL SCORES")
         self.strict_zones_var = tk.BooleanVar(value=True)
@@ -377,9 +378,22 @@ class ScannerTkinterGUI:
             "INVERSE HAMMER",
             "SHOOTING STAR",
             "HANGING MAN",
-        ], state="readonly", width=20)
-        pat_combo.pack(side=tk.LEFT, padx=(0, 12))
+            "BULLISH MARUBOZU",
+            "BEARISH MARUBOZU",
+        ], state="readonly", width=18)
+        pat_combo.pack(side=tk.LEFT, padx=(0, 10))
         pat_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
+
+        # Status Filter (Trigger Confirmation)
+        tk.Label(toolbar, text="Status:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        status_combo = ttk.Combobox(toolbar, textvariable=self.signal_status_var, values=[
+            "ALL STATUS",
+            "✅ Triggered Only",
+            "⏳ Pending Only",
+            "❌ Invalidated Only",
+        ], state="readonly", width=16)
+        status_combo.pack(side=tk.LEFT, padx=(0, 10))
+        status_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
         # Multi-Select CPR / Trap Filter
         tk.Label(toolbar, text="CPR / Trap:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
@@ -483,19 +497,20 @@ class ScannerTkinterGUI:
 
         cols = [
             ("time", "Time", 75, "center"),
-            ("symbol", "Symbol", 110, "w"),
-            ("signal", "Signal", 130, "w"),
-            ("pattern", "Pattern", 150, "w"),
+            ("symbol", "Symbol", 100, "w"),
+            ("signal", "Signal", 125, "w"),
+            ("pattern", "Pattern", 140, "w"),
+            ("status", "Trigger Status", 130, "center"),
             ("price", "Price (₹)", 85, "e"),
             ("score", "Score", 65, "center"),
-            ("zone", "Pivot Zone", 160, "w"),
-            ("pp", "PP", 80, "e"),
-            ("pdh", "PDH", 80, "e"),
-            ("pdl", "PDL", 80, "e"),
-            ("r1", "R1", 80, "e"),
-            ("s1", "S1", 80, "e"),
+            ("zone", "Pivot Zone", 150, "w"),
+            ("pp", "PP", 75, "e"),
+            ("pdh", "PDH", 75, "e"),
+            ("pdl", "PDL", 75, "e"),
+            ("r1", "R1", 75, "e"),
+            ("s1", "S1", 75, "e"),
             ("rel_vol", "Rel Vol", 70, "e"),
-            ("factors", "Factors & Conditions Met", 260, "w"),
+            ("factors", "Factors & Conditions Met", 240, "w"),
         ]
 
         self.signals_tree = ttk.Treeview(
@@ -507,7 +522,7 @@ class ScannerTkinterGUI:
 
         for col_id, col_name, width, align in cols:
             self.signals_tree.heading(col_id, text=col_name, anchor=align, command=lambda c=col_id: self._on_signals_column_click(c))
-            self.signals_tree.column(col_id, width=width, anchor=align, stretch=(col_id in ("factors", "zone")))
+            self.signals_tree.column(col_id, width=width, anchor=align, stretch=(col_id in ("factors", "zone", "status")))
 
         # Scrollbars
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.signals_tree.yview)
@@ -524,6 +539,9 @@ class ScannerTkinterGUI:
         # Configure Color Tags
         self.signals_tree.tag_configure("bullish", foreground=ACCENT_GREEN)
         self.signals_tree.tag_configure("bearish", foreground=ACCENT_RED)
+        self.signals_tree.tag_configure("triggered", background="#064e3b", foreground="#34d399")
+        self.signals_tree.tag_configure("pending", background="#332200", foreground="#fbbf24")
+        self.signals_tree.tag_configure("invalidated", background="#2a1215", foreground="#94a3b8")
         self.signals_tree.tag_configure("high_score", background="#062e22", foreground="#34d399")
         self.signals_tree.tag_configure("narrow_cpr", background="#0c2d48", foreground=ACCENT_BLUE)
         self.signals_tree.tag_configure("alt_row", background=TREE_ALT)
@@ -865,6 +883,16 @@ class ScannerTkinterGUI:
             if pat_filter != "ALL" and pattern != pat_filter:
                 continue
 
+            # Apply Trigger Status Filter
+            status_filter = self.signal_status_var.get() if hasattr(self, "signal_status_var") else "ALL STATUS"
+            trig_status = str(s.get("trigger_status", "PENDING")).upper()
+            if "Triggered" in status_filter and trig_status != "TRIGGERED":
+                continue
+            elif "Pending" in status_filter and trig_status != "PENDING":
+                continue
+            elif "Invalidated" in status_filter and trig_status != "INVALIDATED":
+                continue
+
             # Apply Volume Filter
             rel_vol = float(s.get("relative_volume", 1.0))
             if hasattr(self, "signal_vol_var"):
@@ -984,6 +1012,23 @@ class ScannerTkinterGUI:
                 tags.append("high_score")
             if any("Narrow CPR" in str(c) for c in conds):
                 tags.append("narrow_cpr")
+
+            # Trigger Status value & tag
+            trig_status = str(s.get("trigger_status", "PENDING")).upper()
+            trig_time = str(s.get("trigger_time", ""))
+            trig_price = float(s.get("trigger_price", s.get("candle_high" if is_bull else "candle_low", s.get("price", 0.0))))
+
+            if trig_status == "TRIGGERED":
+                status_text = f"✅ TRIGGERED ({trig_time})" if trig_time else "✅ TRIGGERED"
+                tags.append("triggered")
+            elif trig_status == "INVALIDATED":
+                status_text = "❌ INVALIDATED"
+                tags.append("invalidated")
+            else:
+                comp = ">" if is_bull else "<"
+                status_text = f"⏳ PENDING ({comp}{trig_price:.2f})"
+                tags.append("pending")
+
             if idx % 2 == 1:
                 tags.append("alt_row")
 
@@ -997,6 +1042,7 @@ class ScannerTkinterGUI:
                     symbol,
                     direction,
                     pattern,
+                    status_text,
                     f"{float(s.get('price', 0)):.2f}",
                     score,
                     zone,
@@ -1015,12 +1061,12 @@ class ScannerTkinterGUI:
             if not self.cached_signals:
                 self.signals_tree.insert("", tk.END, values=(
                     "--:--:--", "SCANNING...", "INITIALIZING", "Downloading 5M Candles & Scanning Today's Setups...",
-                    "--", "--", "Loading Universe...", "--", "--", "--", "--", "--", "--", "Evaluating 210 F&O stocks in background..."
+                    "--", "--", "--", "Loading Universe...", "--", "--", "--", "--", "--", "--", "Evaluating 210 F&O stocks in background..."
                 ), tags=("narrow_cpr",))
             else:
                 self.signals_tree.insert("", tk.END, values=(
                     "--:--:--", "--", "NO SIGNALS", "No reversal signals matching current filters.",
-                    "", "", "", "", "", "", "", "", "", "Try adjusting filters or search query."
+                    "--", "", "", "", "", "", "", "", "", "", "Try adjusting filters or search query."
                 ))
 
     def _render_market(self):
@@ -1218,13 +1264,17 @@ class ScannerTkinterGUI:
         try:
             with open(path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
-                writer.writerow(["Time", "Symbol", "Signal", "Pattern", "Price", "Score", "Pivot Zone", "PP", "PDH", "PDL", "R1", "S1", "Rel Vol", "Conditions Met"])
+                writer.writerow(["Time", "Symbol", "Signal", "Pattern", "Trigger Status", "Trigger Time", "Setup High", "Setup Low", "Price", "Score", "Pivot Zone", "PP", "PDH", "PDL", "R1", "S1", "Rel Vol", "Conditions Met"])
                 for s in self.cached_signals:
                     writer.writerow([
                         s.get("timestamp"),
                         s.get("symbol"),
                         s.get("direction"),
                         s.get("pattern"),
+                        s.get("trigger_status", "PENDING"),
+                        s.get("trigger_time", ""),
+                        s.get("candle_high", ""),
+                        s.get("candle_low", ""),
                         s.get("price"),
                         s.get("score"),
                         s.get("zone"),

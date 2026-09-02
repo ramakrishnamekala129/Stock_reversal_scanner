@@ -50,6 +50,13 @@ class SignalEvent:
     conditions_met: List[str]
     zone: str = ""
 
+    # Setup Candle Extremes & Next-Candle Trigger Tracking
+    candle_high: float = 0.0
+    candle_low: float = 0.0
+    trigger_status: str = "PENDING"  # PENDING, TRIGGERED, INVALIDATED
+    trigger_time: str = ""
+    trigger_price: float = 0.0
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "symbol": self.symbol,
@@ -76,6 +83,11 @@ class SignalEvent:
             "relative_volume": self.relative_volume,
             "volume": self.volume,
             "conditions_met": self.conditions_met,
+            "candle_high": self.candle_high,
+            "candle_low": self.candle_low,
+            "trigger_status": self.trigger_status,
+            "trigger_time": self.trigger_time,
+            "trigger_price": self.trigger_price,
         }
 
 
@@ -379,6 +391,11 @@ class SignalEngine:
                     relative_volume=rel_vol,
                     volume=curr_vol,
                     conditions_met=conditions_met,
+                    candle_high=curr_high,
+                    candle_low=curr_low,
+                    trigger_status="PENDING",
+                    trigger_time="",
+                    trigger_price=curr_high if not is_bearish else curr_low,
                 )
                 signals.append(signal_event)
 

@@ -169,3 +169,71 @@ def test_bear_trap_breakout_detection():
     assert sig.direction == "BULLISH SETUP"
     assert "Bear Trap Breakout" in sig.zone
     assert sig.score >= 10
+    assert sig.candle_high == 20035.0
+    assert sig.candle_low == 19890.0
+    assert sig.trigger_status == "PENDING"
+    assert sig.trigger_price == 20035.0
+
+
+def test_signal_trigger_tracker():
+    from scanner.trigger_tracker import SignalTriggerTracker
+
+    tracker = SignalTriggerTracker()
+
+    # 1. Register a Bullish Setup
+    bull_sig = {
+        "symbol": "RELIANCE",
+        "timestamp": "2026-09-02T10:00:00",
+        "pattern": "HAMMER",
+        "direction": "BULLISH SETUP",
+        "candle_high": 1290.0,
+        "candle_low": 1275.0,
+        "trigger_status": "PENDING",
+    }
+    tracker.register_signal(bull_sig)
+
+    # Next candle doesn't break high or low -> still pending
+    res1 = tracker.check_candle_triggers(
+        symbol="RELIANCE",
+        candle_high=1288.0,
+        candle_low=1280.0,
+        candle_close=1285.0,
+        candle_timestamp="2026-09-02T10:05:00",
+    )
+    assert len(res1) == 0
+    assert bull_sig["trigger_status"] == "PENDING"
+
+    # Next candle crosses above 1290.0 -> TRIGGERED!
+    res2 = tracker.check_candle_triggers(
+        symbol="RELIANCE",
+        candle_high=1295.0,
+        candle_low=1282.0,
+        candle_close=1292.0,
+        candle_timestamp="2026-09-02T10:10:00",
+    )
+    assert len(res2) == 1
+    assert bull_sig["trigger_status"] == "TRIGGERED"
+    assert bull_sig["trigger_time"] == "10:10:00"
+
+    # 2. Register a Bearish Setup that gets invalidated
+    bear_sig = {
+        "symbol": "TCS",
+        "timestamp": "2026-09-02T11:00:00",
+        "pattern": "SHOOTING STAR",
+        "direction": "BEARISH WARNING",
+        "candle_high": 3550.0,
+        "candle_low": 3530.0,
+        "trigger_status": "PENDING",
+    }
+    tracker.register_signal(bear_sig)
+
+    # Next candle breaks above setup high (3550.0) -> INVALIDATED!
+    res3 = tracker.check_candle_triggers(
+        symbol="TCS",
+        candle_high=3555.0,
+        candle_low=3535.0,
+        candle_close=3552.0,
+        candle_timestamp="2026-09-02T11:05:00",
+    )
+    assert len(res3) == 1
+    assert bear_sig["trigger_status"] == "INVALIDATED"

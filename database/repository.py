@@ -103,11 +103,29 @@ class DatabaseRepository:
                     s1 REAL,
                     s2 REAL,
                     relative_volume REAL,
+                    candle_high REAL,
+                    candle_low REAL,
+                    trigger_status TEXT DEFAULT 'PENDING',
+                    trigger_time TEXT,
+                    trigger_price REAL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(symbol, timestamp, pattern)
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_sym ON scanner_signals(symbol)")
+
+            # Safe migrations for existing SQLite database
+            for col_def in [
+                ("candle_high", "REAL"),
+                ("candle_low", "REAL"),
+                ("trigger_status", "TEXT DEFAULT 'PENDING'"),
+                ("trigger_time", "TEXT"),
+                ("trigger_price", "REAL"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE scanner_signals ADD COLUMN {col_def[0]} {col_def[1]}")
+                except Exception:
+                    pass
 
     def save_candle(self, candle_dict: Dict[str, Any]):
         """Persists or updates a 5-minute candle."""
@@ -237,17 +255,31 @@ class DatabaseRepository:
             return
         conn = self._get_connection()
         try:
+            # Ensure default trigger tracking values
+            sig = dict(signal_dict)
+            sig.setdefault("candle_high", sig.get("price", 0.0))
+            sig.setdefault("candle_low", sig.get("price", 0.0))
+            sig.setdefault("trigger_status", "PENDING")
+            sig.setdefault("trigger_time", "")
+            sig.setdefault("trigger_price", sig.get("candle_high", 0.0))
+
             with conn:
                 conn.execute("""
-                    INSERT OR IGNORE INTO scanner_signals (
+                    INSERT INTO scanner_signals (
                         symbol, timestamp, pattern, direction, price, score,
-                        pivot, pdh, pdl, r1, r2, s1, s2, relative_volume
+                        pivot, pdh, pdl, r1, r2, s1, s2, relative_volume,
+                        candle_high, candle_low, trigger_status, trigger_time, trigger_price
                     )
                     VALUES (
                         :symbol, :timestamp, :pattern, :direction, :price, :score,
-                        :pivot, :pdh, :pdl, :r1, :r2, :s1, :s2, :relative_volume
+                        :pivot, :pdh, :pdl, :r1, :r2, :s1, :s2, :relative_volume,
+                        :candle_high, :candle_low, :trigger_status, :trigger_time, :trigger_price
                     )
-                """, signal_dict)
+                    ON CONFLICT(symbol, timestamp, pattern) DO UPDATE SET
+                        trigger_status = excluded.trigger_status,
+                        trigger_time = excluded.trigger_time,
+                        score = excluded.score
+                """, sig)
         except Exception as e:
             logger.error(f"DB error saving signal: {e}")
 
