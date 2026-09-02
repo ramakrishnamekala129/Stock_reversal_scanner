@@ -197,7 +197,15 @@ def get_pivot_zone(
             return f"🎯 Pattern at Narrow CPR ({pivots.cpr_width_pct:.2f}%)"
         return "🎯 Pattern at CPR Zone (Retest / Bounce)"
 
-    # 6. Expansion / Breakout Levels
+    # 6. S2 Support Bounce & R2 Resistance Rejection
+    if abs(c_low - pivots.s2) / pivots.s2 <= 0.0035 or (c_low <= pivots.s2 and price >= pivots.s2):
+        if (price - c_low) / max(c_high - c_low, 0.001) >= 0.35:
+            return "🛡️ Bounce near S2 Support"
+    if abs(c_high - pivots.r2) / pivots.r2 <= 0.0035 or (c_high >= pivots.r2 and price <= pivots.r2):
+        if (c_high - price) / max(c_high - c_low, 0.001) >= 0.35:
+            return "🛡️ Rejection near R2 Resistance"
+
+    # 7. Expansion / Breakout Levels
     if price >= pivots.r3:
         return "Above R3 (Super Breakout)"
     elif price >= pivots.r2:

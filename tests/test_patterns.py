@@ -110,3 +110,13 @@ def test_shooting_star():
     from patterns.candlestick import is_shooting_star
     assert is_shooting_star(c, context="uptrend") is True
     assert is_shooting_star(c, context="downtrend") is False
+
+
+def test_pin_bar():
+    # Long lower shadow >= 45% of candle range, close in upper 50%
+    # Open=1135.2, High=1135.9, Low=1129.6, Close=1132.6 (360ONE 09:45 candle)
+    # Range = 6.3, Lower Wick = 3.0 (47.6%), Close pos = (1132.6-1129.6)/6.3 = 47.6%
+    c = CandleItem(open=1135.2, high=1135.9, low=1129.6, close=1132.6, volume=16317)
+    from patterns.candlestick import is_pin_bar
+    assert is_pin_bar(c, context="downtrend") is True
+    assert is_pin_bar(c, context="uptrend") is False

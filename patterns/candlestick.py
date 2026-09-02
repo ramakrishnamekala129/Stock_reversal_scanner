@@ -174,6 +174,43 @@ def is_hammer(
     return True
 
 
+def is_pin_bar(
+    candle: Union[CandleItem, pd.Series, dict],
+    context: str = "downtrend",
+    min_lower_wick_pct: float = 0.45,
+) -> bool:
+    """
+    Bullish Pin Bar / Long Lower Shadow Rejection:
+    1. Long lower wick (at least 45% of the total candle range).
+    2. Close finishes in the upper half of the candle range (buyers pushing price up).
+    3. Upper wick is moderate (<= 35% of total range).
+    4. Trend context: Not in an established strong uptrend.
+    """
+    c = _to_candle_item(candle)
+    if c.total_range <= 0:
+        return False
+
+    # Lower shadow must be at least min_lower_wick_pct of total candle range
+    lower_wick_pct = c.lower_wick / c.total_range
+    if lower_wick_pct < min_lower_wick_pct:
+        return False
+
+    # Close must be in the upper 55% of the candle range (rejection of lows)
+    close_pos = (c.close - c.low) / c.total_range
+    if close_pos < 0.40:
+        return False
+
+    # Upper wick should not dominate
+    if c.upper_wick > c.total_range * 0.35:
+        return False
+
+    # Context filter: reject in explicit uptrend
+    if config.ENABLE_TREND_CONTEXT and context == "uptrend":
+        return False
+
+    return True
+
+
 def is_inverse_hammer(
     candle: Union[CandleItem, pd.Series, dict],
     context: str = "downtrend",
@@ -462,7 +499,7 @@ def detect_candlestick_patterns(
             description="Small candle contained inside previous bullish candle.",
         ))
 
-    # 5. Hammer (in downtrend/neutral)
+    # 5. Hammer & Pin Bar (in downtrend/neutral)
     if is_hammer(curr_c, context=context):
         results["hammer"] = True
         results["details"].append(PatternResult(
@@ -471,6 +508,15 @@ def detect_candlestick_patterns(
             timestamp=ts,
             pattern_strength=2.0,
             description="Hammer candlestick with long lower shadow at support/downtrend.",
+        ))
+    elif is_pin_bar(curr_c, context=context):
+        results["pin_bar"] = True
+        results["details"].append(PatternResult(
+            pattern_name="PIN_BAR",
+            pattern_direction="BULLISH",
+            timestamp=ts,
+            pattern_strength=2.0,
+            description="Bullish Pin Bar with strong lower shadow rejection at support.",
         ))
 
     # 6. Inverse Hammer (Bearish Upper Shadow Rejection)

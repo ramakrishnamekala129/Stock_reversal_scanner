@@ -325,6 +325,12 @@ function renderSignalsTable() {
             if (!hasNarrow) return false;
         } else if (signalFilterCpr === 'TRAP') {
             if (!(sig.zone || '').includes('Trap')) return false;
+        } else if (signalFilterCpr === 'S2') {
+            const hasS2 = (sig.conditions_met || []).some(c => c.includes('S2 Support')) || (sig.zone || '').includes('S2');
+            if (!hasS2) return false;
+        } else if (signalFilterCpr === 'R2') {
+            const hasR2 = (sig.conditions_met || []).some(c => c.includes('R2 Resistance')) || (sig.zone || '').includes('R2');
+            if (!hasR2) return false;
         }
 
         // Search Query
@@ -412,6 +418,10 @@ function renderMarketTable() {
             if ((item.cpr_width_pct || 0) > 0.20) return false;
         } else if (marketFilterCpr === 'TRAP') {
             if (!(item.zone || '').includes('Trap')) return false;
+        } else if (marketFilterCpr === 'S2') {
+            if (!(item.zone || '').includes('S2')) return false;
+        } else if (marketFilterCpr === 'R2') {
+            if (!(item.zone || '').includes('R2')) return false;
         }
 
         if (searchQuery) {

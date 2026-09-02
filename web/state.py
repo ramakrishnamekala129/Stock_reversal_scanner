@@ -191,10 +191,14 @@ class WebDashboardState:
                     zone = "Inside CPR Zone (Choppy / Base)"
                 elif r3 > 0 and ltp >= r3:
                     zone = "Above R3 (Super Breakout)"
+                elif r2 > 0 and abs(ltp - r2) / r2 <= 0.0035:
+                    zone = "🛡️ Rejection near R2 Resistance"
                 elif r2 > 0 and ltp >= r2:
                     zone = "R2 - R3 (Bullish Extension)"
                 elif bull_trap_top > 0 and ltp > bull_trap_top:
                     zone = "Above R1/PDH (Strong Bullish)"
+                elif s2 > 0 and abs(ltp - s2) / s2 <= 0.0035:
+                    zone = "🛡️ Bounce near S2 Support"
                 elif bear_trap_bottom > 0 and ltp < bear_trap_bottom:
                     zone = "Below S1/PDL (Strong Breakdown)"
                 elif pp > 0 and ltp >= pp:

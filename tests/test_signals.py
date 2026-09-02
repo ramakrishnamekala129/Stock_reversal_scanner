@@ -237,3 +237,34 @@ def test_signal_trigger_tracker():
     )
     assert len(res3) == 1
     assert bear_sig["trigger_status"] == "INVALIDATED"
+
+
+def test_s2_support_bounce_pin_bar():
+    from scanner.signal_engine import SignalEngine
+    # 360ONE pivots on Sep 02: PP=1165.8, S1=1147.3, S2=1129.0
+    pivots = calculate_daily_pivots(
+        symbol="360ONE",
+        date_str="2026-09-01",
+        open_p=1175.0,
+        high_p=1184.3,
+        low_p=1147.5,
+        close_p=1165.6,
+        volume=2175285,
+    )
+    # 09:45 candle testing S2 (1129.6 vs 1129.0) with Pin Bar lower wick
+    df = pd.DataFrame([
+        {"timestamp": datetime(2026, 9, 2, 9, 40), "open": 1133.1, "high": 1136.3, "low": 1132.8, "close": 1135.8, "volume": 5548},
+        {"timestamp": datetime(2026, 9, 2, 9, 45), "open": 1135.2, "high": 1135.9, "low": 1129.6, "close": 1132.6, "volume": 16317},
+    ])
+    engine = SignalEngine(min_signal_score=4)
+    signals = engine.evaluate_candle("360ONE", df, pivots)
+    assert len(signals) >= 1
+    sig = signals[0]
+    assert sig.direction == "BULLISH SETUP"
+    assert sig.pattern == "PIN_BAR"
+    assert "S2 Support" in sig.zone or any("S2 Support" in c for c in sig.conditions_met)
+    assert sig.score >= 7
+    assert sig.candle_high == 1135.9
+    assert sig.candle_low == 1129.6
+    assert sig.trigger_status == "PENDING"
+    assert sig.trigger_price == 1135.9

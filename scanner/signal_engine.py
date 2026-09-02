@@ -172,8 +172,13 @@ class SignalEngine:
             if is_bearish and curr_close > pivots.pdh and curr_close > pivots.r1:
                 continue
 
-            # A stock breaking down below PDL and S1 CANNOT be a Bullish Setup
-            if not is_bearish and curr_close < pivots.pdl and curr_close < pivots.s1:
+            # A stock breaking down below PDL and S1 CANNOT be a Bullish Setup UNLESS it is an S2 Support Bounce
+            is_near_s2_bounce = (
+                abs(curr_low - pivots.s2) / pivots.s2 <= 0.0035
+                or (curr_low <= pivots.s2 and curr_close >= pivots.s2)
+            ) and ((curr_close - curr_low) / max(curr_high - curr_low, 0.001) >= 0.35)
+
+            if not is_bearish and curr_close < pivots.pdl and curr_close < pivots.s1 and not is_near_s2_bounce:
                 continue
 
             # Suppress low-volume Harami inside-bar chop (Rel Vol < 0.75x)
@@ -230,6 +235,14 @@ class SignalEngine:
                     score += w
                     score_breakdown.append(f"Near R1 Resistance Rejection (+{w})")
                     conditions_met.append("Rejection near R1 Resistance")
+
+                # Near R2 Resistance Rejection (Ceiling Resistance Reversal / Overbought HOD)
+                if abs(curr_high - pivots.r2) / pivots.r2 < 0.004 or (curr_high >= pivots.r2 and curr_close <= pivots.r2):
+                    if (curr_high - curr_close) / max(curr_high - curr_low, 0.001) >= 0.35:
+                        w = 3
+                        score += w
+                        score_breakdown.append(f"Near R2 Resistance Rejection (+{w})")
+                        conditions_met.append("🛡️ Rejection near R2 Resistance")
             else:
                 # Bullish Context Points
                 if pivot_rel.above_pivot or curr_close > pivots.pp:
@@ -258,6 +271,13 @@ class SignalEngine:
                         score += w
                         score_breakdown.append(f"Near S1 Support Bounce (+{w})")
                         conditions_met.append("Bounce near S1 Support")
+
+                # Near S2 Support Bounce (Floor Support Reversal / Oversold LOD)
+                if is_near_s2_bounce:
+                    w = 3
+                    score += w
+                    score_breakdown.append(f"Near S2 Support Bounce (+{w})")
+                    conditions_met.append("🛡️ Bounce near S2 Support")
 
             # --- Trap Zone Confluences (Must be <= 0.20% of price) ---
             # 1. Bear Trap Zone (S1 & PDL Support Zone - Narrow <= 0.20%)
