@@ -147,11 +147,15 @@ class CandleEngine:
                 except Exception as e:
                     logger.error(f"Error in on_candle_closed callback for {symbol}: {e}", exc_info=True)
 
-    def get_candle_history_df(self, symbol: str) -> pd.DataFrame:
+    def get_candle_history_df(self, symbol: str, include_forming: bool = False) -> pd.DataFrame:
         """
         Returns closed candle history for symbol as a pandas DataFrame.
+        If include_forming is True, also appends the current forming candle if valid.
         """
-        candles = self._history.get(symbol, [])
+        candles = list(self._history.get(symbol, []))
+        forming = self._forming_candles.get(symbol) if include_forming else None
+        if forming and forming.is_valid():
+            candles.append(forming)
         if not candles:
             return pd.DataFrame()
 
@@ -163,6 +167,7 @@ class CandleEngine:
                 "low": c.low,
                 "close": c.close,
                 "volume": c.volume,
+                "is_forming": c.status == CandleStatus.FORMING,
             }
             for c in candles
         ]

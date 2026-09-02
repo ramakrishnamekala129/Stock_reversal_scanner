@@ -87,3 +87,20 @@ def test_tkinter_gui_initialization(tk_root):
     gui.chart_frame.redraw_chart()
     assert gui.chart_frame.ax_main is not None
     assert gui.chart_frame.ax_vol is not None
+
+    # Test zoom, pan, and auto-fit controls
+    gui.chart_frame.zoom_in()
+    assert gui.chart_frame._custom_xlim is not None
+    gui.chart_frame.zoom_out()
+    gui.chart_frame.pan_left()
+    gui.chart_frame.pan_right()
+    gui.chart_frame.reset_view()
+    assert gui.chart_frame._custom_xlim is None
+
+    # Test auto-fit toggle
+    gui.chart_frame.auto_fit.set(False)
+    gui.chart_frame._on_autofit_toggle()
+    assert gui.chart_frame.auto_fit.get() is False
+    gui.chart_frame.auto_fit.set(True)
+    gui.chart_frame._on_autofit_toggle()
+    assert gui.chart_frame.auto_fit.get() is True
