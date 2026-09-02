@@ -93,14 +93,19 @@ def is_valid_cpr_breakout(
     Validates a decisive CPR Breakout (Bullish):
     1. Candle closes ABOVE CPR top (max(TC, BC)).
     2. Candle is bullish (close > open).
-    3. Most of the candle (>= 60% of total range) formed and closed above CPR top.
+    3. Candle originated from or touched CPR band (low_p <= pivots.cpr_top * 1.004 or open_p <= pivots.cpr_top).
+    4. Most of the candle (>= 60% of total range) formed and closed above CPR top.
     """
     if close_p <= pivots.cpr_top or close_p <= open_p:
         return False
 
+    # Candle must originate from or test CPR band to be a genuine CPR breakout
+    if low_p > pivots.cpr_top * 1.004 and open_p > pivots.cpr_top:
+        return False
+
     tot_range = max(high_p - low_p, 0.0001)
-    range_above_cpr = max(high_p - pivots.cpr_top, 0.0)
-    ratio_above = range_above_cpr / tot_range
+    portion_above_cpr = max(high_p - max(low_p, pivots.cpr_top), 0.0)
+    ratio_above = portion_above_cpr / tot_range
 
     return ratio_above >= min_candle_ratio
 
@@ -117,14 +122,19 @@ def is_valid_cpr_breakdown(
     Validates a decisive CPR Breakdown (Bearish):
     1. Candle closes BELOW CPR bottom (min(TC, BC)).
     2. Candle is bearish (close < open).
-    3. Most of the candle (>= 60% of total range) formed and closed below CPR bottom.
+    3. Candle originated from or touched CPR band (high_p >= pivots.cpr_bottom * 0.996 or open_p >= pivots.cpr_bottom).
+    4. Most of the candle (>= 60% of total range) formed and closed below CPR bottom.
     """
     if close_p >= pivots.cpr_bottom or close_p >= open_p:
         return False
 
+    # Candle must originate from or test CPR band to be a genuine CPR breakdown
+    if high_p < pivots.cpr_bottom * 0.996 and open_p < pivots.cpr_bottom:
+        return False
+
     tot_range = max(high_p - low_p, 0.0001)
-    range_below_cpr = max(pivots.cpr_bottom - low_p, 0.0)
-    ratio_below = range_below_cpr / tot_range
+    portion_below_cpr = max(min(high_p, pivots.cpr_bottom) - low_p, 0.0)
+    ratio_below = portion_below_cpr / tot_range
 
     return ratio_below >= min_candle_ratio
 
@@ -149,13 +159,13 @@ def get_pivot_zone(
     c_high = high if high is not None else price
     c_open = open_p if open_p is not None else c_low
 
-    # 1. Check CPR Breakout (Majority >=60% of candle closed above CPR top)
+    # 1. Check CPR Breakout (Majority >=60% of candle closed above CPR top from CPR)
     if is_valid_cpr_breakout(c_open, c_high, c_low, price, pivots):
         if pivots.is_narrow_cpr:
             return f"🚀 Narrow CPR Breakout ({pivots.cpr_width_pct:.2f}%)"
         return "🚀 CPR Breakout (Bullish Close)"
 
-    # 2. Check CPR Breakdown (Majority >=60% of candle closed below CPR bottom)
+    # 2. Check CPR Breakdown (Majority >=60% of candle closed below CPR bottom from CPR)
     if is_valid_cpr_breakdown(c_open, c_high, c_low, price, pivots):
         if pivots.is_narrow_cpr:
             return f"💥 Narrow CPR Breakdown ({pivots.cpr_width_pct:.2f}%)"
@@ -168,7 +178,7 @@ def get_pivot_zone(
         return "Bull Trap Zone (R1 - PDH)"
 
     # 4. Check Bear Trap Zone (S1 & PDL Confluence) - price inside or candle wick touches
-    if (pivots.bear_trap_bottom <= price <= pivots.bear_trap_top) or (c_low <= pivots.bear_trap_top and c_high >= pivots.bear_trap_bottom):
+    if (pivots.bear_trap_bottom <= price <= pivots.bear_trap_top) or (c_low <= pivots.bear_trap_bottom and c_high >= pivots.bear_trap_bottom):
         if pivots.is_narrow_bear_trap:
             return f"🪤 Narrow Bear Trap ({pivots.bear_trap_width_pct:.2f}%)"
         return "Bear Trap Zone (S1 - PDL)"
@@ -188,10 +198,12 @@ def get_pivot_zone(
         return "Above R1/PDH (Strong Bullish)"
     elif price >= pivots.pp:
         return "PP - R1 (Bullish Territory)"
-    elif price < pivots.bear_trap_bottom:
-        return "Below S1/PDL (Strong Breakdown)"
+    elif price <= pivots.s3:
+        return "Below S3 (Extreme Breakdown)"
     elif price <= pivots.s2:
         return "Below S2 (Oversold / Crash)"
+    elif price < pivots.bear_trap_bottom:
+        return "Below S1/PDL (Strong Breakdown)"
     else:
         return "S1 - PP (Support / Retest)"
 

@@ -120,3 +120,14 @@ def test_cpr_breakout_and_breakdown_validation():
     assert is_valid_cpr_breakdown(96.0, 97.0, 90.0, 91.0, p) is True
     # Inward failure: Close is above CPR bottom
     assert is_valid_cpr_breakdown(96.0, 97.0, 94.0, 95.5, p) is False
+
+
+def test_zone_classification_below_bear_trap():
+    from indicators.pivots import get_pivot_zone
+    # PP=2193.73, S1=2127.46, PDL=2156.20 -> Bear trap = 2127.46 to 2156.20
+    p = calculate_daily_pivots('HYUNDAI', '2026-09-01', 2250.0, 2260.0, 2156.2, 2165.0, 500000)
+
+    # Candle closed below bear trap at 2120.0 (open=2122, high=2124, low=2118, close=2120.0)
+    zone = get_pivot_zone(2120.0, p, low=2118.0, high=2124.0, open_p=2122.0)
+    assert "Below S1/PDL" in zone
+    assert "CPR Breakdown" not in zone
