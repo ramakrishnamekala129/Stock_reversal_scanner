@@ -315,4 +315,34 @@ class SignalEngine:
                 )
                 signals.append(signal_event)
 
+        if not signals:
+            return []
+
+        # --- 6. Intelligent Signal Deduplication & Conflict Resolution ---
+        bullish_signals = [s for s in signals if "BULLISH" in s.direction]
+        bearish_signals = [s for s in signals if "BEARISH" in s.direction]
+
+        if bullish_signals and bearish_signals:
+            # Both Bullish & Bearish fired on the same candle!
+            best_bull = max(bullish_signals, key=lambda s: s.score)
+            best_bear = max(bearish_signals, key=lambda s: s.score)
+
+            # If one clearly dominates (score diff >= 2), pick the dominant setup
+            if best_bull.score >= best_bear.score + 2:
+                return [best_bull]
+            elif best_bear.score >= best_bull.score + 2:
+                return [best_bear]
+            else:
+                # If scores are close (e.g. 5 vs 5 or 4 vs 5):
+                # In low volume (< 1.0x), this is pure midday indecision/chop: suppress conflicting alerts!
+                if rel_vol < 1.0:
+                    logger.debug(f"Suppressed conflicting low-volume signal for {symbol} (Bull: {best_bull.pattern} vs Bear: {best_bear.pattern} with {rel_vol:.2f}x vol)")
+                    return []
+                # In high volume (>= 1.0x), break tie using candle color
+                return [best_bull] if curr_close >= curr_open else [best_bear]
+        elif len(signals) > 1:
+            # If multiple patterns in the same direction, pick the highest scoring pattern
+            best_sig = max(signals, key=lambda s: s.score)
+            return [best_sig]
+
         return signals

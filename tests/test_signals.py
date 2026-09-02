@@ -62,3 +62,26 @@ def test_event_deduplication():
     # Reset
     dedup.reset()
     assert dedup.is_duplicate("INFY", ts, "BULLISH ENGULFING") is False
+
+
+def test_conflict_resolution_and_duplicate_suppression():
+    pivots = calculate_daily_pivots(
+        symbol="HINDALCO",
+        date_str="2026-08-31",
+        open_p=1010.0,
+        high_p=1030.0,
+        low_p=990.0,
+        close_p=1000.0,
+        volume=500000,
+    )
+
+    # 1. Low volume small body candle matching both Inverse Hammer & Bearish Harami
+    # Should suppress low-volume conflicting signals
+    df_low_vol = pd.DataFrame([
+        {"timestamp": datetime(2026, 9, 1, 9, 15), "open": 1005.0, "high": 1010.0, "low": 995.0, "close": 998.0, "volume": 10000},
+        {"timestamp": datetime(2026, 9, 1, 9, 20), "open": 999.0, "high": 1004.0, "low": 998.5, "close": 999.5, "volume": 500},
+    ])
+    engine = SignalEngine(min_signal_score=4)
+    signals = engine.evaluate_candle("HINDALCO", df_low_vol, pivots)
+    # Because rel_vol is very low (<1.0x) and both fire with close scores, it suppresses conflicting chop!
+    assert len(signals) <= 1

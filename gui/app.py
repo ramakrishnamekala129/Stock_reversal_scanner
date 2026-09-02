@@ -162,6 +162,8 @@ class ScannerTkinterGUI:
         # Filters & Sorting
         self.signal_direction_var = tk.StringVar(value="ALL")
         self.signal_pattern_var = tk.StringVar(value="ALL")
+        self.signal_vol_var = tk.StringVar(value="ALL VOLUMES")
+        self.signal_score_var = tk.StringVar(value="ALL SCORES")
         self.signal_cpr_var = tk.StringVar(value="ALL")
         self.signal_search_var = tk.StringVar(value="")
         self.signal_sort_var = tk.StringVar(value="⏱️ Time (Newest First)")
@@ -401,6 +403,26 @@ class ScannerTkinterGUI:
         )
         self.signal_cpr_menu.pack(side=tk.LEFT, padx=(0, 12))
 
+        # Volume Filter Dropdown
+        tk.Label(toolbar, text="Vol:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        vol_combo = ttk.Combobox(toolbar, textvariable=self.signal_vol_var, values=[
+            "ALL VOLUMES",
+            "🔥 Vol >= 1.0x (Confirmed)",
+            "⚡ Vol >= 1.5x (Surge)",
+        ], state="readonly", width=18)
+        vol_combo.pack(side=tk.LEFT, padx=(0, 10))
+        vol_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
+
+        # Score Filter Dropdown
+        tk.Label(toolbar, text="Score:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        score_combo = ttk.Combobox(toolbar, textvariable=self.signal_score_var, values=[
+            "ALL SCORES",
+            "⭐ Score >= 6",
+            "🔥 High Conviction (>= 7)",
+        ], state="readonly", width=17)
+        score_combo.pack(side=tk.LEFT, padx=(0, 10))
+        score_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
+
         # Sort Dropdown
         tk.Label(toolbar, text="Sort:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         sort_combo = ttk.Combobox(toolbar, textvariable=self.signal_sort_var, values=[
@@ -410,8 +432,8 @@ class ScannerTkinterGUI:
             "📊 Rel Vol (Highest First)",
             "🔤 Symbol (A to Z)",
             "💰 Price (Highest First)",
-        ], state="readonly", width=22)
-        sort_combo.pack(side=tk.LEFT, padx=(0, 12))
+        ], state="readonly", width=20)
+        sort_combo.pack(side=tk.LEFT, padx=(0, 10))
         sort_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
         # Search Box
@@ -824,6 +846,23 @@ class ScannerTkinterGUI:
             # Apply Pattern Filter
             if pat_filter != "ALL" and pattern != pat_filter:
                 continue
+
+            # Apply Volume Filter
+            rel_vol = float(s.get("relative_volume", 1.0))
+            if hasattr(self, "signal_vol_var"):
+                v_mode = self.signal_vol_var.get()
+                if ">= 1.5x" in v_mode and rel_vol < 1.5:
+                    continue
+                elif ">= 1.0x" in v_mode and rel_vol < 1.0:
+                    continue
+
+            # Apply Min Score Filter
+            if hasattr(self, "signal_score_var"):
+                sc_mode = self.signal_score_var.get()
+                if ">= 7" in sc_mode and score < 7:
+                    continue
+                elif ">= 6" in sc_mode and score < 6:
+                    continue
 
             # Apply Multi-Select CPR / Trap Filter
             has_cpr_pattern = "at CPR" in zone or any("at CPR" in str(c) or "at Narrow CPR" in str(c) for c in conds) or "Inside CPR" in zone
