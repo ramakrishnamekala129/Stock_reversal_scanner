@@ -85,3 +85,28 @@ def test_conflict_resolution_and_duplicate_suppression():
     signals = engine.evaluate_candle("HINDALCO", df_low_vol, pivots)
     # Because rel_vol is very low (<1.0x) and both fire with close scores, it suppresses conflicting chop!
     assert len(signals) <= 1
+
+
+def test_no_bullish_signal_on_cpr_breakdown():
+    # Setup Pivots: PP=2193.67, CPR=2190 to 2197, S1=2137.34, PDL=2156.20
+    pivots = calculate_daily_pivots(
+        symbol="HYUNDAI",
+        date_str="2026-09-01",
+        open_p=2250.0,
+        high_p=2260.0,
+        low_p=2156.2,
+        close_p=2165.0,
+        volume=500000,
+    )
+
+    # Bearish candle breaking down below CPR: Open 2145.6, High 2156.2, Low 2137.7, Close 2140.3
+    df = pd.DataFrame([
+        {"timestamp": datetime(2026, 9, 2, 9, 20), "open": 2144.8, "high": 2149.1, "low": 2141.2, "close": 2144.2, "volume": 12000},
+        {"timestamp": datetime(2026, 9, 2, 9, 25), "open": 2145.6, "high": 2156.2, "low": 2137.7, "close": 2140.3, "volume": 17600},
+    ])
+    engine = SignalEngine(min_signal_score=4)
+    signals = engine.evaluate_candle("HYUNDAI", df, pivots)
+
+    # Must NOT produce any Bullish Setup during a CPR breakdown!
+    bullish_signals = [s for s in signals if "BULLISH" in s.direction]
+    assert len(bullish_signals) == 0

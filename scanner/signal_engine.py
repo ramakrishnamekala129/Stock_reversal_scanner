@@ -146,6 +146,21 @@ class SignalEngine:
             conditions_met: List[str] = []
             is_bearish = (pat.pattern_direction == "BEARISH" or pat.pattern_name in ["HANGING MAN", "BEARISH ENGULFING", "BEARISH HARAMI", "SHOOTING STAR"])
 
+            # --- Directional Consistency with CPR Breakout/Breakdown ---
+            # A candle closing in CPR Breakdown CANNOT be a Bullish Setup
+            if not is_bearish and pivot_rel.cpr_breakdown:
+                continue
+
+            # A candle closing in CPR Breakout CANNOT be a Bearish Warning
+            if is_bearish and pivot_rel.cpr_breakout:
+                continue
+
+            # Invalidate Red-bodied Inverse Hammers collapsing to the lows
+            if pat.pattern_name == "INVERSE HAMMER" and curr_close < curr_open:
+                # If closing in bottom 25% of candle range, this is selling pressure, not a bullish reversal
+                if (curr_close - curr_low) / max(curr_high - curr_low, 0.001) < 0.25:
+                    continue
+
             # --- Pattern Score ---
             pat_name = pat.pattern_name.replace(" ", "_")
             pat_weight = abs(self.weights.get(pat_name, 2))
@@ -201,33 +216,39 @@ class SignalEngine:
 
                 # Near S1 Support Bounce
                 if abs(curr_low - pivots.s1) / pivots.s1 < 0.004 and curr_close > pivots.s1:
-                    w = 2
-                    score += w
-                    score_breakdown.append(f"Near S1 Support Bounce (+{w})")
-                    conditions_met.append("Bounce near S1 Support")
+                    # Require candle to have a meaningful bounce off the low
+                    if (curr_close - curr_low) / max(curr_high - curr_low, 0.001) >= 0.25:
+                        w = 2
+                        score += w
+                        score_breakdown.append(f"Near S1 Support Bounce (+{w})")
+                        conditions_met.append("Bounce near S1 Support")
 
             # --- Trap Zone Confluences (Candle Touch / Body / Wick) ---
             # 1. Bear Trap Zone (S1 & PDL Support Zone): Candle touches S1-PDL range
             candle_touches_bear_trap = (curr_low <= pivots.bear_trap_top and curr_high >= pivots.bear_trap_bottom)
             if candle_touches_bear_trap and not is_bearish:
-                w = 3
-                if pivots.is_narrow_bear_trap:
-                    w += 1
-                    conditions_met.append(f"⚡ Narrow Bear Trap ({pivots.bear_trap_width_pct:.2f}%)")
-                score += w
-                score_breakdown.append(f"Bear Trap S1-PDL Touch & Bounce (+{w})")
-                conditions_met.append("🪤 Bear Trap Reversal (S1-PDL)")
+                # Valid Bear Trap Reversal: Candle must hold support above trap bottom and not be a CPR breakdown
+                if curr_close >= pivots.bear_trap_bottom and not pivot_rel.cpr_breakdown:
+                    w = 3
+                    if pivots.is_narrow_bear_trap:
+                        w += 1
+                        conditions_met.append(f"⚡ Narrow Bear Trap ({pivots.bear_trap_width_pct:.2f}%)")
+                    score += w
+                    score_breakdown.append(f"Bear Trap S1-PDL Touch & Bounce (+{w})")
+                    conditions_met.append("🪤 Bear Trap Reversal (S1-PDL)")
 
             # 2. Bull Trap Zone (R1 & PDH Resistance Zone): Candle touches R1-PDH range
             candle_touches_bull_trap = (curr_high >= pivots.bull_trap_bottom and curr_low <= pivots.bull_trap_top)
             if candle_touches_bull_trap and is_bearish:
-                w = 3
-                if pivots.is_narrow_bull_trap:
-                    w += 1
-                    conditions_met.append(f"⚡ Narrow Bull Trap ({pivots.bull_trap_width_pct:.2f}%)")
-                score += w
-                score_breakdown.append(f"Bull Trap R1-PDH Touch & Rejection (+{w})")
-                conditions_met.append("🪤 Bull Trap Rejection (R1-PDH)")
+                # Valid Bull Trap Rejection: Candle must hold resistance below trap top and not be a CPR breakout
+                if curr_close <= pivots.bull_trap_top and not pivot_rel.cpr_breakout:
+                    w = 3
+                    if pivots.is_narrow_bull_trap:
+                        w += 1
+                        conditions_met.append(f"⚡ Narrow Bull Trap ({pivots.bull_trap_width_pct:.2f}%)")
+                    score += w
+                    score_breakdown.append(f"Bull Trap R1-PDH Touch & Rejection (+{w})")
+                    conditions_met.append("🪤 Bull Trap Rejection (R1-PDH)")
 
             # 3. CPR Breakout / Breakdown (Decisive close with >=60% of candle)
             if pivot_rel.cpr_breakout and not is_bearish:
