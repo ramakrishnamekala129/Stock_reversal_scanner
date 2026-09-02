@@ -195,6 +195,13 @@ class CandleEngine:
         """
         symbol = tick.symbol
         ts = tick.timestamp.astimezone(self.tz) if tick.timestamp.tzinfo else self.tz.localize(tick.timestamp)
+
+        # Ignore ticks outside active NSE market hours (09:15 to 15:30 IST)
+        # Prevents post-market settlement ticks (15:40 - 16:00) from creating phantom candles
+        t = ts.time()
+        if t < time(9, 15) or t > time(15, 30):
+            return
+
         candle_start = self.get_candle_start_time(ts)
 
         # Track cumulative volume per symbol across ticks

@@ -1,7 +1,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time as dt_time
 import json
 import logging
 import time
@@ -300,6 +300,15 @@ class HistoricalDataLoader:
         if not records:
             return None
 
+        # Filter strictly for NSE regular trading session (09:15 to 15:30 IST)
+        # Excludes pre-market (<09:15) and post-market settlement (>15:30)
+        market_open = dt_time(9, 15)
+        market_close = dt_time(15, 30)
+        records = [r for r in records if market_open <= r["timestamp"].time() <= market_close]
+
+        if not records:
+            return None
+
         df_1m = pd.DataFrame(records).sort_values("timestamp").set_index("timestamp")
         df_5m = df_1m.resample("5min", origin="start_day", offset="15min").agg({
             "open": "first",
@@ -308,6 +317,10 @@ class HistoricalDataLoader:
             "close": "last",
             "volume": "sum",
         }).dropna().reset_index()
+
+        # The final valid intraday 5-minute candle starts at 15:25 (closing at 15:30:00)
+        last_candle_cutoff = dt_time(15, 25)
+        df_5m = df_5m[df_5m["timestamp"].dt.time <= last_candle_cutoff].reset_index(drop=True)
 
         return df_5m
 
