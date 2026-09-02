@@ -126,9 +126,18 @@ def main():
                     scanner.stop()
                 except Exception:
                     pass
-                root.destroy()
+                try:
+                    root.destroy()
+                except Exception:
+                    pass
 
             root.protocol("WM_DELETE_WINDOW", on_closing)
+            try:
+                import signal
+                signal.signal(signal.SIGINT, lambda s, f: on_closing())
+                signal.signal(signal.SIGTERM, lambda s, f: on_closing())
+            except Exception:
+                pass
             root.mainloop()
             return
         except Exception as e:

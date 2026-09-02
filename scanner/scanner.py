@@ -6,6 +6,7 @@ Coordinates data feeds, candle engine, pivots, pattern detection, and signal ale
 import logging
 import signal
 import sys
+import threading
 import time
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -242,9 +243,13 @@ class FNOIntradayScanner:
         Polls official broker candles on every 5-minute closure (e.g. 09:20, 09:25...)
         while maintaining live WebSocket event tracking.
         """
-        # Register graceful termination handlers
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+        # Register graceful termination handlers if in main thread
+        try:
+            if threading.current_thread() is threading.main_thread():
+                signal.signal(signal.SIGINT, self._signal_handler)
+                signal.signal(signal.SIGTERM, self._signal_handler)
+        except (ValueError, AttributeError):
+            pass
 
         logger.info("Scanner listening for live market events... Press Ctrl+C to stop.")
         last_synced_minute = -1
