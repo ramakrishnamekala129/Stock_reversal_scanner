@@ -28,6 +28,13 @@ The system leverages Upstox Protobuf V3 WebSocket feeds, multi-factor technical 
 - **Native Desktop GUI (Tkinter)**:
   - Sleek, dark-themed responsive desktop application.
   - **Interactive Multi-Select CPR / Trap Filter**: Filter simultaneously by any combination of Narrow CPR, Trap Zones, CPR Breakouts, and Reversals at CPR.
+  - **Interactive 5-Minute Candlestick & CPR Chart Tab**:
+    - Embedded high-performance vector candlestick charts for all 210 F&O stocks.
+    - Shaded Central Pivot Range (CPR) with Top Central ($TC$), Pivot ($PP$), and Bottom Central ($BC$) levels.
+    - Bull Trap ($R1 - PDH$) and Bear Trap ($S1 - PDL$) confluence zones.
+    - Standard Floor Pivots ($R1-R3$, $S1-S3$, $PDH$, $PDL$) and Volume histogram.
+    - **Real-Time Live Price Line (LTP)**: Glowing price line and badge tracking live market movements.
+    - **1-Click Navigation**: Double-click any row in Signals or Market tabs to immediately jump to that stock's chart.
   - **Dynamic Sorting & Clickable Headers**: Sort instantly by Time, Score, Relative Volume, Symbol, LTP, or CPR %.
   - **Flicker-Free In-Place Updates**: Live prices, percentage changes, volumes, and technical zones update smoothly in real time without scroll-jumping.
   - Audio chimes for new bullish/bearish alerts.
@@ -60,7 +67,8 @@ Stock_reversal_scanner/
 │   └── formatter.py          # Terminal colored alert cards
 │
 ├── gui/
-│   └── app.py                # Native desktop Tkinter dashboard with multi-select filters
+│   ├── app.py                # Native desktop Tkinter dashboard with multi-select filters
+│   └── chart.py              # Embedded 5-minute Candlestick & CPR chart component
 │
 ├── upstox/
 │   ├── auth.py               # Token authentication and API client initialization

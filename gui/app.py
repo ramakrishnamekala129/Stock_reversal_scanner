@@ -22,6 +22,7 @@ except ImportError:
 
 import config
 from web.state import dashboard_state
+from gui.chart import CandleChartFrame
 
 logger = logging.getLogger(__name__)
 IST_TZ = timezone(timedelta(hours=5, minutes=30))
@@ -131,6 +132,14 @@ class ScannerTkinterGUI:
     def __init__(self, root: tk.Tk, scanner=None):
         self.root = root
         self.scanner = scanner
+        self.db_repo = getattr(scanner, "db", None) if scanner else None
+        if not self.db_repo:
+            try:
+                from database.repository import DatabaseRepository
+                self.db_repo = DatabaseRepository()
+            except Exception:
+                self.db_repo = None
+        self.chart_symbols_loaded = False
 
         self.root.title("Upstox 5-Minute F&O Intraday Reversal Scanner - Live Desktop Dashboard")
         self.root.geometry("1480x880")
@@ -327,6 +336,12 @@ class ScannerTkinterGUI:
         self.notebook.add(self.tab_market, text="  📊 Live Market & Daily Pivots (210 Stocks)  ")
         self._build_market_tab()
 
+        # Tab 3: 5M Candlestick & CPR Chart
+        self.tab_chart = tk.Frame(self.notebook, bg=BG_DARK)
+        self.notebook.add(self.tab_chart, text="  📈 5M Candle & CPR Chart  ")
+        self.chart_frame = CandleChartFrame(self.tab_chart, scanner=self.scanner, db_repo=self.db_repo)
+        self.chart_frame.pack(fill=tk.BOTH, expand=True)
+
     def _build_signals_tab(self):
         """Builds Tab 1 toolbar and signals treeview."""
         # Toolbar
@@ -464,6 +479,7 @@ class ScannerTkinterGUI:
         self.signals_tree.tag_configure("high_score", background="#062e22", foreground="#34d399")
         self.signals_tree.tag_configure("narrow_cpr", background="#0c2d48", foreground=ACCENT_BLUE)
         self.signals_tree.tag_configure("alt_row", background=TREE_ALT)
+        self.signals_tree.bind("<Double-1>", self._on_signals_double_click)
         self._render_signals()
 
     def _build_market_tab(self):
@@ -584,7 +600,34 @@ class ScannerTkinterGUI:
         self.market_tree.tag_configure("up", foreground=ACCENT_GREEN)
         self.market_tree.tag_configure("down", foreground=ACCENT_RED)
         self.market_tree.tag_configure("alt_row", background=TREE_ALT)
+        self.market_tree.bind("<Double-1>", self._on_market_double_click)
         self._render_market()
+
+    def _on_signals_double_click(self, event):
+        """Double clicking a signal row opens its 5M Candlestick & CPR chart in Tab 3."""
+        sel = self.signals_tree.selection()
+        if not sel:
+            return
+        item = self.signals_tree.item(sel[0])
+        vals = item.get("values", [])
+        if len(vals) >= 2:
+            sym = str(vals[1]).strip()
+            self.open_chart_for_symbol(sym)
+
+    def _on_market_double_click(self, event):
+        """Double clicking a stock row opens its 5M Candlestick & CPR chart in Tab 3."""
+        sel = self.market_tree.selection()
+        if not sel:
+            return
+        sym = str(sel[0]).strip()
+        self.open_chart_for_symbol(sym)
+
+    def open_chart_for_symbol(self, symbol: str):
+        """Switches to Tab 3 and renders the Candlestick & CPR chart for the requested symbol."""
+        if hasattr(self, "chart_frame") and symbol:
+            self.chart_frame.set_symbol(symbol)
+            if hasattr(self, "notebook") and hasattr(self, "tab_chart"):
+                self.notebook.select(self.tab_chart)
 
     def _build_footer(self):
         """Builds bottom status bar."""
@@ -687,6 +730,24 @@ class ScannerTkinterGUI:
                 self.last_price_version = price_ver
                 self.cached_market = list(market)
                 self._render_market()
+
+            # Populate chart symbols once market data is available
+            if hasattr(self, "chart_frame") and not getattr(self, "chart_symbols_loaded", False):
+                if market:
+                    sym_list = [m.get("symbol") for m in market if m.get("symbol")]
+                    self.chart_frame.populate_symbols(sym_list)
+                    self.chart_symbols_loaded = True
+                    self.chart_frame.redraw_chart()
+
+            # Redraw chart if active tab is the chart tab and prices changed
+            if hasattr(self, "notebook") and hasattr(self, "tab_chart") and hasattr(self, "chart_frame"):
+                try:
+                    current_tab = self.notebook.select()
+                    if current_tab == str(self.tab_chart) and price_ver != getattr(self, "last_chart_price_ver", -1):
+                        self.last_chart_price_ver = price_ver
+                        self.chart_frame.redraw_chart()
+                except Exception:
+                    pass
 
         except Exception as e:
             logger.debug(f"Error in Tkinter poll loop: {e}")

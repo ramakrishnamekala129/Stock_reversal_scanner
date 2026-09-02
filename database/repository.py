@@ -176,6 +176,28 @@ class DatabaseRepository:
             logger.error(f"Error querying candles from SQLite: {e}")
             return {}
 
+    def get_candles_by_symbol(self, symbol: str, limit: int = 150) -> pd.DataFrame:
+        """Retrieves 5-minute candles for a specific symbol ordered chronologically."""
+        conn = self._get_connection()
+        query = """
+            SELECT timestamp, open, high, low, close, volume, is_closed
+            FROM candles_5m
+            WHERE symbol = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """
+        try:
+            df = pd.read_sql_query(query, conn, params=(symbol, limit))
+            if df.empty:
+                return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "is_closed"])
+            kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
+            df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True).dt.tz_convert(kolkata_tz)
+            df = df.sort_values("timestamp").reset_index(drop=True)
+            return df
+        except Exception as e:
+            logger.error(f"Error querying candles for {symbol}: {e}")
+            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "is_closed"])
+
     def save_daily_levels(self, levels_dict: Dict[str, Any]):
         """Persists daily pivot levels."""
         if not config.ENABLE_DB_STORAGE:

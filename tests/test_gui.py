@@ -71,3 +71,19 @@ def test_tkinter_gui_initialization(tk_root):
     gui.signal_cpr_menu._on_toggle_option()
     assert gui.signal_cpr_menu.is_all_selected() is False
     assert "⚡ Narrow CPR (<= 0.2%)" in gui.signal_cpr_menu.get_selected()
+
+    # Verify Tab 3 (Candlestick Chart & CPR Levels)
+    assert hasattr(gui, "tab_chart")
+    assert hasattr(gui, "chart_frame")
+    assert gui.chart_frame.current_symbol == "RELIANCE"
+
+    # Test switching symbol and opening chart
+    gui.open_chart_for_symbol("RELIANCE")
+    assert gui.chart_frame.current_symbol == "RELIANCE"
+    gui.chart_frame.populate_symbols(["RELIANCE", "TATAELXSI", "INFY"])
+    assert "TATAELXSI" in gui.chart_frame.symbol_combo["values"]
+
+    # Test chart redraw execution
+    gui.chart_frame.redraw_chart()
+    assert gui.chart_frame.ax_main is not None
+    assert gui.chart_frame.ax_vol is not None
