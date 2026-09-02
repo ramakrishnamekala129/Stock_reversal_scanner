@@ -164,6 +164,7 @@ class ScannerTkinterGUI:
         self.signal_pattern_var = tk.StringVar(value="ALL")
         self.signal_vol_var = tk.StringVar(value="ALL VOLUMES")
         self.signal_score_var = tk.StringVar(value="ALL SCORES")
+        self.strict_zones_var = tk.BooleanVar(value=True)
         self.signal_cpr_var = tk.StringVar(value="ALL")
         self.signal_search_var = tk.StringVar(value="")
         self.signal_sort_var = tk.StringVar(value="⏱️ Time (Newest First)")
@@ -441,6 +442,21 @@ class ScannerTkinterGUI:
         search_entry = tk.Entry(toolbar, textvariable=self.signal_search_var, bg=CARD_BG, fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief="flat", font=("Segoe UI", 9), width=18)
         search_entry.pack(side=tk.LEFT, padx=(0, 12), ipady=3)
         self.signal_search_var.trace_add("write", lambda *args: self._render_signals())
+
+        # Strict Zones Toggle (Enabled by default)
+        strict_cb = tk.Checkbutton(
+            toolbar,
+            text="🎯 Strict Zones Only",
+            variable=self.strict_zones_var,
+            command=self._render_signals,
+            bg=BG_DARK,
+            fg="#38bdf8",
+            selectcolor="#111827",
+            activebackground=BG_DARK,
+            activeforeground="#38bdf8",
+            font=("Segoe UI", 9, "bold"),
+        )
+        strict_cb.pack(side=tk.LEFT, padx=(0, 10))
 
         # Export CSV Button
         export_btn = tk.Button(
@@ -876,6 +892,27 @@ class ScannerTkinterGUI:
             is_bull_trap = "Bull Trap" in zone or any("Bull Trap" in str(c) for c in conds)
             is_bear_trap = "Bear Trap" in zone or any("Bear Trap" in str(c) for c in conds)
             is_cpr_test = "CPR" in zone or any("CPR" in str(c) for c in conds)
+
+            has_level_bounce = any("Bounce near S1" in str(c) or "Rejection near R1" in str(c) for c in conds)
+            is_valid_zone = (
+                has_cpr_pattern
+                or has_cpr_bull
+                or has_cpr_bear
+                or has_cpr_breakout
+                or has_cpr_breakdown
+                or has_narrow_cpr
+                or has_narrow_trap
+                or is_trap
+                or is_bull_trap
+                or is_bear_trap
+                or is_cpr_test
+                or has_level_bounce
+            )
+
+            # Apply Strict Zones Only Filter (Enabled by default!)
+            if getattr(self, "strict_zones_var", None) and self.strict_zones_var.get():
+                if not is_valid_zone:
+                    continue
 
             if hasattr(self, "signal_cpr_menu") and not self.signal_cpr_menu.is_all_selected():
                 sel = self.signal_cpr_menu.get_selected()

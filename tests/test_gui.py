@@ -113,3 +113,11 @@ def test_tkinter_gui_initialization(tk_root):
     gui.chart_frame.scale_y_down()
     gui.chart_frame.reset_view()
     assert gui.chart_frame._custom_ylim is None
+
+    # Test Strict Zones Only filter toggle
+    assert hasattr(gui, "strict_zones_var")
+    assert gui.strict_zones_var.get() is True
+    gui.strict_zones_var.set(False)
+    gui._render_signals()
+    gui.strict_zones_var.set(True)
+    gui._render_signals()
