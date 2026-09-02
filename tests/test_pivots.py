@@ -127,7 +127,11 @@ def test_zone_classification_below_bear_trap():
     # PP=2193.73, S1=2127.46, PDL=2156.20 -> Bear trap = 2127.46 to 2156.20
     p = calculate_daily_pivots('HYUNDAI', '2026-09-01', 2250.0, 2260.0, 2156.2, 2165.0, 500000)
 
-    # Candle closed below bear trap at 2120.0 (open=2122, high=2124, low=2118, close=2120.0)
-    zone = get_pivot_zone(2120.0, p, low=2118.0, high=2124.0, open_p=2122.0)
-    assert "Below S1/PDL" in zone
-    assert "CPR Breakdown" not in zone
+    # 1. Candle tested trap (high=2130) and closed below (2120.0) -> Bear Trap Breakdown!
+    zone_breakdown = get_pivot_zone(2120.0, p, low=2118.0, high=2130.0, open_p=2129.0)
+    assert "Bear Trap Breakdown" in zone_breakdown
+
+    # 2. Candle completely below bear trap (high=2124 < 2127.46) -> Below S1/PDL
+    zone_below = get_pivot_zone(2120.0, p, low=2118.0, high=2124.0, open_p=2122.0)
+    assert "Below S1/PDL" in zone_below
+    assert "CPR Breakdown" not in zone_below
