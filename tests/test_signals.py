@@ -142,3 +142,30 @@ def test_harami_low_volume_and_breakout_protection():
     # Relative volume ~ 0.25x
     sig_chop = engine.evaluate_candle("SOLARINDS", df_chop, pivots)
     assert len(sig_chop) == 0
+
+
+def test_bear_trap_breakout_detection():
+    from scanner.signal_engine import SignalEngine
+    # SOLARINDS S1 = 19903.34, PDL = 19930.0 -> Bear trap = 19903.34 to 19930.0
+    pivots = calculate_daily_pivots(
+        symbol="SOLARINDS",
+        date_str="2026-09-01",
+        open_p=20060.0,
+        high_p=20270.0,
+        low_p=19930.0,
+        close_p=20060.0,
+        volume=10000,
+    )
+    # 11:35 candle: opens at 19895 (in trap), surges to 20030 (above PDL) with massive volume (2368)
+    df = pd.DataFrame([
+        {"timestamp": datetime(2026, 9, 2, 11, 30), "open": 19900.0, "high": 19915.0, "low": 19900.0, "close": 19910.0, "volume": 399},
+        {"timestamp": datetime(2026, 9, 2, 11, 35), "open": 19895.0, "high": 20035.0, "low": 19890.0, "close": 20030.0, "volume": 2368},
+    ])
+    engine = SignalEngine(min_signal_score=4)
+    signals = engine.evaluate_candle("SOLARINDS", df, pivots)
+
+    assert len(signals) >= 1
+    sig = signals[0]
+    assert sig.direction == "BULLISH SETUP"
+    assert "Bear Trap Breakout" in sig.zone
+    assert sig.score >= 10

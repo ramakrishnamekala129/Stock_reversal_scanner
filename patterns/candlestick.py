@@ -341,6 +341,52 @@ def is_hanging_man(
     return True
 
 
+def is_bullish_marubozu(
+    candle: Union[CandleItem, pd.Series, dict],
+    min_body_ratio: float = 0.70,
+) -> bool:
+    """
+    Bullish Marubozu (Aggressive Breakout / Expansion Bar):
+    1. Candle is bullish (close > open).
+    2. Real body covers >= 70% of the entire candle range.
+    3. Upper and lower wicks are minimal (<= 20% each).
+    """
+    c = _to_candle_item(candle)
+    if not c.is_bullish or c.total_range <= 0:
+        return False
+
+    body_ratio = c.body / c.total_range
+    if body_ratio < min_body_ratio:
+        return False
+
+    upper_wick_ratio = c.upper_wick / c.total_range
+    lower_wick_ratio = c.lower_wick / c.total_range
+    return upper_wick_ratio <= 0.20 and lower_wick_ratio <= 0.20
+
+
+def is_bearish_marubozu(
+    candle: Union[CandleItem, pd.Series, dict],
+    min_body_ratio: float = 0.70,
+) -> bool:
+    """
+    Bearish Marubozu (Aggressive Breakdown / Expansion Bar):
+    1. Candle is bearish (close < open).
+    2. Real body covers >= 70% of the entire candle range.
+    3. Upper and lower wicks are minimal (<= 20% each).
+    """
+    c = _to_candle_item(candle)
+    if not c.is_bearish or c.total_range <= 0:
+        return False
+
+    body_ratio = c.body / c.total_range
+    if body_ratio < min_body_ratio:
+        return False
+
+    upper_wick_ratio = c.upper_wick / c.total_range
+    lower_wick_ratio = c.lower_wick / c.total_range
+    return upper_wick_ratio <= 0.20 and lower_wick_ratio <= 0.20
+
+
 def detect_candlestick_patterns(
     df: pd.DataFrame,
     context: str = "neutral",
@@ -357,6 +403,8 @@ def detect_candlestick_patterns(
         "shooting_star": False,
         "inverse_hammer": False,
         "hammer": False,
+        "bullish_marubozu": False,
+        "bearish_marubozu": False,
         "details": [],
     }
 
@@ -456,6 +504,28 @@ def detect_candlestick_patterns(
             timestamp=ts,
             pattern_strength=2.0,
             description="Hanging Man candle with long lower shadow at top of uptrend.",
+        ))
+
+    # 9. Bullish Marubozu (Strong Breakout / Expansion Bar)
+    if not results["bullish_engulfing"] and is_bullish_marubozu(curr_c):
+        results["bullish_marubozu"] = True
+        results["details"].append(PatternResult(
+            pattern_name="BULLISH MARUBOZU",
+            pattern_direction="BULLISH",
+            timestamp=ts,
+            pattern_strength=3.0,
+            description="Strong bullish breakout expansion bar with minimal wicks.",
+        ))
+
+    # 10. Bearish Marubozu (Strong Breakdown / Expansion Bar)
+    if not results["bearish_engulfing"] and is_bearish_marubozu(curr_c):
+        results["bearish_marubozu"] = True
+        results["details"].append(PatternResult(
+            pattern_name="BEARISH MARUBOZU",
+            pattern_direction="BEARISH",
+            timestamp=ts,
+            pattern_strength=3.0,
+            description="Strong bearish breakdown expansion bar with minimal wicks.",
         ))
 
     return results

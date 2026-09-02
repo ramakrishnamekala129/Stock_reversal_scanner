@@ -75,6 +75,8 @@ SCORE_WEIGHTS = {
     "INVERSE_HAMMER": 2,
     "SHOOTING_STAR": 2,
     "HANGING_MAN": 2,
+    "BULLISH_MARUBOZU": 3,
+    "BEARISH_MARUBOZU": 3,
     
     # Pivot Context
     "CLOSE_ABOVE_PIVOT": 1,

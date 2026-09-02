@@ -175,6 +175,8 @@ def get_pivot_zone(
     if price > pivots.bull_trap_top:
         if c_low <= pivots.bull_trap_top:
             return "🚀 Bull Trap Breakout (Above R1/PDH)"
+    elif price < pivots.bull_trap_bottom and c_high >= pivots.bull_trap_bottom and price >= pivots.pp:
+        return "💥 Bull Trap Breakdown (Below R1/PDH)"
     elif (pivots.bull_trap_bottom <= price <= pivots.bull_trap_top) or (c_high >= pivots.bull_trap_bottom and c_low <= pivots.bull_trap_top and price >= pivots.bull_trap_bottom):
         if pivots.is_narrow_bull_trap:
             return f"🪤 Narrow Bull Trap ({pivots.bull_trap_width_pct:.2f}%)"
@@ -184,6 +186,8 @@ def get_pivot_zone(
     if price < pivots.bear_trap_bottom:
         if c_high >= pivots.bear_trap_bottom:
             return "💥 Bear Trap Breakdown (Below S1/PDL)"
+    elif price > pivots.bear_trap_top and c_low <= pivots.bear_trap_top and price <= pivots.pp:
+        return "🚀 Bear Trap Breakout (Above S1/PDL)"
     elif (pivots.bear_trap_bottom <= price <= pivots.bear_trap_top) or (c_low <= pivots.bear_trap_top and c_high >= pivots.bear_trap_bottom and price <= pivots.bear_trap_top):
         if pivots.is_narrow_bear_trap:
             return f"🪤 Narrow Bear Trap ({pivots.bear_trap_width_pct:.2f}%)"

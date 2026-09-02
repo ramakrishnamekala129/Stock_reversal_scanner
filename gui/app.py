@@ -391,6 +391,8 @@ class ScannerTkinterGUI:
             "🎯 Bearish Pattern at CPR Resistance",
             "🚀 CPR Breakout (Bullish Close)",
             "💥 CPR Breakdown (Bearish Close)",
+            "🚀 Bear Trap Breakout (Above S1/PDL)",
+            "💥 Bull Trap Breakdown (Below R1/PDH)",
             "🪤 All Trap Zones (R1-PDH / S1-PDL)",
             "🐂 Bull Trap (R1 - PDH)",
             "🐻 Bear Trap (S1 - PDL)",
