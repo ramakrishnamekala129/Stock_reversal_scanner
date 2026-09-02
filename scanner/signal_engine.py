@@ -144,7 +144,7 @@ class SignalEngine:
             score = 0
             score_breakdown: List[str] = []
             conditions_met: List[str] = []
-            is_bearish = (pat.pattern_direction == "BEARISH" or pat.pattern_name in ["HANGING MAN", "BEARISH ENGULFING", "BEARISH HARAMI", "SHOOTING STAR"])
+            is_bearish = (pat.pattern_direction == "BEARISH" or pat.pattern_name in ["HANGING MAN", "BEARISH ENGULFING", "BEARISH HARAMI", "SHOOTING STAR", "INVERSE HAMMER", "BEARISH MARUBOZU"])
 
             # --- Directional Consistency with CPR Breakout/Breakdown & Major Levels ---
             # A candle closing in CPR Breakdown CANNOT be a Bullish Setup
@@ -180,16 +180,10 @@ class SignalEngine:
             if pat.pattern_name in ["SHOOTING STAR", "HANGING MAN"] and curr_close <= pivots.bear_trap_top:
                 continue
 
-            # Invalidate Hammer or Inverse Hammer occurring at resistance (R1 / PDH)
+            # Invalidate Hammer occurring at resistance (R1 / PDH)
             # Bullish bounce wicks at major resistance are not valid support bounces
-            if pat.pattern_name in ["HAMMER", "INVERSE HAMMER"] and curr_close >= pivots.bull_trap_bottom:
+            if pat.pattern_name == "HAMMER" and curr_close >= pivots.bull_trap_bottom:
                 continue
-
-            # Invalidate Red-bodied Inverse Hammers collapsing to the lows
-            if pat.pattern_name == "INVERSE HAMMER" and curr_close < curr_open:
-                # If closing in bottom 25% of candle range, this is selling pressure, not a bullish reversal
-                if (curr_close - curr_low) / max(curr_high - curr_low, 0.001) < 0.25:
-                    continue
 
             # --- Pattern Score ---
             pat_name = pat.pattern_name.replace(" ", "_")

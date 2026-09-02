@@ -473,15 +473,15 @@ def detect_candlestick_patterns(
             description="Hammer candlestick with long lower shadow at support/downtrend.",
         ))
 
-    # 6. Inverse Hammer (in downtrend/neutral)
+    # 6. Inverse Hammer (Bearish Upper Shadow Rejection)
     if is_inverse_hammer(curr_c, context=context):
         results["inverse_hammer"] = True
         results["details"].append(PatternResult(
             pattern_name="INVERSE HAMMER",
-            pattern_direction="BULLISH",
+            pattern_direction="BEARISH",
             timestamp=ts,
             pattern_strength=2.0,
-            description="Inverse Hammer with long upper shadow.",
+            description="Inverse Hammer with long upper shadow showing overhead selling rejection.",
         ))
 
     # 7. Shooting Star (in uptrend/resistance)
