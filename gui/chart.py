@@ -8,8 +8,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import tkinter as tk
 from tkinter import ttk
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, message=".*missing from font.*")
+
 import matplotlib
 matplotlib.use("TkAgg")
+matplotlib.rcParams["font.sans-serif"] = ["Segoe UI", "DejaVu Sans", "Arial", "sans-serif"]
+matplotlib.rcParams["font.family"] = "sans-serif"
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import matplotlib.patches as patches
@@ -480,7 +485,7 @@ class CandleChartFrame(tk.Frame):
                 self.ax_main.axhline(pivots.pp, color=CPR_PP_COLOR, linestyle="-", linewidth=1.6, alpha=0.95, zorder=2)
                 self.ax_main.axhline(pivots.bc, color=CPR_BOUND_COLOR, linestyle="--", linewidth=1.2, alpha=0.85, zorder=2)
 
-                cpr_tag = "⚡ Narrow" if pivots.is_narrow_cpr else "CPR"
+                cpr_tag = "Narrow" if pivots.is_narrow_cpr else "CPR"
                 right_labels.append((pivots.pp, f"PP {pivots.pp:.2f} ({cpr_tag})", CPR_PP_COLOR, CPR_PP_COLOR))
                 right_labels.append((pivots.tc, f"TC {pivots.tc:.2f}", CPR_BOUND_COLOR, CPR_BOUND_COLOR))
                 right_labels.append((pivots.bc, f"BC {pivots.bc:.2f}", CPR_BOUND_COLOR, CPR_BOUND_COLOR))
@@ -497,7 +502,7 @@ class CandleChartFrame(tk.Frame):
                     self.ax_main.text(
                         0.8,
                         mid_y,
-                        " 🪤 Bull Trap Zone (R1 - PDH) ",
+                        " Bull Trap Zone (R1 - PDH) ",
                         color="#ffffff",
                         va="center",
                         fontsize=8,
@@ -515,7 +520,7 @@ class CandleChartFrame(tk.Frame):
                     self.ax_main.text(
                         0.8,
                         mid_y,
-                        " 🪤 Bear Trap Zone (S1 - PDL) ",
+                        " Bear Trap Zone (S1 - PDL) ",
                         color="#ffffff",
                         va="center",
                         fontsize=8,
@@ -571,7 +576,7 @@ class CandleChartFrame(tk.Frame):
                             self.ax_main.text(
                                 c_idx,
                                 marker_y - (candle_range * 0.04),
-                                f"🟢 {pattern}\n(+{score})",
+                                f"{pattern}\n(+{score})",
                                 color=BULL_COLOR,
                                 fontsize=7,
                                 fontweight="bold",
@@ -586,7 +591,7 @@ class CandleChartFrame(tk.Frame):
                             self.ax_main.text(
                                 c_idx,
                                 marker_y + (candle_range * 0.04),
-                                f"🔴 {pattern}\n(+{score})",
+                                f"{pattern}\n(+{score})",
                                 color=BEAR_COLOR,
                                 fontsize=7,
                                 fontweight="bold",
@@ -628,7 +633,7 @@ class CandleChartFrame(tk.Frame):
             self.ax_main.text(
                 x_label_pos,
                 ltp,
-                f" LTP ₹{ltp:.2f} ",
+                f" LTP Rs {ltp:.2f} ",
                 color="#ffffff",
                 va="center",
                 fontsize=8,
