@@ -11,6 +11,7 @@ import logging
 import os
 import sys
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from typing import Any, Dict, List, Optional, Set
@@ -153,6 +154,10 @@ class ScannerTkinterGUI:
         self.last_price_version = -1
         self.cached_signals: List[dict] = []
         self.cached_market: List[dict] = []
+        self.last_market_render_time = 0.0
+        self.last_chart_render_time = 0.0
+        self.market_dirty = False
+        self.chart_dirty = False
 
         # Filters & Sorting
         self.signal_direction_var = tk.StringVar(value="ALL")
@@ -341,6 +346,9 @@ class ScannerTkinterGUI:
         self.notebook.add(self.tab_chart, text="  📈 5M Candle & CPR Chart  ")
         self.chart_frame = CandleChartFrame(self.tab_chart, scanner=self.scanner, db_repo=self.db_repo)
         self.chart_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Tab Change Listener for instant, high-efficiency rendering
+        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
     def _build_signals_tab(self):
         """Builds Tab 1 toolbar and signals treeview."""
@@ -629,6 +637,24 @@ class ScannerTkinterGUI:
             if hasattr(self, "notebook") and hasattr(self, "tab_chart"):
                 self.notebook.select(self.tab_chart)
 
+    def _on_tab_changed(self, event=None):
+        """Immediately renders the newly selected tab with zero lag."""
+        try:
+            if not hasattr(self, "notebook"):
+                return
+            cur = self.notebook.select()
+            now = time.time()
+            if hasattr(self, "tab_market") and cur == str(self.tab_market):
+                self._render_market()
+                self.last_market_render_time = now
+                self.market_dirty = False
+            elif hasattr(self, "tab_chart") and cur == str(self.tab_chart) and hasattr(self, "chart_frame"):
+                self.chart_frame.redraw_chart()
+                self.last_chart_render_time = now
+                self.chart_dirty = False
+        except Exception:
+            pass
+
     def _build_footer(self):
         """Builds bottom status bar."""
         footer = tk.Frame(self.root, bg=CARD_BG, padx=16, pady=4)
@@ -683,23 +709,33 @@ class ScannerTkinterGUI:
         threading.Thread(target=_beep, daemon=True).start()
 
     def _poll_data(self):
-        """Polls dashboard_state periodically and updates GUI components."""
+        """Polls dashboard_state periodically with tab-aware, low-CPU rendering."""
         try:
             snapshot = dashboard_state.get_snapshot()
             stats = snapshot.get("stats", {})
             signals = snapshot.get("signals", [])
             market = snapshot.get("market", [])
+            price_ver = snapshot.get("price_version", 0)
 
-            # Update Metric Cards
+            # Update Metric Cards only when values change
             self.card_symbols_val.set(str(stats.get("symbols_scanned", len(market))))
             self.card_candles_val.set(str(stats.get("candles_processed", 0)))
             self.card_signals_val.set(str(len(signals)))
 
-            # Calculate accurate Bullish vs Bearish breakdown directly from active signals list
-            bull_cnt = sum(1 for s in signals if "BULLISH" in str(s.get("direction", "")))
-            bear_cnt = sum(1 for s in signals if "BEARISH" in str(s.get("direction", "")))
-            self.card_bullish_val.set(str(bull_cnt))
-            self.card_bearish_val.set(str(bear_cnt))
+            # Only recount bullish/bearish when signal count changed
+            if len(signals) != len(self.cached_signals):
+                if len(signals) > len(self.cached_signals) and len(self.cached_signals) > 0:
+                    latest = signals[0]
+                    is_bull = "BULLISH" in str(latest.get("direction", ""))
+                    self._play_alert(is_bull)
+
+                self.cached_signals = list(signals)
+                bull_cnt = sum(1 for s in signals if "BULLISH" in str(s.get("direction", "")))
+                bear_cnt = sum(1 for s in signals if "BEARISH" in str(s.get("direction", "")))
+                self.card_bullish_val.set(str(bull_cnt))
+                self.card_bearish_val.set(str(bear_cnt))
+                self._render_signals()
+
             ws_status = stats.get("ws_status", "INITIALIZING...")
             if ws_status == "CONNECTED":
                 self.card_status_val.set("🟢 LIVE CONNECTED")
@@ -715,21 +751,13 @@ class ScannerTkinterGUI:
             if stats.get("last_updated"):
                 self.footer_sync_lbl.config(text=f"Last sync: {stats.get('last_updated')}")
 
-            # Check if signals changed
-            if len(signals) != len(self.cached_signals):
-                if len(signals) > len(self.cached_signals) and len(self.cached_signals) > 0:
-                    latest = signals[0]
-                    is_bull = "BULLISH" in str(latest.get("direction", ""))
-                    self._play_alert(is_bull)
-                self.cached_signals = list(signals)
-                self._render_signals()
-
             # Check if market data or live prices changed
-            price_ver = snapshot.get("price_version", 0)
+            now = time.time()
             if price_ver != self.last_price_version or len(market) != len(self.cached_market):
                 self.last_price_version = price_ver
                 self.cached_market = list(market)
-                self._render_market()
+                self.market_dirty = True
+                self.chart_dirty = True
 
             # Populate chart symbols once market data is available
             if hasattr(self, "chart_frame") and not getattr(self, "chart_symbols_loaded", False):
@@ -737,23 +765,32 @@ class ScannerTkinterGUI:
                     sym_list = [m.get("symbol") for m in market if m.get("symbol")]
                     self.chart_frame.populate_symbols(sym_list)
                     self.chart_symbols_loaded = True
-                    self.chart_frame.redraw_chart()
 
-            # Redraw chart if active tab is the chart tab and prices changed
-            if hasattr(self, "notebook") and hasattr(self, "tab_chart") and hasattr(self, "chart_frame"):
+            # TAB-AWARE PERFORMANCE RENDERING (Never update invisible tabs!)
+            if hasattr(self, "notebook"):
                 try:
-                    current_tab = self.notebook.select()
-                    if current_tab == str(self.tab_chart) and price_ver != getattr(self, "last_chart_price_ver", -1):
-                        self.last_chart_price_ver = price_ver
-                        self.chart_frame.redraw_chart()
+                    cur_tab = self.notebook.select()
+                    # If on Market tab: throttle updates to at most once every 1.2 seconds
+                    if hasattr(self, "tab_market") and cur_tab == str(self.tab_market):
+                        if self.market_dirty and (now - self.last_market_render_time >= 1.2):
+                            self.last_market_render_time = now
+                            self.market_dirty = False
+                            self._render_market()
+
+                    # If on Chart tab: throttle redraws to at most once every 1.8 seconds
+                    elif hasattr(self, "tab_chart") and cur_tab == str(self.tab_chart) and hasattr(self, "chart_frame"):
+                        if self.chart_dirty and (now - self.last_chart_render_time >= 1.8):
+                            self.last_chart_render_time = now
+                            self.chart_dirty = False
+                            self.chart_frame.redraw_chart()
                 except Exception:
                     pass
 
         except Exception as e:
             logger.debug(f"Error in Tkinter poll loop: {e}")
 
-        # Schedule next poll in 300ms
-        self.root.after(300, self._poll_data)
+        # Schedule next poll in 400ms (smooth, responsive, zero CPU lag)
+        self.root.after(400, self._poll_data)
 
     def _render_signals(self):
         """Renders signals in Treeview according to active filters and sort order."""
