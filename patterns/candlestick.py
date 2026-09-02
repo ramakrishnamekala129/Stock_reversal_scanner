@@ -74,13 +74,15 @@ def _to_candle_item(candle: Union[CandleItem, pd.Series, dict]) -> CandleItem:
 def is_bullish_harami(
     prev_candle: Union[CandleItem, pd.Series, dict],
     candle: Union[CandleItem, pd.Series, dict],
+    context: str = "downtrend",
     max_body_ratio: float = config.HARAMI_MAX_BODY_RATIO,
 ) -> bool:
     """
     Bullish Harami:
     1. Previous candle is bearish.
-    2. Current candle has a smaller real body.
+    2. Current candle has a smaller real body and is bullish (buyers taking control).
     3. Current real body is contained completely within previous candle's real body.
+    4. Meaningful preceding downtrend or at support (not in established uptrend).
     """
     p = _to_candle_item(prev_candle)
     c = _to_candle_item(candle)
@@ -89,20 +91,27 @@ def is_bullish_harami(
     if not p.is_bearish or p.body <= 0:
         return False
 
-    # 2. Current body must be smaller than previous body
+    # 2. Current must be bullish (or tiny doji) - a red candle inside a red candle is NOT a bullish reversal
+    if c.is_bearish and c.body > p.body * 0.15:
+        return False
+
+    # 3. Current body must be smaller than previous body
     if c.body > p.body * max_body_ratio:
         return False
 
-    # 3. Current real body completely inside previous real body
-    # For bearish previous: upper body is p.open, lower body is p.close
+    # 4. Current real body completely inside previous real body
     curr_body_top = max(c.open, c.close)
     curr_body_bottom = min(c.open, c.close)
 
     tolerance = p.body * 0.05  # 5% tolerance for slight boundary overlap
-    if curr_body_top <= (p.open + tolerance) and curr_body_bottom >= (p.close - tolerance):
-        return True
+    if curr_body_top > (p.open + tolerance) or curr_body_bottom < (p.close - tolerance):
+        return False
 
-    return False
+    # 5. Trend context: Reject if explicit uptrend
+    if config.ENABLE_TREND_CONTEXT and context == "uptrend":
+        return False
+
+    return True
 
 
 def is_bullish_engulfing(
@@ -227,13 +236,15 @@ def is_bearish_engulfing(
 def is_bearish_harami(
     prev_candle: Union[CandleItem, pd.Series, dict],
     candle: Union[CandleItem, pd.Series, dict],
+    context: str = "uptrend",
     max_body_ratio: float = config.HARAMI_MAX_BODY_RATIO,
 ) -> bool:
     """
     Bearish Harami:
     1. Previous candle is bullish.
-    2. Current candle has a smaller real body.
+    2. Current candle has a smaller real body and is bearish (sellers taking control).
     3. Current real body is contained completely within previous candle's real body.
+    4. Meaningful preceding uptrend or at resistance (not in established downtrend).
     """
     p = _to_candle_item(prev_candle)
     c = _to_candle_item(candle)
@@ -242,19 +253,27 @@ def is_bearish_harami(
     if not p.is_bullish or p.body <= 0:
         return False
 
-    # 2. Current body must be smaller than previous body
+    # 2. Current must be bearish (or tiny doji) - a green candle inside a green candle is NOT a bearish reversal
+    if c.is_bullish and c.body > p.body * 0.15:
+        return False
+
+    # 3. Current body must be smaller than previous body
     if c.body > p.body * max_body_ratio:
         return False
 
-    # 3. Current real body completely inside previous real body
+    # 4. Current real body completely inside previous real body
     curr_body_top = max(c.open, c.close)
     curr_body_bottom = min(c.open, c.close)
 
     tolerance = p.body * 0.05
-    if curr_body_top <= (p.close + tolerance) and curr_body_bottom >= (p.open - tolerance):
-        return True
+    if curr_body_top > (p.close + tolerance) or curr_body_bottom < (p.open - tolerance):
+        return False
 
-    return False
+    # 5. Trend context: Reject if explicit downtrend
+    if config.ENABLE_TREND_CONTEXT and context == "downtrend":
+        return False
+
+    return True
 
 
 def is_shooting_star(
@@ -373,8 +392,8 @@ def detect_candlestick_patterns(
             description="Bearish candle engulfs previous bullish candle.",
         ))
 
-    # 3. Bullish Harami
-    if is_bullish_harami(prev_c, curr_c):
+    # 3. Bullish Harami (in downtrend/neutral)
+    if is_bullish_harami(prev_c, curr_c, context=context):
         results["bullish_harami"] = True
         results["details"].append(PatternResult(
             pattern_name="BULLISH HARAMI",
@@ -384,8 +403,8 @@ def detect_candlestick_patterns(
             description="Small candle contained inside previous bearish candle.",
         ))
 
-    # 4. Bearish Harami
-    if is_bearish_harami(prev_c, curr_c):
+    # 4. Bearish Harami (in uptrend/neutral)
+    if is_bearish_harami(prev_c, curr_c, context=context):
         results["bearish_harami"] = True
         results["details"].append(PatternResult(
             pattern_name="BEARISH HARAMI",

@@ -146,13 +146,27 @@ class SignalEngine:
             conditions_met: List[str] = []
             is_bearish = (pat.pattern_direction == "BEARISH" or pat.pattern_name in ["HANGING MAN", "BEARISH ENGULFING", "BEARISH HARAMI", "SHOOTING STAR"])
 
-            # --- Directional Consistency with CPR Breakout/Breakdown ---
+            # --- Directional Consistency with CPR Breakout/Breakdown & Major Levels ---
             # A candle closing in CPR Breakdown CANNOT be a Bullish Setup
             if not is_bearish and pivot_rel.cpr_breakdown:
                 continue
 
             # A candle closing in CPR Breakout CANNOT be a Bearish Warning
             if is_bearish and pivot_rel.cpr_breakout:
+                continue
+
+            # A stock breaking out strongly above PDH and R1 CANNOT be a Bearish Warning
+            # (e.g. SOLARINDS rallying to 20,290+ in a massive breakout above PDH/R1)
+            if is_bearish and curr_close > pivots.pdh and curr_close > pivots.r1:
+                continue
+
+            # A stock breaking down below PDL and S1 CANNOT be a Bullish Setup
+            if not is_bearish and curr_close < pivots.pdl and curr_close < pivots.s1:
+                continue
+
+            # Suppress low-volume Harami inside-bar chop (Rel Vol < 0.75x)
+            # Harami is an inside consolidation candle; on low volume it is pure noise
+            if pat.pattern_name in ["BULLISH HARAMI", "BEARISH HARAMI"] and rel_vol < 0.75:
                 continue
 
             # Invalidate Red-bodied Inverse Hammers collapsing to the lows

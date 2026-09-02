@@ -110,3 +110,35 @@ def test_no_bullish_signal_on_cpr_breakdown():
     # Must NOT produce any Bullish Setup during a CPR breakdown!
     bullish_signals = [s for s in signals if "BULLISH" in s.direction]
     assert len(bullish_signals) == 0
+
+
+def test_harami_low_volume_and_breakout_protection():
+    from scanner.signal_engine import SignalEngine
+    pivots = calculate_daily_pivots(
+        symbol="SOLARINDS",
+        date_str="2026-09-01",
+        open_p=20060.0,
+        high_p=20270.0,
+        low_p=19930.0,
+        close_p=20060.0,
+        volume=10000,
+    )
+    # R1 = 20243.34, PDH = 20270.0
+    # 1. Breakout above PDH and R1 at 20290: Must NOT produce Bearish Warning
+    df_breakout = pd.DataFrame([
+        {"timestamp": datetime(2026, 9, 2, 12, 30), "open": 20260.0, "high": 20295.0, "low": 20255.0, "close": 20295.0, "volume": 1230},
+        {"timestamp": datetime(2026, 9, 2, 12, 35), "open": 20290.0, "high": 20295.0, "low": 20275.0, "close": 20290.0, "volume": 1099},
+    ])
+    engine = SignalEngine(min_signal_score=4)
+    sig_breakout = engine.evaluate_candle("SOLARINDS", df_breakout, pivots)
+    bear_sig = [s for s in sig_breakout if "BEARISH" in s.direction]
+    assert len(bear_sig) == 0
+
+    # 2. Low-volume Harami inside chop (Rel Vol < 0.75x) must be suppressed
+    df_chop = pd.DataFrame([
+        {"timestamp": datetime(2026, 9, 2, 10, 20), "open": 19900.0, "high": 19930.0, "low": 19890.0, "close": 19920.0, "volume": 10000},
+        {"timestamp": datetime(2026, 9, 2, 10, 25), "open": 19915.0, "high": 19920.0, "low": 19905.0, "close": 19910.0, "volume": 2500},
+    ])
+    # Relative volume ~ 0.25x
+    sig_chop = engine.evaluate_candle("SOLARINDS", df_chop, pivots)
+    assert len(sig_chop) == 0
