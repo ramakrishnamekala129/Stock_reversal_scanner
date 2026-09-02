@@ -196,6 +196,7 @@ class FNOIntradayScanner:
             if "BULLISH" in sig.direction:
                 self.session_mgr.stats.bullish_signals += 1
             elif "BEARISH" in sig.direction:
+                self.session_mgr.stats.bearish_signals += 1
                 self.session_mgr.stats.hanging_man_signals += 1
 
             # Output formatted signal card to terminal (if live)

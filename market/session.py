@@ -22,6 +22,7 @@ class SessionStats:
     candles_processed: int = 0
     patterns_detected: int = 0
     bullish_signals: int = 0
+    bearish_signals: int = 0
     hanging_man_signals: int = 0
     websocket_errors: int = 0
     missing_candles: int = 0

@@ -651,7 +651,12 @@ class ScannerTkinterGUI:
             self.card_symbols_val.set(str(stats.get("symbols_scanned", len(market))))
             self.card_candles_val.set(str(stats.get("candles_processed", 0)))
             self.card_signals_val.set(str(len(signals)))
-            self.card_bullish_val.set(str(stats.get("bullish_signals", 0)))
+
+            # Calculate accurate Bullish vs Bearish breakdown directly from active signals list
+            bull_cnt = sum(1 for s in signals if "BULLISH" in str(s.get("direction", "")))
+            bear_cnt = sum(1 for s in signals if "BEARISH" in str(s.get("direction", "")))
+            self.card_bullish_val.set(str(bull_cnt))
+            self.card_bearish_val.set(str(bear_cnt))
             ws_status = stats.get("ws_status", "INITIALIZING...")
             if ws_status == "CONNECTED":
                 self.card_status_val.set("🟢 LIVE CONNECTED")
