@@ -36,6 +36,7 @@ class WebDashboardState:
         }
         self.active_websockets: Set[WebSocket] = set()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self.price_version: int = 0
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop):
         self._loop = loop
@@ -56,6 +57,7 @@ class WebDashboardState:
                     "time": now_ist,
                 }
             self.stats["symbols_scanned"] = len(self.pivots)
+            self.price_version += 1
 
     def update_price(self, symbol: str, ltp: float, volume: int = 0, timestamp: Optional[datetime] = None):
         """Updates live price for a symbol and broadcasts to WebSockets in IST."""
@@ -82,6 +84,7 @@ class WebDashboardState:
             }
             self.live_prices[symbol] = update_payload
             self.stats["last_updated"] = time_str
+            self.price_version += 1
 
         self._broadcast({"type": "PRICE_UPDATE", "data": update_payload})
 
@@ -209,6 +212,7 @@ class WebDashboardState:
                 "market": market_data,
                 "signals": list(self.signals),
                 "stats": dict(self.stats),
+                "price_version": self.price_version,
             }
 
     def get_stats(self) -> dict:

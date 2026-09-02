@@ -5,7 +5,7 @@ and subscription management.
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 from typing import Any, Callable, Dict, List, Optional
 import upstox_client
@@ -14,6 +14,8 @@ from upstox_client.feeder import MarketDataStreamerV3
 import config
 
 logger = logging.getLogger(__name__)
+
+IST_TZ = timezone(timedelta(hours=5, minutes=30))
 
 
 @dataclass
@@ -177,21 +179,20 @@ class UpstoxWebSocketStreamer:
                 return None
 
             # Parse timestamp (in milliseconds or ISO string) and ensure IST timezone
-            ist_tz = timezone(timedelta(hours=5, minutes=30))
             if ts_ms:
                 try:
                     if isinstance(ts_ms, (int, float)) or str(ts_ms).isdigit():
-                        ts = datetime.fromtimestamp(int(ts_ms) / 1000.0, tz=ist_tz)
+                        ts = datetime.fromtimestamp(int(ts_ms) / 1000.0, tz=IST_TZ)
                     else:
                         ts = datetime.fromisoformat(str(ts_ms))
                         if ts.tzinfo is not None:
-                            ts = ts.astimezone(ist_tz)
+                            ts = ts.astimezone(IST_TZ)
                         else:
-                            ts = ts.replace(tzinfo=ist_tz)
+                            ts = ts.replace(tzinfo=IST_TZ)
                 except Exception:
-                    ts = datetime.now(ist_tz)
+                    ts = datetime.now(IST_TZ)
             else:
-                ts = datetime.now(ist_tz)
+                ts = datetime.now(IST_TZ)
 
             return NormalizedTick(
                 instrument_key=key,
@@ -206,5 +207,5 @@ class UpstoxWebSocketStreamer:
             )
 
         except Exception as e:
-            logger.debug(f"Failed to parse tick for key {key}: {e}")
+            logger.warning(f"Failed to parse tick for key {key}: {e}")
             return None

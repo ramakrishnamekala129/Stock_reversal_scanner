@@ -141,6 +141,7 @@ class ScannerTkinterGUI:
         self.is_audio_enabled = True
         self.last_signal_count = 0
         self.last_market_hash = ""
+        self.last_price_version = -1
         self.cached_signals: List[dict] = []
         self.cached_market: List[dict] = []
 
@@ -675,8 +676,10 @@ class ScannerTkinterGUI:
                 self.cached_signals = list(signals)
                 self._render_signals()
 
-            # Check if market data changed
-            if len(market) != len(self.cached_market):
+            # Check if market data or live prices changed
+            price_ver = snapshot.get("price_version", 0)
+            if price_ver != self.last_price_version or len(market) != len(self.cached_market):
+                self.last_price_version = price_ver
                 self.cached_market = list(market)
                 self._render_market()
 
@@ -836,9 +839,6 @@ class ScannerTkinterGUI:
 
     def _render_market(self):
         """Renders 210-stock market pivot data in Treeview according to filters and sort."""
-        for item in self.market_tree.get_children():
-            self.market_tree.delete(item)
-
         search_query = self.market_search_var.get().strip().upper()
         m_sort = self.market_sort_var.get()
 
@@ -898,6 +898,30 @@ class ScannerTkinterGUI:
         elif "LTP" in m_sort:
             filtered_m.sort(key=lambda x: float(x.get("ltp", 0.0)), reverse=True)
 
+        existing_children = list(self.market_tree.get_children())
+        target_syms = [str(m.get("symbol", "")) for m in filtered_m]
+
+        if not target_syms:
+            for item in existing_children:
+                self.market_tree.delete(item)
+            if not self.cached_market:
+                self.market_tree.insert("", tk.END, values=(
+                    "LOADING...", "--", "--", "--", "Calculating Daily Pivots & CPR for 210 stocks...",
+                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--"
+                ), tags=("narrow_cpr",))
+            else:
+                self.market_tree.insert("", tk.END, values=(
+                    "NONE", "--", "--", "--", "No instruments matching current search/filter.",
+                    "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
+                ))
+            return
+
+        # Check if full rebuild is needed (structure/order changed or initial populate)
+        needs_full_rebuild = (existing_children != target_syms)
+        if needs_full_rebuild:
+            for item in existing_children:
+                self.market_tree.delete(item)
+
         for idx, m in enumerate(filtered_m):
             symbol = str(m.get("symbol", ""))
             zone = str(m.get("zone", ""))
@@ -922,45 +946,33 @@ class ScannerTkinterGUI:
             if idx % 2 == 1:
                 tags.append("alt_row")
 
-            self.market_tree.insert(
-                "",
-                tk.END,
-                values=(
-                    symbol,
-                    f"{float(m.get('ltp', 0)):.2f}",
-                    chg_str,
-                    f"{int(m.get('volume', 0)):,}",
-                    zone,
-                    f"{float(m.get('pp', 0)):.2f}",
-                    f"{float(m.get('tc', 0)):.2f}",
-                    f"{float(m.get('bc', 0)):.2f}",
-                    cpr_display,
-                    f"{float(m.get('r1', 0)):.2f}",
-                    f"{float(m.get('r2', 0)):.2f}",
-                    f"{float(m.get('r3', 0)):.2f}",
-                    f"{float(m.get('s1', 0)):.2f}",
-                    f"{float(m.get('s2', 0)):.2f}",
-                    f"{float(m.get('s3', 0)):.2f}",
-                    f"{float(m.get('pdo', 0)):.2f}",
-                    f"{float(m.get('pdh', 0)):.2f}",
-                    f"{float(m.get('pdl', 0)):.2f}",
-                    f"{float(m.get('pdc', 0)):.2f}",
-                    str(m.get("time", "--")),
-                ),
-                tags=tuple(tags),
+            row_vals = (
+                symbol,
+                f"{float(m.get('ltp', 0)):.2f}",
+                chg_str,
+                f"{int(m.get('volume', 0)):,}",
+                zone,
+                f"{float(m.get('pp', 0)):.2f}",
+                f"{float(m.get('tc', 0)):.2f}",
+                f"{float(m.get('bc', 0)):.2f}",
+                cpr_display,
+                f"{float(m.get('r1', 0)):.2f}",
+                f"{float(m.get('r2', 0)):.2f}",
+                f"{float(m.get('r3', 0)):.2f}",
+                f"{float(m.get('s1', 0)):.2f}",
+                f"{float(m.get('s2', 0)):.2f}",
+                f"{float(m.get('s3', 0)):.2f}",
+                f"{float(m.get('pdo', 0)):.2f}",
+                f"{float(m.get('pdh', 0)):.2f}",
+                f"{float(m.get('pdl', 0)):.2f}",
+                f"{float(m.get('pdc', 0)):.2f}",
+                str(m.get("time", "--")),
             )
 
-        if len(self.market_tree.get_children()) == 0:
-            if not self.cached_market:
-                self.market_tree.insert("", tk.END, values=(
-                    "LOADING...", "--", "--", "--", "Calculating Daily Pivots & CPR for 210 stocks...",
-                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--"
-                ), tags=("narrow_cpr",))
+            if needs_full_rebuild:
+                self.market_tree.insert("", tk.END, iid=symbol, values=row_vals, tags=tuple(tags))
             else:
-                self.market_tree.insert("", tk.END, values=(
-                    "NONE", "--", "--", "--", "No instruments matching current search/filter.",
-                    "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
-                ))
+                self.market_tree.item(symbol, values=row_vals, tags=tuple(tags))
 
     def _on_signals_column_click(self, col_id: str):
         """Toggles sort order when column heading is clicked in Signals tab."""
