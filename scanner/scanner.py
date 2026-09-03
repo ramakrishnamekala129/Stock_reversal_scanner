@@ -109,10 +109,20 @@ class FNOIntradayScanner:
 
         # Initialize Web Dashboard State & Optional Excel
         dashboard_state.initialize_pivots(self._pivots)
-        # 4. Fetch today's historical 5M candles (from 1m history)
+        # 4. Fetch today's historical 5M candles (from 1m history) and initialize multi-timeframe engine
         historical_5m = self.hist_loader.load_initial_5m_candles(self._universe, force_refresh=force_refresh)
         key_map = {sym: item["instrument_key"] for sym, item in self._universe.items()}
-        self.candle_engine.initialize_history(historical_5m, key_map=key_map)
+        self.candle_engine.initialize_history(historical_5m, key_map=key_map, timeframe="5m")
+
+        # Also seed 3m and 15m from raw broker candles if available
+        for tf in ["3m", "15m"]:
+            if tf in config.SCANNER_TIMEFRAMES:
+                try:
+                    tf_dfs = self.hist_loader.refresh_latest_broker_candles(self._universe, timeframe=tf)
+                    self.candle_engine.initialize_history(tf_dfs, key_map=key_map, timeframe=tf)
+                except Exception as e:
+                    logger.debug(f"Could not pre-seed {tf} candles: {e}")
+
         self.evaluate_initial_history()
 
         # 5. Connect WebSocket
@@ -246,20 +256,28 @@ class FNOIntradayScanner:
 
     def evaluate_initial_history(self):
         """
-        Scans all 5-minute historical candles from 09:15 up to current time across the universe,
-        detecting all pattern & reversal signals that occurred today.
+        Scans all historical candles (3m, 5m, 15m) from 09:15 up to current time across the universe,
+        detecting all pattern & reversal signals that occurred today in chronological sequence,
+        and accurately confirming/invalidating their trigger states.
         """
-        logger.info("Scanning existing 5-minute candles of today's session for reversal setups...")
+        logger.info("Scanning existing intraday candles of today's session across timeframes for reversal setups...")
         total_eval = 0
-        for sym, candles in list(self.candle_engine._history.items()):
-            df_full = self.candle_engine.get_candle_history_df(sym)
-            if len(candles) >= 2:
-                for i in range(2, len(candles) + 1):
-                    sub_candle = candles[i - 1]
-                    sub_df = df_full.iloc[:i]
-                    self._handle_candle_closed(sym, sub_candle, sub_df, print_console=False)
-                    total_eval += 1
-        logger.info(f"Startup candle scan complete: Evaluated {total_eval} historical candles, detected {len(self.dedup._seen_events)} signals.")
+        
+        # Chronological multi-timeframe replay: for each timeframe, replay candle by candle
+        for tf in config.SCANNER_TIMEFRAMES:
+            engine = self.candle_engine.get_engine(tf)
+            if not engine:
+                continue
+            for sym, candles in list(engine._history.items()):
+                df_full = engine.get_candle_history_df(sym)
+                if len(candles) >= 2:
+                    for i in range(2, len(candles) + 1):
+                        sub_candle = candles[i - 1]
+                        sub_df = df_full.iloc[:i]
+                        self._handle_candle_closed(sym, sub_candle, sub_df, timeframe=tf, print_console=False)
+                        total_eval += 1
+                        
+        logger.info(f"Startup candle scan complete: Evaluated {total_eval} historical candles across timeframes, detected {len(self.dedup._seen_events)} signals.")
 
     def sync_broker_candles_for_all(self):
         """
