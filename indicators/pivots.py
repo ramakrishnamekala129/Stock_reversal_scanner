@@ -93,14 +93,14 @@ def is_valid_cpr_breakout(
     Validates a decisive CPR Breakout (Bullish):
     1. Candle closes ABOVE CPR top (max(TC, BC)).
     2. Candle is bullish (close > open).
-    3. Candle originated from or touched CPR band (low_p <= pivots.cpr_top * 1.004 or open_p <= pivots.cpr_top).
+    3. Candle must genuinely originate from within or touch the CPR band (low_p <= pivots.cpr_top and open_p <= pivots.cpr_top).
     4. Most of the candle (>= 60% of total range) formed and closed above CPR top.
     """
     if close_p <= pivots.cpr_top or close_p <= open_p:
         return False
 
-    # Candle must originate from or test CPR band to be a genuine CPR breakout
-    if low_p > pivots.cpr_top * 1.004 and open_p > pivots.cpr_top:
+    # Candle must genuinely touch or originate inside CPR band (not just hovering nearby)
+    if low_p > pivots.cpr_top or open_p > pivots.cpr_top:
         return False
 
     tot_range = max(high_p - low_p, 0.0001)
@@ -122,14 +122,14 @@ def is_valid_cpr_breakdown(
     Validates a decisive CPR Breakdown (Bearish):
     1. Candle closes BELOW CPR bottom (min(TC, BC)).
     2. Candle is bearish (close < open).
-    3. Candle originated from or touched CPR band (high_p >= pivots.cpr_bottom * 0.996 or open_p >= pivots.cpr_bottom).
+    3. Candle must genuinely originate from within or touch the CPR band (high_p >= pivots.cpr_bottom and open_p >= pivots.cpr_bottom).
     4. Most of the candle (>= 60% of total range) formed and closed below CPR bottom.
     """
     if close_p >= pivots.cpr_bottom or close_p >= open_p:
         return False
 
-    # Candle must originate from or test CPR band to be a genuine CPR breakdown
-    if high_p < pivots.cpr_bottom * 0.996 and open_p < pivots.cpr_bottom:
+    # Candle must genuinely touch or originate inside CPR band (not far below it)
+    if high_p < pivots.cpr_bottom or open_p < pivots.cpr_bottom:
         return False
 
     tot_range = max(high_p - low_p, 0.0001)
