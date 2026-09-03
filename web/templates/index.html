@@ -113,14 +113,20 @@
                     </select>
                     <select id="signalStatusFilter" onchange="applySignalFilters()">
                         <option value="ALL">All Status</option>
-                        <option value="TRIGGERED">✅ Triggered Only</option>
+                        <option value="TRIGGERED" selected>✅ Triggered Only</option>
                         <option value="PENDING">⏳ Pending Only</option>
                         <option value="INVALIDATED">❌ Invalidated Only</option>
                     </select>
+                    <select id="signalScoreFilter" onchange="applySignalFilters()">
+                        <option value="ALL">All Scores</option>
+                        <option value="6">⭐ Score >= 6</option>
+                        <option value="7" selected>🔥 High Conviction (>= 7)</option>
+                    </select>
                     <select id="signalCprFilter" onchange="applySignalFilters()">
                         <option value="ALL">All CPR Types</option>
-                        <option value="NARROW">⚡ Narrow CPR (<= 0.2%) Only</option>
-                        <option value="TRAP">🪤 Narrow Trap Zones (<= 0.2%) Only</option>
+                        <option value="STRICT" selected>🎯 Strict Zones Only (CPR/S2/R2/Trap)</option>
+                        <option value="NARROW">⚡ Narrow CPR (<= 0.21%) Only</option>
+                        <option value="TRAP">🪤 Narrow Trap Zones (<= 0.21%) Only</option>
                         <option value="S2">🛡️ S2 Support Bounce Only</option>
                         <option value="R2">🛡️ R2 Resistance Rejection Only</option>
                     </select>
@@ -130,8 +136,8 @@
                 <div class="filter-group" id="marketFilters" style="display: none;">
                     <select id="marketCprFilter" onchange="renderMarketTable()">
                         <option value="ALL">All 210 F&O Stocks</option>
-                        <option value="NARROW">⚡ Narrow CPR (<= 0.2%) Trending Stocks</option>
-                        <option value="TRAP">🪤 Narrow Trap Zones (<= 0.2%) Stocks</option>
+                        <option value="NARROW">⚡ Narrow CPR (<= 0.21%) Trending Stocks</option>
+                        <option value="TRAP">🪤 Narrow Trap Zones (<= 0.21%) Stocks</option>
                         <option value="S2">🛡️ At S2 Support Bounce</option>
                         <option value="R2">🛡️ At R2 Resistance Rejection</option>
                     </select>

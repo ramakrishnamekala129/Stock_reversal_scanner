@@ -165,7 +165,7 @@ class ScannerTkinterGUI:
         self.signal_pattern_var = tk.StringVar(value="ALL")
         self.signal_status_var = tk.StringVar(value="ALL STATUS")
         self.signal_vol_var = tk.StringVar(value="ALL VOLUMES")
-        self.signal_score_var = tk.StringVar(value="ALL SCORES")
+        self.signal_score_var = tk.StringVar(value="🔥 High Conviction (>= 7)")
         self.strict_zones_var = tk.BooleanVar(value=True)
         self.signal_cpr_var = tk.StringVar(value="ALL")
         self.signal_search_var = tk.StringVar(value="")
@@ -427,17 +427,17 @@ class ScannerTkinterGUI:
         # Multi-Select CPR / Trap Filter
         tk.Label(toolbar, text="CPR / Trap:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         signal_cpr_options = [
-            "⚡ Narrow CPR (<= 0.2%)",
-            "🪤 Narrow Trap Zones (<= 0.2%)",
+            "⚡ Narrow CPR (<= 0.21%)",
+            "🪤 Narrow Trap Zones (<= 0.21%)",
             "🎯 Candlestick Pattern at CPR",
             "🎯 Bullish Pattern at CPR Support",
             "🎯 Bearish Pattern at CPR Resistance",
             "🚀 CPR Breakout (Bullish Close)",
             "💥 CPR Breakdown (Bearish Close)",
-            "🚀 Bear Trap Breakout (<= 0.2%)",
-            "💥 Bull Trap Breakdown (<= 0.2%)",
-            "🐂 Bull Trap (<= 0.2%)",
-            "🐻 Bear Trap (<= 0.2%)",
+            "🚀 Bear Trap Breakout (<= 0.21%)",
+            "💥 Bull Trap Breakdown (<= 0.21%)",
+            "🐂 Bull Trap (<= 0.21%)",
+            "🐻 Bear Trap (<= 0.21%)",
             "🛡️ S2 Support Bounce",
             "🛡️ R2 Resistance Rejection",
             "📌 Inside CPR Zone",
@@ -588,13 +588,13 @@ class ScannerTkinterGUI:
         # Market Multi-Select CPR / Trap Filter
         tk.Label(toolbar, text="Filter Stocks:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         market_cpr_options = [
-            "⚡ Narrow CPR (<= 0.2%) Trending",
-            "🪤 Narrow Trap Zones (<= 0.2%)",
+            "⚡ Narrow CPR (<= 0.21%) Trending",
+            "🪤 Narrow Trap Zones (<= 0.21%)",
             "🎯 Pattern at CPR Zone",
             "🚀 CPR Breakout (Bullish Close)",
             "💥 CPR Breakdown (Bearish Close)",
-            "🐂 In Bull Trap (<= 0.2%)",
-            "🐻 In Bear Trap (<= 0.2%)",
+            "🐂 In Bull Trap (<= 0.21%)",
+            "🐻 In Bear Trap (<= 0.21%)",
             "🛡️ At S2 Support Bounce",
             "🛡️ At R2 Resistance Rejection",
             "📌 Inside CPR Zone",
@@ -991,9 +991,9 @@ class ScannerTkinterGUI:
             if hasattr(self, "signal_cpr_menu") and not self.signal_cpr_menu.is_all_selected():
                 sel = self.signal_cpr_menu.get_selected()
                 matched = False
-                if "⚡ Narrow CPR (<= 0.2%)" in sel and has_narrow_cpr:
+                if "⚡ Narrow CPR (<= 0.21%)" in sel and has_narrow_cpr:
                     matched = True
-                if "🪤 Narrow Trap Zones (<= 0.2%)" in sel and has_narrow_trap:
+                if "🪤 Narrow Trap Zones (<= 0.21%)" in sel and has_narrow_trap:
                     matched = True
                 if "🎯 Candlestick Pattern at CPR" in sel and has_cpr_pattern:
                     matched = True
@@ -1005,13 +1005,13 @@ class ScannerTkinterGUI:
                     matched = True
                 if "💥 CPR Breakdown (Bearish Close)" in sel and has_cpr_breakdown:
                     matched = True
-                if "🚀 Bear Trap Breakout (<= 0.2%)" in sel and ("Bear Trap Breakout" in zone or any("Bear Trap Breakout" in str(c) for c in conds)):
+                if "🚀 Bear Trap Breakout (<= 0.21%)" in sel and ("Bear Trap Breakout" in zone or any("Bear Trap Breakout" in str(c) for c in conds)):
                     matched = True
-                if "💥 Bull Trap Breakdown (<= 0.2%)" in sel and ("Bull Trap Breakdown" in zone or any("Bull Trap Breakdown" in str(c) for c in conds)):
+                if "💥 Bull Trap Breakdown (<= 0.21%)" in sel and ("Bull Trap Breakdown" in zone or any("Bull Trap Breakdown" in str(c) for c in conds)):
                     matched = True
-                if "🐂 Bull Trap (<= 0.2%)" in sel and is_bull_trap:
+                if "🐂 Bull Trap (<= 0.21%)" in sel and is_bull_trap:
                     matched = True
-                if "🐻 Bear Trap (<= 0.2%)" in sel and is_bear_trap:
+                if "🐻 Bear Trap (<= 0.21%)" in sel and is_bear_trap:
                     matched = True
                 if "🛡️ S2 Support Bounce" in sel and is_bull and (any("Bounce near S2" in str(c) for c in conds) or "Bounce near S2" in zone):
                     matched = True
@@ -1141,9 +1141,9 @@ class ScannerTkinterGUI:
             if hasattr(self, "market_cpr_menu") and not self.market_cpr_menu.is_all_selected():
                 sel = self.market_cpr_menu.get_selected()
                 matched = False
-                if "⚡ Narrow CPR (<= 0.2%) Trending" in sel and is_narrow:
+                if "⚡ Narrow CPR (<= 0.21%) Trending" in sel and is_narrow:
                     matched = True
-                if "🪤 Narrow Trap Zones (<= 0.2%)" in sel and has_narrow_trap:
+                if "🪤 Narrow Trap Zones (<= 0.21%)" in sel and has_narrow_trap:
                     matched = True
                 if "🎯 Pattern at CPR Zone" in sel and ("Pattern at CPR" in zone or "Inside CPR" in zone or "CPR" in zone):
                     matched = True
@@ -1151,9 +1151,9 @@ class ScannerTkinterGUI:
                     matched = True
                 if "💥 CPR Breakdown (Bearish Close)" in sel and has_cpr_breakdown:
                     matched = True
-                if "🐂 In Bull Trap (<= 0.2%)" in sel and "Bull Trap" in zone:
+                if "🐂 In Bull Trap (<= 0.21%)" in sel and "Bull Trap" in zone:
                     matched = True
-                if "🐻 In Bear Trap (<= 0.2%)" in sel and "Bear Trap" in zone:
+                if "🐻 In Bear Trap (<= 0.21%)" in sel and "Bear Trap" in zone:
                     matched = True
                 if "🛡️ At S2 Support Bounce" in sel and "Bounce near S2" in zone:
                     matched = True

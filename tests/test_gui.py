@@ -67,10 +67,10 @@ def test_tkinter_gui_initialization(tk_root):
     gui.signal_cpr_menu._on_toggle_all()
     assert gui.signal_cpr_menu.is_all_selected() is True  # 0 selected treated as ALL or none
 
-    gui.signal_cpr_menu.vars["⚡ Narrow CPR (<= 0.2%)"].set(True)
+    gui.signal_cpr_menu.vars["⚡ Narrow CPR (<= 0.21%)"].set(True)
     gui.signal_cpr_menu._on_toggle_option()
     assert gui.signal_cpr_menu.is_all_selected() is False
-    assert "⚡ Narrow CPR (<= 0.2%)" in gui.signal_cpr_menu.get_selected()
+    assert "⚡ Narrow CPR (<= 0.21%)" in gui.signal_cpr_menu.get_selected()
 
     # Verify Tab 3 (Candlestick Chart & CPR Levels)
     assert hasattr(gui, "tab_chart")

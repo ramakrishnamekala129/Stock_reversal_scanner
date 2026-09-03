@@ -252,7 +252,7 @@ def calculate_daily_pivots(
     cpr_top = max(tc, bc)
     cpr_bottom = min(tc, bc)
     cpr_width = round((abs(tc - bc) / pp) * 100.0, 3) if pp > 0 else 0.0
-    cpr_thresh = getattr(config, "NARROW_CPR_THRESHOLD_PCT", 0.20)
+    cpr_thresh = getattr(config, "NARROW_CPR_THRESHOLD_PCT", 0.21)
     is_narrow_cpr = cpr_width <= cpr_thresh
 
     r1 = round(2.0 * pp - low_p, 2)
@@ -267,7 +267,7 @@ def calculate_daily_pivots(
     bull_trap_top = max(r1, high_p)
     bull_trap_bottom = min(r1, high_p)
     bull_trap_width_pct = round((abs(r1 - high_p) / pp) * 100.0, 3) if pp > 0 else 0.0
-    trap_thresh = getattr(config, "NARROW_TRAP_ZONE_THRESHOLD_PCT", 0.20)
+    trap_thresh = getattr(config, "NARROW_TRAP_ZONE_THRESHOLD_PCT", 0.21)
     is_narrow_bull_trap = bull_trap_width_pct <= trap_thresh
 
     bear_trap_top = max(s1, low_p)

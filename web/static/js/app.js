@@ -287,8 +287,9 @@ function updateStatsHeader(stats) {
 let signalFilterDirection = 'ALL';
 let signalFilterTimeframe = 'ALL';
 let signalFilterPattern = 'ALL';
-let signalFilterStatus = 'ALL';
-let signalFilterCpr = 'ALL';
+let signalFilterStatus = 'TRIGGERED';
+let signalFilterScore = '7';
+let signalFilterCpr = 'STRICT';
 let marketFilterCpr = 'ALL';
 let searchQuery = '';
 
@@ -299,6 +300,8 @@ function applySignalFilters() {
     signalFilterPattern = document.getElementById('signalPatternFilter').value;
     const statusEl = document.getElementById('signalStatusFilter');
     signalFilterStatus = statusEl ? statusEl.value : 'ALL';
+    const scoreEl = document.getElementById('signalScoreFilter');
+    signalFilterScore = scoreEl ? scoreEl.value : 'ALL';
     const cprEl = document.getElementById('signalCprFilter');
     signalFilterCpr = cprEl ? cprEl.value : 'ALL';
     renderSignalsTable();
@@ -327,20 +330,31 @@ function renderSignalsTable() {
             const trigStatus = (sig.trigger_status || 'PENDING').toUpperCase();
             if (trigStatus !== signalFilterStatus) return false;
         }
-        // Filter by CPR / Trap
+        // Filter by Score (Option 2)
+        if (signalFilterScore !== 'ALL') {
+            const minScore = parseInt(signalFilterScore, 10);
+            if ((sig.score || 0) < minScore) return false;
+        }
+        // Filter by CPR / Trap (Option 3 & Strict Zones)
         const isBull = (sig.direction || '').includes('BULLISH');
-        if (signalFilterCpr === 'NARROW') {
-            const hasNarrow = (sig.conditions_met || []).some(c => c.includes('Narrow CPR')) || (sig.zone || '').includes('Narrow CPR');
+        const zoneStr = (sig.zone || '');
+        const conds = sig.conditions_met || [];
+        if (signalFilterCpr === 'STRICT') {
+            const isStrict = zoneStr.includes('CPR') || zoneStr.includes('S2') || zoneStr.includes('R2') || zoneStr.includes('Trap') ||
+                             conds.some(c => c.includes('CPR') || c.includes('S2') || c.includes('R2') || c.includes('Trap'));
+            if (!isStrict) return false;
+        } else if (signalFilterCpr === 'NARROW') {
+            const hasNarrow = conds.some(c => c.includes('Narrow CPR')) || zoneStr.includes('Narrow CPR');
             if (!hasNarrow) return false;
         } else if (signalFilterCpr === 'TRAP') {
-            if (!(sig.zone || '').includes('Trap')) return false;
+            if (!zoneStr.includes('Trap')) return false;
         } else if (signalFilterCpr === 'S2') {
             if (!isBull) return false;
-            const hasS2 = (sig.conditions_met || []).some(c => c.includes('S2 Support')) || (sig.zone || '').includes('S2');
+            const hasS2 = conds.some(c => c.includes('S2 Support')) || zoneStr.includes('S2');
             if (!hasS2) return false;
         } else if (signalFilterCpr === 'R2') {
             if (isBull) return false;
-            const hasR2 = (sig.conditions_met || []).some(c => c.includes('R2 Resistance')) || (sig.zone || '').includes('R2');
+            const hasR2 = conds.some(c => c.includes('R2 Resistance')) || zoneStr.includes('R2');
             if (!hasR2) return false;
         }
 
