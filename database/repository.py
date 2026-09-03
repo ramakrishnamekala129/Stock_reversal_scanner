@@ -110,7 +110,7 @@ class DatabaseRepository:
                     trigger_price REAL,
                     timeframe TEXT DEFAULT '5m',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(symbol, timestamp, pattern, timeframe)
+                    UNIQUE(symbol, timestamp, pattern)
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_sym ON scanner_signals(symbol)")
@@ -281,10 +281,11 @@ class DatabaseRepository:
                         :pivot, :pdh, :pdl, :r1, :r2, :s1, :s2, :relative_volume,
                         :candle_high, :candle_low, :trigger_status, :trigger_time, :trigger_price, :timeframe
                     )
-                    ON CONFLICT(symbol, timestamp, pattern, timeframe) DO UPDATE SET
+                    ON CONFLICT(symbol, timestamp, pattern) DO UPDATE SET
                         trigger_status = excluded.trigger_status,
                         trigger_time = excluded.trigger_time,
-                        score = excluded.score
+                        score = excluded.score,
+                        timeframe = excluded.timeframe
                 """, sig)
         except Exception as e:
             logger.error(f"DB error saving signal: {e}")
