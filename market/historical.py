@@ -1,11 +1,12 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import date, datetime, time as dt_time
+from datetime import date, datetime, timedelta, time as dt_time
 import json
 import logging
 import time
 from typing import Any, Dict, List, Optional
+import urllib.parse
 import httpx
 import pandas as pd
 import polars as pl
@@ -113,6 +114,7 @@ class HistoricalDataLoader:
 
         async def _fetch_all_daily():
             rate_limiter = AsyncUpstoxRateLimiter(config.UPSTOX_RATE_LIMIT_PER_SEC)
+            from_date_str = (date.today() - timedelta(days=35)).isoformat()
             async with httpx.AsyncClient(
                 headers=headers,
                 timeout=12.0,
@@ -120,7 +122,8 @@ class HistoricalDataLoader:
             ) as client:
                 async def _fetch_one(sym: str, item: Dict[str, Any]):
                     inst_key = item["instrument_key"]
-                    url = f"https://api.upstox.com/v2/historical-candle/{inst_key}/day/2026-09-01/2025-01-01"
+                    encoded_key = urllib.parse.quote(inst_key)
+                    url = f"https://api.upstox.com/v2/historical-candle/{encoded_key}/day/{today_str}/{from_date_str}"
                     for attempt in range(config.API_RETRY_ATTEMPTS):
                         await rate_limiter.acquire()
                         try:

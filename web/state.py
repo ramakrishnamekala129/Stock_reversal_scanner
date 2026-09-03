@@ -197,14 +197,19 @@ class WebDashboardState:
                     zone = "R2 - R3 (Bullish Extension)"
                 elif bull_trap_top > 0 and ltp > bull_trap_top:
                     zone = "Above R1/PDH (Strong Bullish)"
-                elif s2 > 0 and abs(ltp - s2) / s2 <= 0.0035:
-                    zone = "🛡️ Bounce near S2 Support"
                 elif bear_trap_bottom > 0 and ltp < bear_trap_bottom:
-                    zone = "Below S1/PDL (Strong Breakdown)"
+                    if s2 > 0 and ltp < s2 * 0.9965:
+                        zone = "Below S2 (Oversold / Crash)"
+                    elif s2 > 0 and abs(ltp - s2) / s2 <= 0.0035 and ltp >= s2:
+                        zone = "🛡️ Bounce near S2 Support"
+                    else:
+                        zone = "Below S1/PDL (Strong Breakdown)"
                 elif pp > 0 and ltp >= pp:
                     zone = "PP - R1 (Bullish Territory)"
-                elif s2 > 0 and ltp <= s2:
+                elif s2 > 0 and ltp < s2 * 0.9965:
                     zone = "Below S2 (Oversold / Crash)"
+                elif s2 > 0 and abs(ltp - s2) / s2 <= 0.0035 and ltp >= s2:
+                    zone = "🛡️ Bounce near S2 Support"
                 else:
                     zone = "S1 - PP (Support / Retest)"
 

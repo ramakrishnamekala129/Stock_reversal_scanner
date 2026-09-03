@@ -1013,9 +1013,9 @@ class ScannerTkinterGUI:
                     matched = True
                 if "🐻 Bear Trap (<= 0.2%)" in sel and is_bear_trap:
                     matched = True
-                if "🛡️ S2 Support Bounce" in sel and (any("Bounce near S2" in str(c) for c in conds) or "Bounce near S2" in zone):
+                if "🛡️ S2 Support Bounce" in sel and is_bull and (any("Bounce near S2" in str(c) for c in conds) or "Bounce near S2" in zone):
                     matched = True
-                if "🛡️ R2 Resistance Rejection" in sel and (any("Rejection near R2" in str(c) for c in conds) or "Rejection near R2" in zone):
+                if "🛡️ R2 Resistance Rejection" in sel and (not is_bull) and (any("Rejection near R2" in str(c) for c in conds) or "Rejection near R2" in zone):
                     matched = True
                 if "📌 Inside CPR Zone" in sel and is_cpr_test:
                     matched = True

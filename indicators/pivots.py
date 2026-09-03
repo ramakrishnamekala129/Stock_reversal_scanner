@@ -145,6 +145,7 @@ def get_pivot_zone(
     low: Optional[float] = None,
     high: Optional[float] = None,
     open_p: Optional[float] = None,
+    direction: Optional[str] = None,
 ) -> str:
     """
     Returns high-precision technical zone classification including:
@@ -158,6 +159,9 @@ def get_pivot_zone(
     c_low = low if low is not None else price
     c_high = high if high is not None else price
     c_open = open_p if open_p is not None else c_low
+    dir_upper = direction.upper() if direction else ""
+    is_bull = "BULL" in dir_upper if dir_upper else (price >= c_open)
+    is_bear = "BEAR" in dir_upper if dir_upper else (price < c_open)
 
     # 1. Check CPR Breakout (Majority >=60% of candle closed above CPR top from CPR)
     if is_valid_cpr_breakout(c_open, c_high, c_low, price, pivots):
@@ -197,11 +201,11 @@ def get_pivot_zone(
             return f"🎯 Pattern at Narrow CPR ({pivots.cpr_width_pct:.2f}%)"
         return "🎯 Pattern at CPR Zone (Retest / Bounce)"
 
-    # 6. S2 Support Bounce & R2 Resistance Rejection
-    if abs(c_low - pivots.s2) / pivots.s2 <= 0.0035 or (c_low <= pivots.s2 and price >= pivots.s2):
+    # 6. S2 Support Bounce (Bullish only) & R2 Resistance Rejection (Bearish only)
+    if is_bull and (abs(c_low - pivots.s2) / pivots.s2 <= 0.0035 or (c_low <= pivots.s2 and price >= pivots.s2)):
         if (price - c_low) / max(c_high - c_low, 0.001) >= 0.35:
             return "🛡️ Bounce near S2 Support"
-    if abs(c_high - pivots.r2) / pivots.r2 <= 0.0035 or (c_high >= pivots.r2 and price <= pivots.r2):
+    if is_bear and (abs(c_high - pivots.r2) / pivots.r2 <= 0.0035 or (c_high >= pivots.r2 and price <= pivots.r2)):
         if (c_high - price) / max(c_high - c_low, 0.001) >= 0.35:
             return "🛡️ Rejection near R2 Resistance"
 

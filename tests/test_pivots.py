@@ -147,3 +147,26 @@ def test_zone_classification_below_bear_trap():
     assert p_wide.is_narrow_bear_trap is False
     zone_wide = get_pivot_zone(978.0, p_wide, low=975.0, high=979.0, open_p=976.0)
     assert "Trap" not in zone_wide
+
+
+def test_s2_and_r2_directional_zone_integrity():
+    from indicators.pivots import calculate_daily_pivots, get_pivot_zone
+
+    # H=1000, L=900, C=950 -> PP = 950. S2 = 950 - (1000-900) = 850. R2 = 950 + (1000-900) = 1050.
+    p = calculate_daily_pivots('TEST', '2026-09-01', 950.0, 1000.0, 900.0, 950.0, 100000)
+
+    # 1. Near S2 (850): Bullish candle bouncing -> S2 Support Bounce
+    zone_bull_s2 = get_pivot_zone(851.0, p, low=849.0, high=853.0, open_p=850.0, direction="BULLISH SETUP")
+    assert "Bounce near S2 Support" in zone_bull_s2
+
+    # 2. Near S2 (850): Bearish candle at 850.5 -> Must NOT be tagged as Bounce near S2 Support!
+    zone_bear_s2 = get_pivot_zone(850.5, p, low=849.0, high=853.0, open_p=852.0, direction="BEARISH WARNING")
+    assert "Bounce near S2 Support" not in zone_bear_s2
+
+    # 3. Near R2 (1050): Bearish candle rejecting -> R2 Resistance Rejection
+    zone_bear_r2 = get_pivot_zone(1049.0, p, low=1045.0, high=1052.0, open_p=1051.0, direction="BEARISH WARNING")
+    assert "Rejection near R2 Resistance" in zone_bear_r2
+
+    # 4. Near R2 (1050): Bullish candle -> Must NOT be tagged as Rejection near R2 Resistance!
+    zone_bull_r2 = get_pivot_zone(1051.0, p, low=1048.0, high=1053.0, open_p=1049.0, direction="BULLISH SETUP")
+    assert "Rejection near R2 Resistance" not in zone_bull_r2

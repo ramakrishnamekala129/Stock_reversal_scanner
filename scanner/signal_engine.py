@@ -386,7 +386,14 @@ class SignalEngine:
             is_actionable = score >= self.min_signal_score
 
             if is_actionable:
-                pivot_zone = get_pivot_zone(curr_close, pivots, low=curr_low, high=curr_high, open_p=curr_open)
+                pivot_zone = get_pivot_zone(
+                    curr_close,
+                    pivots,
+                    low=curr_low,
+                    high=curr_high,
+                    open_p=curr_open,
+                    direction=direction,
+                )
                 signal_event = SignalEvent(
                     symbol=symbol,
                     timestamp=ts,

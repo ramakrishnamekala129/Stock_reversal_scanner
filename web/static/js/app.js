@@ -328,15 +328,18 @@ function renderSignalsTable() {
             if (trigStatus !== signalFilterStatus) return false;
         }
         // Filter by CPR / Trap
+        const isBull = (sig.direction || '').includes('BULLISH');
         if (signalFilterCpr === 'NARROW') {
             const hasNarrow = (sig.conditions_met || []).some(c => c.includes('Narrow CPR')) || (sig.zone || '').includes('Narrow CPR');
             if (!hasNarrow) return false;
         } else if (signalFilterCpr === 'TRAP') {
             if (!(sig.zone || '').includes('Trap')) return false;
         } else if (signalFilterCpr === 'S2') {
+            if (!isBull) return false;
             const hasS2 = (sig.conditions_met || []).some(c => c.includes('S2 Support')) || (sig.zone || '').includes('S2');
             if (!hasS2) return false;
         } else if (signalFilterCpr === 'R2') {
+            if (isBull) return false;
             const hasR2 = (sig.conditions_met || []).some(c => c.includes('R2 Resistance')) || (sig.zone || '').includes('R2');
             if (!hasR2) return false;
         }
