@@ -233,14 +233,34 @@ class HistoricalDataLoader:
         Caches into SQLite database table (candles_5m) for sub-millisecond lookback and atomic batch inserts.
         """
         today_str = datetime.now(pytz.timezone(config.MARKET_TIMEZONE)).strftime("%Y-%m-%d")
+        now_time = datetime.now(pytz.timezone(config.MARKET_TIMEZONE)).time()
 
         # 1. Query SQLite Database Cache
         if not force_refresh:
             try:
                 db_dfs = self.db.get_candles_by_date(today_str)
                 if len(db_dfs) >= len(universe):
-                    logger.info(f"Loaded {len(db_dfs)}/{len(universe)} 5-minute candle datasets directly from SQLite database (candles_5m).")
-                    return db_dfs
+                    # Verify cache freshness: inspect the latest candle timestamp in SQLite
+                    sample_df = next(iter(db_dfs.values()))
+                    max_cache_time = sample_df["timestamp"].iloc[-1].time() if not sample_df.empty else dt_time(0, 0)
+                    
+                    # If market closed (>= 15:30), cache should have candles up to 15:25
+                    # If market is open, cache should be within 10 minutes of current time
+                    is_cache_fresh = False
+                    if now_time >= dt_time(15, 30):
+                        is_cache_fresh = max_cache_time >= dt_time(15, 25)
+                    elif now_time > dt_time(9, 30):
+                        # Approximate minutes difference
+                        diff_minutes = (now_time.hour * 60 + now_time.minute) - (max_cache_time.hour * 60 + max_cache_time.minute)
+                        is_cache_fresh = diff_minutes <= 10
+                    else:
+                        is_cache_fresh = True
+
+                    if is_cache_fresh:
+                        logger.info(f"Loaded {len(db_dfs)}/{len(universe)} fresh 5-minute candle datasets directly from SQLite database (candles_5m).")
+                        return db_dfs
+                    else:
+                        logger.info(f"Cached SQLite candles only go up to {max_cache_time}. Fetching latest candles from broker...")
             except Exception as e:
                 logger.warning(f"Failed to query SQLite candle cache: {e}")
 
