@@ -828,8 +828,10 @@ class CandleChartFrame(tk.Frame):
         zone_str = m_item.get("zone", "Active") if m_item else "Active"
         cpr_w = pivots.cpr_width_pct if pivots else (m_item.get("cpr_width_pct", 0.0) if m_item else 0.0)
         cpr_type = "⚡ Narrow CPR" if (pivots and pivots.is_narrow_cpr) else "Standard CPR"
+        cur_mode = getattr(self.scanner, "market_mode", config.DEFAULT_MARKET_MODE) if self.scanner else config.DEFAULT_MARKET_MODE
+        mode_tag = "⚡ FUTURES" if cur_mode == "FUTURES" else "📈 SPOT"
 
-        info_text = f"{sym}  |  LTP: ₹{ltp:.2f} ({chg_str})  |  {cpr_type} ({cpr_w:.2f}%)  |  {zone_str}"
+        info_text = f"[{mode_tag}] {sym}  |  LTP: ₹{ltp:.2f} ({chg_str})  |  {cpr_type} ({cpr_w:.2f}%)  |  {zone_str}"
         self.info_lbl.config(text=info_text)
 
         try:
