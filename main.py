@@ -71,6 +71,12 @@ def parse_args():
         action="store_true",
         help="Run FastAPI Web Dashboard instead of Tkinter Desktop GUI.",
     )
+    parser.add_argument(
+        "--mode",
+        default=config.DEFAULT_MARKET_MODE,
+        choices=["futures", "spot", "FUTURES", "SPOT"],
+        help="Market scanning mode: 'futures' (default nearest active contract) or 'spot' (cash equity).",
+    )
     return parser.parse_args()
 
 
@@ -81,6 +87,8 @@ def main():
     numeric_level = getattr(logging, args.log_level.upper(), logging.INFO)
     logging.getLogger().setLevel(numeric_level)
 
+    market_mode = args.mode.upper() if args.mode else config.DEFAULT_MARKET_MODE
+
     if args.web:
         config.ENABLE_WEB_DASHBOARD = True
         config.ENABLE_TKINTER_GUI = False
@@ -89,7 +97,7 @@ def main():
         config.ENABLE_WEB_DASHBOARD = False
 
     auth = UpstoxAuth()
-    scanner = FNOIntradayScanner(auth=auth)
+    scanner = FNOIntradayScanner(auth=auth, market_mode=market_mode)
 
     # Launch Desktop GUI immediately if enabled (Zero-Wait Instant Window)
     if config.ENABLE_TKINTER_GUI:
@@ -104,7 +112,7 @@ def main():
             def _background_startup():
                 try:
                     dashboard_state.stats["ws_status"] = "INITIALIZING..."
-                    success = scanner.startup(force_refresh=args.refresh_cache, symbols=args.symbols)
+                    success = scanner.startup(force_refresh=args.refresh_cache, symbols=args.symbols, mode=market_mode)
                     if success:
                         if args.dry_run:
                             dashboard_state.stats["ws_status"] = "DRY_RUN"

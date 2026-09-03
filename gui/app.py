@@ -265,9 +265,31 @@ class ScannerTkinterGUI:
         )
         sub_lbl.pack(anchor="w")
 
-        # Top Right Controls (Audio & Clock)
+        # Top Right Controls (Market Mode, Audio & Clock)
         ctrl_box = tk.Frame(header_frame, bg=BG_DARK)
         ctrl_box.pack(side=tk.RIGHT)
+
+        # Mode Indicator / Switcher: Futures (Default) vs Spot Equity
+        tk.Label(
+            ctrl_box,
+            text="Mode:",
+            font=("Segoe UI", 9, "bold"),
+            fg=TEXT_MUTED,
+            bg=BG_DARK,
+        ).pack(side=tk.LEFT, padx=(0, 4))
+
+        init_mode = getattr(self.scanner, "market_mode", config.DEFAULT_MARKET_MODE) if self.scanner else config.DEFAULT_MARKET_MODE
+        self.market_mode_var = tk.StringVar(value=f"⚡ {init_mode.upper()} (Nearest FUT)" if init_mode.upper() == "FUTURES" else "📈 SPOT (Cash EQ)")
+        self.mode_combo = ttk.Combobox(
+            ctrl_box,
+            textvariable=self.market_mode_var,
+            values=["⚡ FUTURES (Nearest FUT)", "📈 SPOT (Cash EQ)"],
+            state="readonly",
+            width=23,
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.mode_combo.pack(side=tk.LEFT, padx=(0, 10))
+        self.mode_combo.bind("<<ComboboxSelected>>", self._on_market_mode_changed)
 
         self.audio_btn = tk.Button(
             ctrl_box,
@@ -1364,3 +1386,39 @@ class ScannerTkinterGUI:
             messagebox.showinfo("Export Successful", f"Saved {len(self.cached_market)} stock pivot records to:\n{path}")
         except Exception as e:
             messagebox.showerror("Export Failed", f"Could not export CSV: {e}")
+
+    def _on_market_mode_changed(self, event=None):
+        """Switches active scanner mode between Nearest Future contracts and Spot Equity."""
+        selected_val = self.market_mode_var.get()
+        new_mode = "SPOT" if "SPOT" in selected_val else "FUTURES"
+        
+        if not self.scanner:
+            return
+
+        if self.scanner.market_mode == new_mode:
+            return
+
+        mode_title = "Nearest Futures Contract (FUT)" if new_mode == "FUTURES" else "Spot Equity (Cash EQ)"
+        confirm = messagebox.askyesno(
+            "Switch Market Mode",
+            f"Switch scanner universe and OHLCV levels to {mode_title}?\n\n"
+            f"The scanner will refresh pivot calculations and subscribe to the {new_mode} instruments.",
+        )
+        if not confirm:
+            # Revert combo selection
+            cur = self.scanner.market_mode
+            self.market_mode_var.set(f"⚡ {cur.upper()} (Nearest FUT)" if cur == "FUTURES" else "📈 SPOT (Cash EQ)")
+            return
+
+        # Perform mode switch in background thread
+        def _do_switch():
+            try:
+                self.scanner.startup(force_refresh=False, mode=new_mode)
+                self.chart_dirty = True
+                self.market_dirty = True
+                if hasattr(self, "chart_frame") and self.chart_frame:
+                    self.chart_frame.redraw_chart()
+            except Exception as ex:
+                logger.error(f"Error switching market mode to {new_mode}: {ex}")
+
+        threading.Thread(target=_do_switch, daemon=True).start()

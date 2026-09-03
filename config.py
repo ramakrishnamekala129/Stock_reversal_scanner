@@ -41,6 +41,8 @@ MARKET_OPEN = "09:15"
 MARKET_CLOSE = "15:30"
 TIMEFRAME = "5minute"
 CANDLE_DURATION_MINUTES = 5
+# Market Mode: 'FUTURES' (default: nearest active monthly contract) or 'SPOT' (cash equity)
+DEFAULT_MARKET_MODE = "FUTURES"
 SCANNER_TIMEFRAMES = ["3m", "5m", "15m"]
 TIMEFRAME_MINUTES = {"3m": 3, "5m": 5, "15m": 15}
 

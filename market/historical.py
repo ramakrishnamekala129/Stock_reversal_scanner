@@ -85,15 +85,15 @@ class HistoricalDataLoader:
         self,
         universe: Dict[str, Dict[str, Any]],
         force_refresh: bool = False,
+        mode: str = "FUTURES",
     ) -> Dict[str, PreviousDayOHLCV]:
         """
-        Retrieves previous trading session OHLCV for every F&O stock.
-        Properly ignores current date and picks the most recent completed trading session.
-        Uses local disk cache to avoid redundant API requests.
-        Enforces Upstox 25 req/sec rate limit.
+        Retrieves previous trading day's OHLCV for all universe symbols.
+        Checks mode-specific local disk cache first (previous_day_ohlcv_{mode}_{date}.json).
         """
         today_str = date.today().isoformat()
-        cache_file = config.CACHE_DIR / f"previous_day_ohlcv_{today_str}.json"
+        mode_tag = mode.lower() if mode else "futures"
+        cache_file = config.CACHE_DIR / f"previous_day_ohlcv_{mode_tag}_{today_str}.json"
 
         if not force_refresh and cache_file.exists():
             try:
@@ -101,12 +101,12 @@ class HistoricalDataLoader:
                     cached_data = json.load(f)
                     for sym, d in cached_data.items():
                         self._pd_cache[sym] = PreviousDayOHLCV(**d)
-                    logger.info(f"Loaded {len(self._pd_cache)} previous-day OHLCV records from cache.")
+                    logger.info(f"Loaded {len(self._pd_cache)} previous-day OHLCV records ({mode_tag}) from cache.")
                     return self._pd_cache
             except Exception as e:
                 logger.warning(f"Failed to read previous-day cache: {e}. Fetching via REST...")
 
-        logger.info(f"Fetching previous trading-day OHLCV for {len(universe)} symbols via asyncio (Rate Limit: {config.UPSTOX_RATE_LIMIT_PER_SEC} req/s)...")
+        logger.info(f"Fetching previous trading-day OHLCV ({mode_tag}) for {len(universe)} symbols via asyncio (Rate Limit: {config.UPSTOX_RATE_LIMIT_PER_SEC} req/s)...")
         token = self.rest_client.access_token
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         results: Dict[str, PreviousDayOHLCV] = {}

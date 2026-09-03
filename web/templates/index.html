@@ -17,8 +17,8 @@
                 <div class="brand-logo">
                     <span class="logo-icon">▲</span>
                     <div class="brand-text">
-                        <span class="brand-title">UPSTOX 5M SCANNER</span>
-                        <span class="brand-subtitle">NSE F&O INTRADAY REVERSAL ENGINE</span>
+                        <span class="brand-title">UPSTOX F&O REVERSAL SCANNER</span>
+                        <span class="brand-subtitle" id="brandModeSubtitle">⚡ FUTURES MODE (Nearest Contract OHLCV)</span>
                     </div>
                 </div>
                 <div class="connection-status" id="connectionBadge">
@@ -29,6 +29,10 @@
 
             <!-- Header Quick Stats -->
             <div class="header-stats">
+                <div class="stat-badge mode-badge">
+                    <span class="stat-label">Market Mode</span>
+                    <span class="stat-value" id="statMarketMode">FUTURES</span>
+                </div>
                 <div class="stat-badge">
                     <span class="stat-label">F&O Universe</span>
                     <span class="stat-value" id="statSymbols">210</span>

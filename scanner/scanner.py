@@ -41,8 +41,10 @@ class FNOIntradayScanner:
         auth: Optional[UpstoxAuth] = None,
         enable_excel: bool = config.ENABLE_EXCEL_EXPORT,
         enable_web: bool = config.ENABLE_WEB_DASHBOARD,
+        market_mode: str = config.DEFAULT_MARKET_MODE,
     ):
         self.auth = auth or UpstoxAuth()
+        self.market_mode = market_mode.upper() if market_mode else "FUTURES"
         self.rest_client = UpstoxRestClient(self.auth.get_api_client() if self.auth.has_access_token else None)
         self.instrument_mgr = InstrumentManager(self.rest_client)
         self.hist_loader = HistoricalDataLoader(self.rest_client)
@@ -61,19 +63,21 @@ class FNOIntradayScanner:
         self._universe: Dict[str, dict] = {}
         self._is_running = False
 
-    def startup(self, force_refresh: bool = False, symbols: Optional[List[str]] = None):
+    def startup(self, force_refresh: bool = False, symbols: Optional[List[str]] = None, mode: Optional[str] = None):
         """
         Executes complete application startup sequence.
         """
-        logger.info("Starting Upstox 5M F&O Intraday Scanner...")
+        if mode:
+            self.market_mode = mode.upper()
+        logger.info(f"Starting Upstox 5M F&O Intraday Scanner [Mode: {self.market_mode}]...")
 
         # 1. Authenticate / Check credentials
         is_authenticated = self.auth.validate_token()
         rest_status = "CONNECTED" if is_authenticated else "AVAILABLE (PUBLIC ENDPOINTS)"
         analytics_status = "AVAILABLE" if self.auth.has_analytics_token else "NOT CONFIGURED"
 
-        # 2. Load NSE F&O Universe
-        self._universe = self.instrument_mgr.load_fno_universe(force_refresh=force_refresh)
+        # 2. Load NSE F&O Universe (Futures or Spot)
+        self._universe = self.instrument_mgr.load_fno_universe(force_refresh=force_refresh, mode=self.market_mode)
         if symbols:
             symbols_set = set(symbols)
             self._universe = {k: v for k, v in self._universe.items() if k in symbols_set}
@@ -86,7 +90,7 @@ class FNOIntradayScanner:
         self.session_mgr.stats.symbols_scanned = fno_count
 
         # 3. Load Previous Trading Day OHLCV & Calculate Pivots
-        pd_data_map = self.hist_loader.load_all_previous_day_ohlcv(self._universe, force_refresh=force_refresh)
+        pd_data_map = self.hist_loader.load_all_previous_day_ohlcv(self._universe, force_refresh=force_refresh, mode=self.market_mode)
         for sym, pd_item in pd_data_map.items():
             pivot = calculate_daily_pivots(
                 symbol=sym,
