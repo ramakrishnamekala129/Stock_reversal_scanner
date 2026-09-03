@@ -268,3 +268,34 @@ def test_s2_support_bounce_pin_bar():
     assert sig.candle_low == 1129.6
     assert sig.trigger_status == "PENDING"
     assert sig.trigger_price == 1135.9
+
+
+def test_r2_resistance_rejection_bearish_pin_bar():
+    from scanner.signal_engine import SignalEngine
+    # H=100.0, L=90.0, C=95.0 -> PP=95.0, R1=2*95-90=100.0, R2=95+(100-90)=105.0
+    pivots = calculate_daily_pivots(
+        symbol="TEST_R2",
+        date_str="2026-09-01",
+        open_p=92.0,
+        high_p=100.0,
+        low_p=90.0,
+        close_p=95.0,
+        volume=10000,
+    )
+    # Candle tests R2 (High 105.2 vs R2 105.0) and gets rejected with long upper wick
+    df = pd.DataFrame([
+        {"timestamp": datetime(2026, 9, 2, 10, 0), "open": 102.0, "high": 104.0, "low": 101.5, "close": 103.5, "volume": 5000},
+        {"timestamp": datetime(2026, 9, 2, 10, 5), "open": 103.8, "high": 105.2, "low": 103.0, "close": 103.2, "volume": 12000},
+    ])
+    engine = SignalEngine(min_signal_score=4)
+    signals = engine.evaluate_candle("TEST_R2", df, pivots)
+    assert len(signals) >= 1
+    sig = signals[0]
+    assert sig.direction == "BEARISH WARNING"
+    assert sig.pattern in ["SHOOTING STAR", "BEARISH_PIN_BAR", "INVERSE HAMMER"]
+    assert "R2 Resistance" in sig.zone or any("R2 Resistance" in c for c in sig.conditions_met)
+    assert sig.score >= 7
+    assert sig.candle_high == 105.2
+    assert sig.candle_low == 103.0
+    assert sig.trigger_status == "PENDING"
+    assert sig.trigger_price == 103.0

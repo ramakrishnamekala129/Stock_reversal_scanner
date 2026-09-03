@@ -120,3 +120,12 @@ def test_pin_bar():
     from patterns.candlestick import is_pin_bar
     assert is_pin_bar(c, context="downtrend") is True
     assert is_pin_bar(c, context="uptrend") is False
+
+
+def test_bearish_pin_bar():
+    # Long upper shadow >= 45% of candle range, close in lower 60%
+    # Open=1200.0, High=1210.0, Low=1198.0, Close=1201.0 -> Range=12.0, Upper Wick=9.0 (75%)
+    c = CandleItem(open=1200.0, high=1210.0, low=1198.0, close=1201.0, volume=5000)
+    from patterns.candlestick import is_bearish_pin_bar
+    assert is_bearish_pin_bar(c, context="uptrend") is True
+    assert is_bearish_pin_bar(c, context="downtrend") is False

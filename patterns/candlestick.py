@@ -346,6 +346,43 @@ def is_shooting_star(
     return True
 
 
+def is_bearish_pin_bar(
+    candle: Union[CandleItem, pd.Series, dict],
+    context: str = "uptrend",
+    min_upper_wick_pct: float = 0.45,
+) -> bool:
+    """
+    Bearish Pin Bar / Long Upper Shadow Rejection:
+    1. Long upper wick (at least 45% of total candle range).
+    2. Close finishes in the lower half of the candle range (sellers driving price down).
+    3. Lower wick is moderate (<= 35% of total range).
+    4. Trend context: Occurs at resistance (R1/R2) or in uptrend.
+    """
+    c = _to_candle_item(candle)
+    if c.total_range <= 0:
+        return False
+
+    # Upper shadow must be at least min_upper_wick_pct of total candle range
+    upper_wick_pct = c.upper_wick / c.total_range
+    if upper_wick_pct < min_upper_wick_pct:
+        return False
+
+    # Close must be in the lower 60% of the candle range (rejection of highs)
+    close_pos = (c.close - c.low) / c.total_range
+    if close_pos > 0.60:
+        return False
+
+    # Lower wick should not dominate
+    if c.lower_wick > c.total_range * 0.35:
+        return False
+
+    # Context filter: reject in explicit downtrend
+    if config.ENABLE_TREND_CONTEXT and context == "downtrend":
+        return False
+
+    return True
+
+
 def is_hanging_man(
     prev_candle: Union[CandleItem, pd.Series, dict],
     candle: Union[CandleItem, pd.Series, dict],
@@ -530,7 +567,7 @@ def detect_candlestick_patterns(
             description="Inverse Hammer with long upper shadow showing overhead selling rejection.",
         ))
 
-    # 7. Shooting Star (in uptrend/resistance)
+    # 7. Shooting Star & Bearish Pin Bar (in uptrend/resistance)
     if is_shooting_star(curr_c, context=context):
         results["shooting_star"] = True
         results["details"].append(PatternResult(
@@ -539,6 +576,15 @@ def detect_candlestick_patterns(
             timestamp=ts,
             pattern_strength=2.0,
             description="Shooting Star with long upper shadow at resistance/uptrend.",
+        ))
+    elif is_bearish_pin_bar(curr_c, context=context):
+        results["bearish_pin_bar"] = True
+        results["details"].append(PatternResult(
+            pattern_name="BEARISH_PIN_BAR",
+            pattern_direction="BEARISH",
+            timestamp=ts,
+            pattern_strength=2.0,
+            description="Bearish Pin Bar with strong upper shadow rejection at resistance.",
         ))
 
     # 8. Hanging Man (in uptrend)

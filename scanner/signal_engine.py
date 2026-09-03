@@ -167,9 +167,13 @@ class SignalEngine:
             if is_bearish and pivot_rel.cpr_breakout:
                 continue
 
-            # A stock breaking out strongly above PDH and R1 CANNOT be a Bearish Warning
-            # (e.g. SOLARINDS rallying to 20,290+ in a massive breakout above PDH/R1)
-            if is_bearish and curr_close > pivots.pdh and curr_close > pivots.r1:
+            # A stock breaking out strongly above PDH and R1 CANNOT be a Bearish Warning UNLESS it is an R2 Resistance Rejection
+            is_near_r2_rejection = (
+                abs(curr_high - pivots.r2) / pivots.r2 <= 0.0035
+                or (curr_high >= pivots.r2 and curr_close <= pivots.r2)
+            ) and ((curr_high - curr_close) / max(curr_high - curr_low, 0.001) >= 0.35)
+
+            if is_bearish and curr_close > pivots.pdh and curr_close > pivots.r1 and not is_near_r2_rejection:
                 continue
 
             # A stock breaking down below PDL and S1 CANNOT be a Bullish Setup UNLESS it is an S2 Support Bounce
@@ -237,12 +241,11 @@ class SignalEngine:
                     conditions_met.append("Rejection near R1 Resistance")
 
                 # Near R2 Resistance Rejection (Ceiling Resistance Reversal / Overbought HOD)
-                if abs(curr_high - pivots.r2) / pivots.r2 < 0.004 or (curr_high >= pivots.r2 and curr_close <= pivots.r2):
-                    if (curr_high - curr_close) / max(curr_high - curr_low, 0.001) >= 0.35:
-                        w = 3
-                        score += w
-                        score_breakdown.append(f"Near R2 Resistance Rejection (+{w})")
-                        conditions_met.append("🛡️ Rejection near R2 Resistance")
+                if is_near_r2_rejection:
+                    w = 3
+                    score += w
+                    score_breakdown.append(f"Near R2 Resistance Rejection (+{w})")
+                    conditions_met.append("🛡️ Rejection near R2 Resistance")
             else:
                 # Bullish Context Points
                 if pivot_rel.above_pivot or curr_close > pivots.pp:
