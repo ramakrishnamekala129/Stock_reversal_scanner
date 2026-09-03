@@ -289,7 +289,7 @@ let signalFilterTimeframe = 'ALL';
 let signalFilterPattern = 'ALL';
 let signalFilterStatus = 'TRIGGERED';
 let signalFilterScore = '7';
-let signalFilterCpr = 'STRICT';
+let signalFilterCpr = 'PROFITABLE';
 let marketFilterCpr = 'ALL';
 let searchQuery = '';
 
@@ -335,11 +335,18 @@ function renderSignalsTable() {
             const minScore = parseInt(signalFilterScore, 10);
             if ((sig.score || 0) < minScore) return false;
         }
-        // Filter by CPR / Trap (Option 3 & Strict Zones)
+        // Filter by CPR / Trap (Option 3 & Strict Zones & Top Profitable)
         const isBull = (sig.direction || '').includes('BULLISH');
         const zoneStr = (sig.zone || '');
         const conds = sig.conditions_met || [];
-        if (signalFilterCpr === 'STRICT') {
+        if (signalFilterCpr === 'PROFITABLE') {
+            const isProfitable = zoneStr.includes('Bear Trap Breakout') || conds.some(c => c.includes('Bear Trap Breakout')) ||
+                                 zoneStr.includes('CPR Breakdown') || conds.some(c => c.includes('CPR Breakdown')) ||
+                                 zoneStr.includes('CPR Resistance') || conds.some(c => c.includes('CPR Resistance')) ||
+                                 zoneStr.includes('Narrow CPR') || conds.some(c => c.includes('Narrow CPR')) ||
+                                 (zoneStr.includes('Narrow') && zoneStr.includes('Trap'));
+            if (!isProfitable) return false;
+        } else if (signalFilterCpr === 'STRICT') {
             const isStrict = zoneStr.includes('CPR') || zoneStr.includes('S2') || zoneStr.includes('R2') || zoneStr.includes('Trap') ||
                              conds.some(c => c.includes('CPR') || c.includes('S2') || c.includes('R2') || c.includes('Trap'));
             if (!isStrict) return false;

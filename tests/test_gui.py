@@ -60,7 +60,8 @@ def test_tkinter_gui_initialization(tk_root):
     # Verify MultiSelectDropdown
     assert hasattr(gui, "signal_cpr_menu")
     assert hasattr(gui, "market_cpr_menu")
-    assert gui.signal_cpr_menu.is_all_selected() is True
+    assert "⚡ Narrow CPR (<= 0.21%)" in gui.signal_cpr_menu.get_selected()
+    assert "🚀 Bear Trap Breakout (<= 0.21%)" in gui.signal_cpr_menu.get_selected()
 
     # Deselect all and select one option
     gui.signal_cpr_menu.all_var.set(False)

@@ -48,7 +48,7 @@ class MultiSelectDropdown(tk.Menubutton):
     """
     A modern dark-themed multi-select dropdown widget with interactive checkboxes.
     """
-    def __init__(self, master, title: str, options: List[str], on_change_callback=None, **kwargs):
+    def __init__(self, master, title: str, options: List[str], on_change_callback: Optional[Callable] = None, default_selected: Optional[Iterable[str]] = None, **kwargs):
         super().__init__(
             master,
             text=f"{title}: ALL ▾",
@@ -79,7 +79,9 @@ class MultiSelectDropdown(tk.Menubutton):
         )
         self["menu"] = self.menu
 
-        self.all_var = tk.BooleanVar(value=True)
+        default_set = set(default_selected) if default_selected is not None else None
+        is_all_default = default_set is None or len(default_set) == len(options)
+        self.all_var = tk.BooleanVar(value=is_all_default)
         self.vars: Dict[str, tk.BooleanVar] = {}
 
         # "Select ALL" checkbutton
@@ -87,7 +89,8 @@ class MultiSelectDropdown(tk.Menubutton):
         self.menu.add_separator()
 
         for opt in options:
-            var = tk.BooleanVar(value=True)
+            init_val = True if default_set is None else (opt in default_set)
+            var = tk.BooleanVar(value=init_val)
             self.vars[opt] = var
             self.menu.add_checkbutton(label=opt, variable=var, command=self._on_toggle_option)
 
@@ -446,6 +449,14 @@ class ScannerTkinterGUI:
             toolbar,
             title="CPR/Trap",
             options=signal_cpr_options,
+            default_selected=[
+                "🚀 Bear Trap Breakout (<= 0.21%)",
+                "🎯 Bearish Pattern at CPR Resistance",
+                "⚡ Narrow CPR (<= 0.21%)",
+                "💥 CPR Breakdown (Bearish Close)",
+                "🪤 Narrow Trap Zones (<= 0.21%)",
+                "🎯 Candlestick Pattern at CPR",
+            ],
             on_change_callback=self._render_signals
         )
         self.signal_cpr_menu.pack(side=tk.LEFT, padx=(0, 12))
@@ -603,6 +614,12 @@ class ScannerTkinterGUI:
             toolbar,
             title="CPR/Trap",
             options=market_cpr_options,
+            default_selected=[
+                "⚡ Narrow CPR (<= 0.21%) Trending",
+                "🪤 Narrow Trap Zones (<= 0.21%)",
+                "🎯 Pattern at CPR Zone",
+                "💥 CPR Breakdown (Bearish Close)",
+            ],
             on_change_callback=self._render_market
         )
         self.market_cpr_menu.pack(side=tk.LEFT, padx=(0, 12))
