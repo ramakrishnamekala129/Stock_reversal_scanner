@@ -185,13 +185,16 @@ class DatabaseRepository:
             ORDER BY symbol, timestamp ASC
         """
         try:
-            df_all = pd.read_sql_query(query, conn, params=(f"{date_str}%",))
-            if df_all.empty:
+            cur = conn.cursor()
+            cur.execute(query, (f"{date_str}%",))
+            rows = cur.fetchall()
+            if not rows:
                 return {}
 
+            df_all = pd.DataFrame(rows, columns=["symbol", "timestamp", "open", "high", "low", "close", "volume"])
             kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
             df_all["timestamp"] = pd.to_datetime(df_all["timestamp"], utc=True).dt.tz_convert(kolkata_tz)
-            return {sym: group.copy().reset_index(drop=True) for sym, group in df_all.groupby("symbol")}
+            return {sym: group.reset_index(drop=True) for sym, group in df_all.groupby("symbol", sort=False)}
         except Exception as e:
             logger.error(f"Error querying candles from SQLite: {e}")
             return {}
