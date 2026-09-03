@@ -88,6 +88,12 @@
                         <option value="BULLISH">Bullish Setups Only</option>
                         <option value="BEARISH">Bearish Warnings Only</option>
                     </select>
+                    <select id="signalTimeframeFilter" onchange="applySignalFilters()">
+                        <option value="ALL">All Timeframes</option>
+                        <option value="3m">3-Minute (3m)</option>
+                        <option value="5m">5-Minute (5m)</option>
+                        <option value="15m">15-Minute (15m)</option>
+                    </select>
                     <select id="signalPatternFilter" onchange="applySignalFilters()">
                         <option value="ALL">All Patterns</option>
                         <option value="BULLISH ENGULFING">Bullish Engulfing</option>
@@ -141,7 +147,8 @@
                     <thead>
                         <tr>
                             <th style="width: 85px;">Time</th>
-                            <th style="width: 110px;">Symbol</th>
+                            <th style="width: 105px;">Symbol</th>
+                            <th style="width: 55px; text-align: center;">TF</th>
                             <th style="width: 130px;">Signal</th>
                             <th style="width: 140px;">Candlestick Pattern</th>
                             <th style="width: 135px; text-align: center;">Trigger Status</th>
@@ -159,7 +166,7 @@
                     </thead>
                     <tbody id="signalsTableBody">
                         <tr class="empty-row">
-                            <td colspan="15">Scanning 5-minute candles for reversal setups...</td>
+                            <td colspan="16">Scanning candles (3m, 5m, 15m) for reversal setups...</td>
                         </tr>
                     </tbody>
                 </table>

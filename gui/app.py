@@ -161,6 +161,7 @@ class ScannerTkinterGUI:
 
         # Filters & Sorting
         self.signal_direction_var = tk.StringVar(value="ALL")
+        self.signal_tf_var = tk.StringVar(value="ALL")
         self.signal_pattern_var = tk.StringVar(value="ALL")
         self.signal_status_var = tk.StringVar(value="ALL STATUS")
         self.signal_vol_var = tk.StringVar(value="ALL VOLUMES")
@@ -362,9 +363,15 @@ class ScannerTkinterGUI:
 
         # Direction Filter
         tk.Label(toolbar, text="Signal:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        dir_combo = ttk.Combobox(toolbar, textvariable=self.signal_direction_var, values=["ALL", "BULLISH SETUP", "BEARISH WARNING"], state="readonly", width=16)
-        dir_combo.pack(side=tk.LEFT, padx=(0, 12))
+        dir_combo = ttk.Combobox(toolbar, textvariable=self.signal_direction_var, values=["ALL", "BULLISH SETUP", "BEARISH WARNING"], state="readonly", width=15)
+        dir_combo.pack(side=tk.LEFT, padx=(0, 10))
         dir_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
+
+        # Timeframe Filter
+        tk.Label(toolbar, text="TF:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        tf_combo = ttk.Combobox(toolbar, textvariable=self.signal_tf_var, values=["ALL", "3m", "5m", "15m"], state="readonly", width=6)
+        tf_combo.pack(side=tk.LEFT, padx=(0, 10))
+        tf_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
         # Pattern Filter
         tk.Label(toolbar, text="Pattern:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
@@ -498,7 +505,8 @@ class ScannerTkinterGUI:
 
         cols = [
             ("time", "Time", 75, "center"),
-            ("symbol", "Symbol", 100, "w"),
+            ("symbol", "Symbol", 95, "w"),
+            ("tf", "TF", 50, "center"),
             ("signal", "Signal", 125, "w"),
             ("pattern", "Pattern", 140, "w"),
             ("status", "Trigger Status", 130, "center"),
@@ -881,6 +889,12 @@ class ScannerTkinterGUI:
             if dir_filter != "ALL" and dir_filter not in direction:
                 continue
 
+            # Apply Timeframe Filter
+            tf_filter = self.signal_tf_var.get() if hasattr(self, "signal_tf_var") else "ALL"
+            sig_tf = str(s.get("timeframe", "5m")).lower()
+            if tf_filter != "ALL" and tf_filter.lower() != sig_tf:
+                continue
+
             # Apply Pattern Filter
             if pat_filter != "ALL" and pattern != pat_filter:
                 continue
@@ -1047,6 +1061,7 @@ class ScannerTkinterGUI:
                 tags.append("alt_row")
 
             conds_str = " • ".join(conds) if conds else "Standard Setup"
+            tf_str = str(s.get("timeframe", "5m")).upper()
 
             self.signals_tree.insert(
                 "",
@@ -1054,6 +1069,7 @@ class ScannerTkinterGUI:
                 values=(
                     time_str,
                     symbol,
+                    tf_str,
                     direction,
                     pattern,
                     status_text,
@@ -1074,12 +1090,12 @@ class ScannerTkinterGUI:
         if len(self.signals_tree.get_children()) == 0:
             if not self.cached_signals:
                 self.signals_tree.insert("", tk.END, values=(
-                    "--:--:--", "SCANNING...", "INITIALIZING", "Downloading 5M Candles & Scanning Today's Setups...",
+                    "--:--:--", "SCANNING...", "ALL", "INITIALIZING", "Downloading Candles & Scanning Today's Setups...",
                     "--", "--", "--", "Loading Universe...", "--", "--", "--", "--", "--", "--", "Evaluating 210 F&O stocks in background..."
                 ), tags=("narrow_cpr",))
             else:
                 self.signals_tree.insert("", tk.END, values=(
-                    "--:--:--", "--", "NO SIGNALS", "No reversal signals matching current filters.",
+                    "--:--:--", "--", "--", "NO SIGNALS", "No reversal signals matching current filters.",
                     "--", "", "", "", "", "", "", "", "", "", "Try adjusting filters or search query."
                 ))
 

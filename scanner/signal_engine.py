@@ -49,6 +49,7 @@ class SignalEvent:
     volume: int
     conditions_met: List[str]
     zone: str = ""
+    timeframe: str = "5m"
 
     # Setup Candle Extremes & Next-Candle Trigger Tracking
     candle_high: float = 0.0
@@ -67,6 +68,7 @@ class SignalEvent:
             "score": self.score,
             "score_breakdown": self.score_breakdown,
             "zone": self.zone,
+            "timeframe": self.timeframe,
             "pivot": self.pivot,
             "pp": self.pivot,
             "pdo": self.pdo,
@@ -92,7 +94,7 @@ class SignalEvent:
 
 
 class SignalEngine:
-    """Evaluates multi-factor score on closed 5-minute candles."""
+    """Evaluates multi-factor score on closed candles (3m, 5m, 15m)."""
 
     def __init__(
         self,
@@ -107,9 +109,10 @@ class SignalEngine:
         symbol: str,
         df_candles: pd.DataFrame,
         pivots: DailyPivots,
+        timeframe: str = "5m",
     ) -> List[SignalEvent]:
         """
-        Evaluates a newly closed 5M candle for symbol against all rules, patterns, pivots, and volume.
+        Evaluates a newly closed candle (3m, 5m, 15m) for symbol against all rules, patterns, pivots, and volume.
         Returns a list of SignalEvent if criteria are met.
         """
         if df_candles.empty or len(df_candles) < 2:
@@ -393,6 +396,7 @@ class SignalEngine:
                     score=score,
                     score_breakdown=score_breakdown,
                     zone=pivot_zone,
+                    timeframe=timeframe,
                     pdo=pivots.pdo,
                     pdh=pivots.pdh,
                     pdl=pivots.pdl,

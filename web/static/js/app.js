@@ -285,6 +285,7 @@ function updateStatsHeader(stats) {
 // 4. Table Builders
 // ==========================================================================
 let signalFilterDirection = 'ALL';
+let signalFilterTimeframe = 'ALL';
 let signalFilterPattern = 'ALL';
 let signalFilterStatus = 'ALL';
 let signalFilterCpr = 'ALL';
@@ -293,6 +294,8 @@ let searchQuery = '';
 
 function applySignalFilters() {
     signalFilterDirection = document.getElementById('signalDirectionFilter').value;
+    const tfEl = document.getElementById('signalTimeframeFilter');
+    signalFilterTimeframe = tfEl ? tfEl.value : 'ALL';
     signalFilterPattern = document.getElementById('signalPatternFilter').value;
     const statusEl = document.getElementById('signalStatusFilter');
     signalFilterStatus = statusEl ? statusEl.value : 'ALL';
@@ -309,6 +312,11 @@ function renderSignalsTable() {
         // Filter by Direction
         if (signalFilterDirection !== 'ALL') {
             if (!sig.direction.includes(signalFilterDirection)) return false;
+        }
+        // Filter by Timeframe
+        if (signalFilterTimeframe !== 'ALL') {
+            const sigTf = (sig.timeframe || '5m').toLowerCase();
+            if (sigTf !== signalFilterTimeframe.toLowerCase()) return false;
         }
         // Filter by Pattern
         if (signalFilterPattern !== 'ALL') {
@@ -383,10 +391,16 @@ function renderSignalsTable() {
             statusBadge = `<span class="badge badge-pending">⏳ PENDING (${comp}${trigPrice})</span>`;
         }
 
+        const tfVal = (sig.timeframe || '5m').toUpperCase();
+        let tfBadgeClass = 'badge-tf-5m';
+        if (tfVal === '3M') tfBadgeClass = 'badge-tf-3m';
+        else if (tfVal === '15M') tfBadgeClass = 'badge-tf-15m';
+
         return `
             <tr>
                 <td class="mono"><strong>${timeDisplay}</strong></td>
                 <td><strong>${sig.symbol}</strong></td>
+                <td style="text-align: center;"><span class="badge ${tfBadgeClass}">${tfVal}</span></td>
                 <td><span class="badge ${badgeClass}">${sig.direction}</span></td>
                 <td><span class="badge badge-pattern">${sig.pattern}</span></td>
                 <td style="text-align: center;">${statusBadge}</td>

@@ -274,8 +274,8 @@ class HistoricalDataLoader:
 
         return dfs
 
-    def _process_raw_1m_to_5m(self, raw_1m: List[List[Any]]) -> Optional[pd.DataFrame]:
-        """Converts raw 1-minute candle tuples into 5-minute resampled DataFrame."""
+    def _process_raw_1m_to_df(self, raw_1m: List[List[Any]]) -> Optional[pd.DataFrame]:
+        """Converts raw 1-minute candle tuples into 1-minute DataFrame."""
         if not raw_1m:
             return None
 
@@ -310,7 +310,17 @@ class HistoricalDataLoader:
             return None
 
         df_1m = pd.DataFrame(records).sort_values("timestamp").set_index("timestamp")
-        df_5m = df_1m.resample("5min", origin="start_day", offset="15min").agg({
+        return df_1m
+
+    def _resample_1m_to_tf(self, df_1m: pd.DataFrame, timeframe: str = "5m") -> Optional[pd.DataFrame]:
+        """Resamples 1-minute DataFrame to 3m, 5m, or 15m aligned to 09:15 session open."""
+        if df_1m is None or df_1m.empty:
+            return None
+
+        rule_map = {"3m": "3min", "5m": "5min", "15m": "15min"}
+        rule = rule_map.get(timeframe, "5min")
+
+        df_resampled = df_1m.resample(rule, origin="start_day", offset="15min").agg({
             "open": "first",
             "high": "max",
             "low": "min",
@@ -318,25 +328,32 @@ class HistoricalDataLoader:
             "volume": "sum",
         }).dropna().reset_index()
 
-        # The final valid intraday 5-minute candle starts at 15:25 (closing at 15:30:00)
-        last_candle_cutoff = dt_time(15, 25)
-        df_5m = df_5m[df_5m["timestamp"].dt.time <= last_candle_cutoff].reset_index(drop=True)
+        cutoff_map = {"3m": dt_time(15, 27), "5m": dt_time(15, 25), "15m": dt_time(15, 15)}
+        cutoff = cutoff_map.get(timeframe, dt_time(15, 25))
+        df_resampled = df_resampled[df_resampled["timestamp"].dt.time <= cutoff].reset_index(drop=True)
+        return df_resampled
 
-        return df_5m
+    def _process_raw_1m_to_5m(self, raw_1m: List[List[Any]], timeframe: str = "5m") -> Optional[pd.DataFrame]:
+        """Converts raw 1-minute candle tuples into 3m, 5m, or 15m resampled DataFrame."""
+        df_1m = self._process_raw_1m_to_df(raw_1m)
+        if df_1m is None:
+            return None
+        return self._resample_1m_to_tf(df_1m, timeframe=timeframe)
 
-    def load_symbol_broker_5m(self, symbol: str, instrument_key: str) -> Optional[pd.DataFrame]:
+    def load_symbol_broker_5m(self, symbol: str, instrument_key: str, timeframe: str = "5m") -> Optional[pd.DataFrame]:
         """
-        Fetches today's official broker candles for a single symbol and returns 5-minute DataFrame (synchronous).
+        Fetches today's official broker candles for a single symbol and returns resampled DataFrame (synchronous).
         """
         raw_1m = self.rest_client.get_intraday_1m_candles(instrument_key)
-        return self._process_raw_1m_to_5m(raw_1m)
+        return self._process_raw_1m_to_5m(raw_1m, timeframe=timeframe)
 
     def refresh_latest_broker_candles(
         self,
         universe: Dict[str, Dict[str, Any]],
+        timeframe: str = "5m",
     ) -> Dict[str, pd.DataFrame]:
         """
-        Fetches the latest official broker-side 5-minute candles for all universe stocks in parallel using asyncio.
+        Fetches the latest official broker-side candles (3m, 5m, 15m) for all universe stocks in parallel using asyncio.
         Enforces Upstox 25 req/sec rate limit with automatic exponential backoff.
         """
         token = self.rest_client.access_token
@@ -360,7 +377,7 @@ class HistoricalDataLoader:
                             if resp.status_code == 200:
                                 data = resp.json()
                                 candles = data.get("data", {}).get("candles", [])
-                                df = self._process_raw_1m_to_5m(candles)
+                                df = self._process_raw_1m_to_5m(candles, timeframe=timeframe)
                                 if df is not None and not df.empty:
                                     return (sym, df)
                                 return (sym, None)

@@ -16,7 +16,7 @@ import config
 from database.repository import DatabaseRepository
 from excel.live_excel import LiveExcelManager
 from indicators.pivots import DailyPivots, calculate_daily_pivots
-from market.candle_engine import Candle, CandleEngine, CandleStatus
+from market.candle_engine import Candle, CandleEngine, CandleStatus, MultiTimeframeCandleEngine
 from market.historical import HistoricalDataLoader, PreviousDayOHLCV
 from market.instruments import InstrumentManager
 from market.session import MarketSessionManager
@@ -54,7 +54,7 @@ class FNOIntradayScanner:
         self.excel_mgr = LiveExcelManager() if enable_excel else None
         self.web_server = WebServerManager() if enable_web else None
 
-        self.candle_engine = CandleEngine(on_candle_closed=self._handle_candle_closed)
+        self.candle_engine = MultiTimeframeCandleEngine(on_candle_closed=self._handle_candle_closed)
         self.ws_streamer: Optional[UpstoxWebSocketStreamer] = None
 
         self._pivots: Dict[str, DailyPivots] = {}
@@ -160,16 +160,23 @@ class FNOIntradayScanner:
         if self.excel_mgr:
             self.excel_mgr.update_price(tick.symbol, tick.ltp, tick.volume, tick.timestamp)
 
-    def _handle_candle_closed(self, symbol: str, candle: Candle, df_history: pd.DataFrame, print_console: bool = True):
+    def _handle_candle_closed(
+        self,
+        symbol: str,
+        candle: Candle,
+        df_history: pd.DataFrame,
+        timeframe: str = "5m",
+        print_console: bool = True,
+    ):
         """
-        Invoked ONLY when a 5-minute candle closes (e.g. at 09:20:00, 09:25:00, etc.).
+        Invoked when a candle closes (3m, 5m, or 15m).
         Runs pattern detection, pivot context scoring, and triggers deduplicated alerts.
         """
         self.session_mgr.stats.candles_processed += 1
         dashboard_state.update_stats(candles_processed=self.session_mgr.stats.candles_processed)
 
-        # Persist closed candle in SQLite & update Web Dashboard price
-        if self.db:
+        # Persist 5-minute candles in SQLite & update Web Dashboard price
+        if timeframe == "5m" and self.db:
             self.db.save_candle(candle.to_dict())
         dashboard_state.update_price(symbol, candle.close, candle.volume, candle.timestamp)
         if self.excel_mgr:
@@ -196,8 +203,8 @@ class FNOIntradayScanner:
         if not pivots:
             return
 
-        # 2. Run multi-factor signal detection on newly closed candle
-        signals = self.signal_engine.evaluate_candle(symbol, df_history, pivots)
+        # 2. Run multi-factor signal detection on newly closed candle with specific timeframe
+        signals = self.signal_engine.evaluate_candle(symbol, df_history, pivots, timeframe=timeframe)
 
         for sig in signals:
             self.session_mgr.stats.patterns_detected += 1
@@ -206,11 +213,11 @@ class FNOIntradayScanner:
                 self.session_mgr.stats.pattern_breakdown.get(pat_name, 0) + 1
             )
 
-            # Deduplication check
-            if self.dedup.is_duplicate(sig.symbol, sig.timestamp, sig.pattern):
+            # Deduplication check with timeframe
+            if self.dedup.is_duplicate(sig.symbol, sig.timestamp, sig.pattern, timeframe=timeframe):
                 continue
 
-            self.dedup.mark_seen(sig.symbol, sig.timestamp, sig.pattern)
+            self.dedup.mark_seen(sig.symbol, sig.timestamp, sig.pattern, timeframe=timeframe)
 
             if "BULLISH" in sig.direction:
                 self.session_mgr.stats.bullish_signals += 1

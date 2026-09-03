@@ -108,8 +108,9 @@ class DatabaseRepository:
                     trigger_status TEXT DEFAULT 'PENDING',
                     trigger_time TEXT,
                     trigger_price REAL,
+                    timeframe TEXT DEFAULT '5m',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(symbol, timestamp, pattern)
+                    UNIQUE(symbol, timestamp, pattern, timeframe)
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_sym ON scanner_signals(symbol)")
@@ -121,6 +122,7 @@ class DatabaseRepository:
                 ("trigger_status", "TEXT DEFAULT 'PENDING'"),
                 ("trigger_time", "TEXT"),
                 ("trigger_price", "REAL"),
+                ("timeframe", "TEXT DEFAULT '5m'"),
             ]:
                 try:
                     conn.execute(f"ALTER TABLE scanner_signals ADD COLUMN {col_def[0]} {col_def[1]}")
@@ -262,20 +264,21 @@ class DatabaseRepository:
             sig.setdefault("trigger_status", "PENDING")
             sig.setdefault("trigger_time", "")
             sig.setdefault("trigger_price", sig.get("candle_high", 0.0))
+            sig.setdefault("timeframe", "5m")
 
             with conn:
                 conn.execute("""
                     INSERT INTO scanner_signals (
                         symbol, timestamp, pattern, direction, price, score,
                         pivot, pdh, pdl, r1, r2, s1, s2, relative_volume,
-                        candle_high, candle_low, trigger_status, trigger_time, trigger_price
+                        candle_high, candle_low, trigger_status, trigger_time, trigger_price, timeframe
                     )
                     VALUES (
                         :symbol, :timestamp, :pattern, :direction, :price, :score,
                         :pivot, :pdh, :pdl, :r1, :r2, :s1, :s2, :relative_volume,
-                        :candle_high, :candle_low, :trigger_status, :trigger_time, :trigger_price
+                        :candle_high, :candle_low, :trigger_status, :trigger_time, :trigger_price, :timeframe
                     )
-                    ON CONFLICT(symbol, timestamp, pattern) DO UPDATE SET
+                    ON CONFLICT(symbol, timestamp, pattern, timeframe) DO UPDATE SET
                         trigger_status = excluded.trigger_status,
                         trigger_time = excluded.trigger_time,
                         score = excluded.score

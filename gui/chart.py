@@ -96,12 +96,26 @@ class CandleChartFrame(tk.Frame):
         self.symbol_combo = ttk.Combobox(
             row1,
             textvariable=self.symbol_var,
-            width=14,
+            width=13,
             font=("Segoe UI", 9, "bold"),
         )
-        self.symbol_combo.pack(side=tk.LEFT, padx=(0, 14))
+        self.symbol_combo.pack(side=tk.LEFT, padx=(0, 8))
         self.symbol_combo.bind("<<ComboboxSelected>>", lambda e: self.on_symbol_selected())
         self.symbol_combo.bind("<Return>", lambda e: self.on_symbol_selected())
+
+        # Timeframe Selector
+        tk.Label(row1, text="TF:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=PANEL_BG).pack(side=tk.LEFT, padx=(0, 4))
+        self.timeframe_var = tk.StringVar(value="5m")
+        self.tf_combo = ttk.Combobox(
+            row1,
+            textvariable=self.timeframe_var,
+            values=["3m", "5m", "15m"],
+            state="readonly",
+            width=5,
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.tf_combo.pack(side=tk.LEFT, padx=(0, 12))
+        self.tf_combo.bind("<<ComboboxSelected>>", lambda e: self.on_timeframe_selected())
 
         # Auto-Fit Scaling Toggle
         autofit_cb = tk.Checkbutton(
@@ -441,6 +455,12 @@ class CandleChartFrame(tk.Frame):
         if sym:
             self.set_symbol(sym)
 
+    def on_timeframe_selected(self):
+        """Triggered when user selects a different timeframe (3m, 5m, 15m)."""
+        self._custom_xlim = None
+        self._custom_ylim = None
+        self.redraw_chart()
+
     def set_symbol(self, symbol: str):
         """Switches the active chart symbol and refreshes."""
         self.current_symbol = symbol.upper()
@@ -450,12 +470,13 @@ class CandleChartFrame(tk.Frame):
         self.redraw_chart()
 
     def get_candle_data(self, symbol: str) -> pd.DataFrame:
-        """Retrieves 5-minute candle history for symbol, including currently forming live candle."""
+        """Retrieves candle history for symbol, including currently forming live candle."""
         df = None
+        tf = self.timeframe_var.get() if hasattr(self, "timeframe_var") else "5m"
         # 1. Try from live CandleEngine with include_forming=True
         if self.scanner and hasattr(self.scanner, "candle_engine"):
             try:
-                df = self.scanner.candle_engine.get_candle_history_df(symbol, include_forming=True)
+                df = self.scanner.candle_engine.get_candle_history_df(symbol, timeframe=tf, include_forming=True)
             except Exception:
                 df = None
 

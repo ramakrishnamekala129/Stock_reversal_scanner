@@ -176,16 +176,26 @@ class CandleEngine:
 
     def get_candle_start_time(self, dt: datetime) -> datetime:
         """
-        Calculates the 5-minute candle start boundary for a given timestamp in IST.
+        Calculates the candle start boundary for a given timestamp in IST.
         Session starts at 09:15.
-        Intervals: 09:15, 09:20, 09:25 ...
+        Intervals properly align from 09:15 boundary for any duration (3m, 5m, 15m).
         """
         dt_ist = dt.astimezone(self.tz) if dt.tzinfo else self.tz.localize(dt)
-        minute = dt_ist.minute
-        # Calculate offset from 09:15 boundary
-        # Since 15 % 5 == 0, standard 5-minute floor aligns directly: minute // 5 * 5
-        bucket_minute = (minute // self.duration_minutes) * self.duration_minutes
-        candle_start = dt_ist.replace(minute=bucket_minute, second=0, microsecond=0)
+        # Calculate total minutes elapsed since midnight
+        total_minutes = dt_ist.hour * 60 + dt_ist.minute
+        session_open_minutes = 9 * 60 + 15  # 555 minutes (09:15)
+
+        if total_minutes >= session_open_minutes:
+            diff = total_minutes - session_open_minutes
+            bucket_offset = (diff // self.duration_minutes) * self.duration_minutes
+            bucket_total_minutes = session_open_minutes + bucket_offset
+        else:
+            # Fallback for pre-session timestamps
+            bucket_total_minutes = (total_minutes // self.duration_minutes) * self.duration_minutes
+
+        bucket_hour = bucket_total_minutes // 60
+        bucket_min = bucket_total_minutes % 60
+        candle_start = dt_ist.replace(hour=bucket_hour, minute=bucket_min, second=0, microsecond=0)
         return candle_start
 
     def process_tick(self, tick: NormalizedTick):
@@ -301,3 +311,86 @@ class CandleEngine:
                     except Exception as e:
                         logger.error(f"Error in on_candle_closed callback for {symbol}: {e}")
         self._forming_candles.clear()
+
+
+class MultiTimeframeCandleEngine:
+    """
+    Multi-Timeframe Real-time Candle Aggregator.
+    Runs 3-minute, 5-minute, and 15-minute CandleEngines concurrently from the same tick stream.
+    """
+
+    def __init__(
+        self,
+        timeframes: Optional[List[str]] = None,
+        on_candle_closed: Optional[Callable[[str, Candle, pd.DataFrame, str], None]] = None,
+    ):
+        self.timeframe_keys = timeframes or config.SCANNER_TIMEFRAMES
+        self.on_candle_closed = on_candle_closed
+        self.engines: Dict[str, CandleEngine] = {}
+
+        for tf in self.timeframe_keys:
+            minutes = config.TIMEFRAME_MINUTES.get(tf, 5)
+
+            # Create closure capturing current tf
+            def _make_callback(tf_name: str):
+                return lambda sym, candle, df: self._handle_sub_candle_closed(sym, candle, df, tf_name)
+
+            engine = CandleEngine(
+                on_candle_closed=_make_callback(tf),
+                candle_duration_minutes=minutes,
+            )
+            self.engines[tf] = engine
+
+    def _handle_sub_candle_closed(self, symbol: str, candle: Candle, df: pd.DataFrame, timeframe: str):
+        if self.on_candle_closed:
+            try:
+                self.on_candle_closed(symbol, candle, df, timeframe)
+            except Exception as e:
+                logger.error(f"Error in multi-timeframe candle closed callback for {symbol} ({timeframe}): {e}", exc_info=True)
+
+    def process_tick(self, tick: NormalizedTick):
+        """Dispatches incoming tick to all active timeframe candle engines."""
+        for engine in self.engines.values():
+            engine.process_tick(tick)
+
+    def get_engine(self, timeframe: str = "5m") -> CandleEngine:
+        return self.engines.get(timeframe, self.engines.get("5m"))
+
+    def get_candle_history_df(self, symbol: str, timeframe: str = "5m", include_forming: bool = False) -> pd.DataFrame:
+        engine = self.get_engine(timeframe)
+        if engine:
+            return engine.get_candle_history_df(symbol, include_forming=include_forming)
+        return pd.DataFrame()
+
+    def initialize_history(
+        self,
+        symbol_dfs: Dict[str, pd.DataFrame],
+        key_map: Optional[Dict[str, str]] = None,
+        timeframe: str = "5m",
+    ):
+        """Seeds candle history for a given timeframe engine."""
+        engine = self.get_engine(timeframe)
+        if engine:
+            engine.initialize_history(symbol_dfs, key_map=key_map)
+
+    def sync_broker_candles(
+        self,
+        symbol: str,
+        broker_df: pd.DataFrame,
+        key_map: Optional[Dict[str, str]] = None,
+        timeframe: str = "5m",
+    ):
+        """Syncs broker candles for a specific timeframe."""
+        engine = self.get_engine(timeframe)
+        if engine:
+            engine.sync_broker_candles(symbol, broker_df, key_map=key_map)
+
+    @property
+    def _history(self) -> Dict[str, List[Candle]]:
+        """Returns the primary 5m candle history dictionary."""
+        eng_5m = self.get_engine("5m")
+        return eng_5m._history if eng_5m else {}
+
+    def force_close_active_candles(self):
+        for engine in self.engines.values():
+            engine.force_close_active_candles()
