@@ -1015,14 +1015,25 @@ class ScannerTkinterGUI:
             elif "High+" in liq_mode and not (is_ultra or "High" in tier or turnover >= 200.0):
                 continue
 
-            # Apply Multi-Select CPR / Trap Filter
+            # Determine CPR Width and Narrow Status
+            cpr_width = float(s.get("cpr_width_pct", 0.0))
+            is_narrow_cpr = bool(s.get("is_narrow_cpr", False)) or (0 < cpr_width <= 0.21) or any("Narrow CPR" in str(c) for c in conds) or "Narrow CPR" in zone
+            if not is_narrow_cpr and not cpr_width and hasattr(self, "cached_market"):
+                for m in self.cached_market:
+                    if m.get("symbol") == symbol:
+                        cpr_width = float(m.get("cpr_width_pct", 0.0))
+                        is_narrow_cpr = (cpr_width <= 0.21) or bool(m.get("is_narrow_cpr"))
+                        break
+
+            is_narrow_trap = bool(s.get("is_narrow_trap_zone", False)) or any("Narrow Bull Trap" in str(c) or "Narrow Bear Trap" in str(c) for c in conds) or ("Narrow" in zone and "Trap" in zone)
+
+            # CPR-based conditions
             has_cpr_pattern = "at CPR" in zone or any("at CPR" in str(c) or "at Narrow CPR" in str(c) for c in conds) or "Inside CPR" in zone
             has_cpr_bull = "CPR Support" in zone or any("CPR Support" in str(c) for c in conds)
             has_cpr_bear = "CPR Resistance" in zone or any("CPR Resistance" in str(c) for c in conds)
             has_cpr_breakout = "CPR Breakout" in zone or any("CPR Breakout" in str(c) for c in conds)
             has_cpr_breakdown = "CPR Breakdown" in zone or any("CPR Breakdown" in str(c) for c in conds)
-            has_narrow_cpr = any("Narrow CPR" in str(c) for c in conds) or "Narrow CPR" in zone
-            has_narrow_trap = any("Narrow Bull Trap" in str(c) or "Narrow Bear Trap" in str(c) for c in conds) or ("Narrow" in zone and "Trap" in zone)
+            has_narrow_cpr = is_narrow_cpr
             is_trap = "Trap" in zone or any("Trap" in str(c) for c in conds)
             is_bull_trap = "Bull Trap" in zone or any("Bull Trap" in str(c) for c in conds)
             is_bear_trap = "Bear Trap" in zone or any("Bear Trap" in str(c) for c in conds)
@@ -1035,57 +1046,62 @@ class ScannerTkinterGUI:
                 or "Rejection near R2" in str(c)
                 for c in conds
             ) or ("Bounce near S2" in zone) or ("Rejection near R2" in zone)
-            is_valid_zone = (
-                has_cpr_pattern
-                or has_cpr_bull
-                or has_cpr_bear
-                or has_cpr_breakout
-                or has_cpr_breakdown
-                or has_narrow_cpr
-                or has_narrow_trap
-                or is_trap
-                or is_bull_trap
-                or is_bear_trap
-                or is_cpr_test
-                or has_level_bounce
-            )
 
-            # Apply Strict Zones Only Filter (Enabled by default!)
-            if getattr(self, "strict_zones_var", None) and self.strict_zones_var.get():
-                if not is_valid_zone:
+            # Strict Zones Only Filter (Enabled by default!)
+            # Intraday reversals are high-probability only in Strict Zones:
+            # 1. Narrow CPR (<= 0.21%) for all CPR setups (pattern, breakout, breakdown, test)
+            # 2. Narrow Trap Zones (<= 0.21%) for Bull/Bear traps
+            # 3. Extreme S2 / R2 key reversal level bounces
+            # Wide CPRs (> 0.20%) are strictly excluded when Strict Zones Only is active.
+            is_strict_cpr = is_narrow_cpr and (has_cpr_pattern or has_cpr_bull or has_cpr_bear or has_cpr_breakout or has_cpr_breakdown or is_cpr_test)
+            is_strict_trap = is_narrow_trap
+            is_strict_level = has_level_bounce
+            is_valid_strict_zone = is_strict_cpr or is_strict_trap or is_strict_level
+
+            strict_active = bool(getattr(self, "strict_zones_var", None) and self.strict_zones_var.get())
+            if strict_active:
+                if not is_valid_strict_zone:
                     continue
 
+            # Apply Multi-Select CPR / Trap Filter
             if hasattr(self, "signal_cpr_menu") and not self.signal_cpr_menu.is_all_selected():
                 sel = self.signal_cpr_menu.get_selected()
                 matched = False
-                if "⚡ Narrow CPR (<= 0.21%)" in sel and has_narrow_cpr:
+
+                if "⚡ Narrow CPR (<= 0.21%)" in sel and is_narrow_cpr:
                     matched = True
-                if "🪤 Narrow Trap Zones (<= 0.21%)" in sel and has_narrow_trap:
+                if "🪤 Narrow Trap Zones (<= 0.21%)" in sel and is_narrow_trap:
                     matched = True
                 if "🎯 Candlestick Pattern at CPR" in sel and has_cpr_pattern:
-                    matched = True
+                    if not strict_active or is_narrow_cpr:
+                        matched = True
                 if "🎯 Bullish Pattern at CPR Support" in sel and has_cpr_bull:
-                    matched = True
+                    if not strict_active or is_narrow_cpr:
+                        matched = True
                 if "🎯 Bearish Pattern at CPR Resistance" in sel and has_cpr_bear:
-                    matched = True
+                    if not strict_active or is_narrow_cpr:
+                        matched = True
                 if "🚀 CPR Breakout (Bullish Close)" in sel and has_cpr_breakout:
-                    matched = True
+                    if not strict_active or is_narrow_cpr:
+                        matched = True
                 if "💥 CPR Breakdown (Bearish Close)" in sel and has_cpr_breakdown:
-                    matched = True
+                    if not strict_active or is_narrow_cpr:
+                        matched = True
                 if "🚀 Bear Trap Breakout (<= 0.21%)" in sel and ("Bear Trap Breakout" in zone or any("Bear Trap Breakout" in str(c) for c in conds)):
                     matched = True
                 if "💥 Bull Trap Breakdown (<= 0.21%)" in sel and ("Bull Trap Breakdown" in zone or any("Bull Trap Breakdown" in str(c) for c in conds)):
                     matched = True
-                if "🐂 Bull Trap (<= 0.21%)" in sel and is_bull_trap:
+                if "🐂 Bull Trap (<= 0.21%)" in sel and is_bull_trap and (not strict_active or is_narrow_trap):
                     matched = True
-                if "🐻 Bear Trap (<= 0.21%)" in sel and is_bear_trap:
+                if "🐻 Bear Trap (<= 0.21%)" in sel and is_bear_trap and (not strict_active or is_narrow_trap):
                     matched = True
                 if "🛡️ S2 Support Bounce" in sel and is_bull and (any("Bounce near S2" in str(c) for c in conds) or "Bounce near S2" in zone):
                     matched = True
                 if "🛡️ R2 Resistance Rejection" in sel and (not is_bull) and (any("Rejection near R2" in str(c) for c in conds) or "Rejection near R2" in zone):
                     matched = True
                 if "📌 Inside CPR Zone" in sel and is_cpr_test:
-                    matched = True
+                    if not strict_active or is_narrow_cpr:
+                        matched = True
 
                 if not matched:
                     continue
@@ -1210,7 +1226,7 @@ class ScannerTkinterGUI:
             symbol = str(m.get("symbol", ""))
             zone = str(m.get("zone", ""))
             cpr_width = float(m.get("cpr_width_pct", 0.0))
-            is_narrow = cpr_width <= 0.20
+            is_narrow = cpr_width <= 0.21 or bool(m.get("is_narrow_cpr"))
 
             has_cpr_breakout = "CPR Breakout" in zone
             has_cpr_breakdown = "CPR Breakdown" in zone
@@ -1224,11 +1240,11 @@ class ScannerTkinterGUI:
                     matched = True
                 if "🪤 Narrow Trap Zones (<= 0.21%)" in sel and has_narrow_trap:
                     matched = True
-                if "🎯 Pattern at CPR Zone" in sel and ("Pattern at CPR" in zone or "Inside CPR" in zone or "CPR" in zone):
+                if "🎯 Pattern at CPR Zone" in sel and ("Pattern at CPR" in zone or "Inside CPR" in zone or "CPR" in zone) and is_narrow:
                     matched = True
-                if "🚀 CPR Breakout (Bullish Close)" in sel and has_cpr_breakout:
+                if "🚀 CPR Breakout (Bullish Close)" in sel and has_cpr_breakout and is_narrow:
                     matched = True
-                if "💥 CPR Breakdown (Bearish Close)" in sel and has_cpr_breakdown:
+                if "💥 CPR Breakdown (Bearish Close)" in sel and has_cpr_breakdown and is_narrow:
                     matched = True
                 if "🐂 In Bull Trap (<= 0.21%)" in sel and "Bull Trap" in zone:
                     matched = True
@@ -1238,7 +1254,7 @@ class ScannerTkinterGUI:
                     matched = True
                 if "🛡️ At R2 Resistance Rejection" in sel and "Rejection near R2" in zone:
                     matched = True
-                if "📌 Inside CPR Zone" in sel and "Inside CPR" in zone:
+                if "📌 Inside CPR Zone" in sel and "Inside CPR" in zone and is_narrow:
                     matched = True
 
                 if not matched:

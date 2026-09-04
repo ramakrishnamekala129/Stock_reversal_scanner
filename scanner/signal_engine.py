@@ -65,6 +65,13 @@ class SignalEvent:
     liquidity_tier: str = "Normal"
     is_most_liquid: bool = False
 
+    # CPR & Trap Zone Metrics
+    cpr_width_pct: float = 0.0
+    is_narrow_cpr: bool = False
+    tc: float = 0.0
+    bc: float = 0.0
+    is_narrow_trap_zone: bool = False
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "symbol": self.symbol,
@@ -102,6 +109,11 @@ class SignalEvent:
             "turnover_cr": self.turnover_cr,
             "liquidity_tier": self.liquidity_tier,
             "is_most_liquid": self.is_most_liquid,
+            "cpr_width_pct": self.cpr_width_pct,
+            "is_narrow_cpr": self.is_narrow_cpr,
+            "tc": self.tc,
+            "bc": self.bc,
+            "is_narrow_trap_zone": self.is_narrow_trap_zone,
         }
 
 
@@ -441,6 +453,11 @@ class SignalEngine:
                     turnover_cr=getattr(pivots, "turnover_cr", 0.0),
                     liquidity_tier=getattr(pivots, "liquidity_tier", "Normal"),
                     is_most_liquid=getattr(pivots, "is_most_liquid", False),
+                    cpr_width_pct=getattr(pivots, "cpr_width_pct", 0.0),
+                    is_narrow_cpr=getattr(pivots, "is_narrow_cpr", False),
+                    tc=getattr(pivots, "tc", 0.0),
+                    bc=getattr(pivots, "bc", 0.0),
+                    is_narrow_trap_zone=getattr(pivots, "is_narrow_bull_trap", False) or getattr(pivots, "is_narrow_bear_trap", False),
                 )
                 signals.append(signal_event)
 

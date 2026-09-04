@@ -148,3 +148,37 @@ def test_tkinter_gui_initialization(tk_root):
     gui._render_signals()
     gui.signal_status_var.set("ALL STATUS")
     gui._render_signals()
+
+    # Test Wide CPR (> 0.20%) is strictly excluded by default
+    gui.signal_liq_var.set("ALL LIQUIDITY")
+    gui.signal_cpr_menu.all_var.set(True)
+    gui.signal_cpr_menu._on_toggle_all()
+
+    dashboard_state.add_signal({
+        "timestamp": "2026-09-01T14:39:00",
+        "symbol": "LT",
+        "direction": "BEARISH WARNING",
+        "pattern": "BEARISH ENGULFING",
+        "price": 4002.60,
+        "score": 8,
+        "zone": "🎯 Pattern at CPR Zone (Resistance Rejection)",
+        "pp": 4011.27,
+        "pdh": 4043.0,
+        "pdl": 3991.0,
+        "cpr_width_pct": 0.286,
+        "is_narrow_cpr": False,
+        "relative_volume": 1.5,
+        "conditions_met": ["🎯 BEARISH ENGULFING at CPR Resistance"],
+    })
+    gui.cached_signals = list(dashboard_state.get_snapshot()["signals"])
+    gui.strict_zones_var.set(True)
+    gui._render_signals()
+    rendered_symbols = [gui.signals_tree.item(i)["values"][1] for i in gui.signals_tree.get_children()]
+    assert "LT" not in rendered_symbols  # LT has wide CPR (0.286%) so it must NOT be shown!
+
+    # When Strict Zones is disabled, wide CPR should be visible
+    gui.strict_zones_var.set(False)
+    gui._render_signals()
+    rendered_symbols_loose = [gui.signals_tree.item(i)["values"][1] for i in gui.signals_tree.get_children()]
+    assert "LT" in rendered_symbols_loose
+

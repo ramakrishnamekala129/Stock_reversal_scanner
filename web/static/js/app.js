@@ -343,16 +343,20 @@ function renderSignalsTable() {
         const isBull = (sig.direction || '').includes('BULLISH');
         const zoneStr = (sig.zone || '');
         const conds = sig.conditions_met || [];
+        const cprWidth = parseFloat(sig.cpr_width_pct || 0);
+        const isNarrowCpr = Boolean(sig.is_narrow_cpr) || (cprWidth > 0 && cprWidth <= 0.21) || conds.some(c => c.includes('Narrow CPR')) || zoneStr.includes('Narrow CPR');
+        const isNarrowTrap = Boolean(sig.is_narrow_trap_zone) || (zoneStr.includes('Narrow') && zoneStr.includes('Trap')) || conds.some(c => c.includes('Narrow Bull Trap') || c.includes('Narrow Bear Trap'));
+
         if (signalFilterCpr === 'PROFITABLE') {
             const isProfitable = zoneStr.includes('Bear Trap Breakout') || conds.some(c => c.includes('Bear Trap Breakout')) ||
-                                 zoneStr.includes('CPR Breakdown') || conds.some(c => c.includes('CPR Breakdown')) ||
-                                 zoneStr.includes('CPR Resistance') || conds.some(c => c.includes('CPR Resistance')) ||
-                                 zoneStr.includes('Narrow CPR') || conds.some(c => c.includes('Narrow CPR')) ||
-                                 (zoneStr.includes('Narrow') && zoneStr.includes('Trap'));
+                                 (isNarrowCpr && (zoneStr.includes('CPR Breakdown') || conds.some(c => c.includes('CPR Breakdown')))) ||
+                                 (isNarrowCpr && (zoneStr.includes('CPR Resistance') || conds.some(c => c.includes('CPR Resistance')))) ||
+                                 isNarrowCpr || isNarrowTrap;
             if (!isProfitable) return false;
         } else if (signalFilterCpr === 'STRICT') {
-            const isStrict = zoneStr.includes('CPR') || zoneStr.includes('S2') || zoneStr.includes('R2') || zoneStr.includes('Trap') ||
-                             conds.some(c => c.includes('CPR') || c.includes('S2') || c.includes('R2') || c.includes('Trap'));
+            const isStrict = (isNarrowCpr && (zoneStr.includes('CPR') || conds.some(c => c.includes('CPR')))) ||
+                             zoneStr.includes('S2') || zoneStr.includes('R2') || isNarrowTrap ||
+                             conds.some(c => c.includes('S2') || c.includes('R2'));
             if (!isStrict) return false;
         } else if (signalFilterCpr === 'NARROW') {
             const hasNarrow = conds.some(c => c.includes('Narrow CPR')) || zoneStr.includes('Narrow CPR');

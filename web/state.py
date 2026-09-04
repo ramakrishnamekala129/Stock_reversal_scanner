@@ -109,6 +109,19 @@ class WebDashboardState:
                 pass
 
         with self._lock:
+            sym = sig_dict.get("symbol")
+            if sym and sym in self.pivots:
+                p = self.pivots[sym]
+                p_cpr_width = getattr(p, "cpr_width_pct", 0.0) if hasattr(p, "cpr_width_pct") else p.get("cpr_width_pct", 0.0)
+                p_is_narrow = getattr(p, "is_narrow_cpr", False) if hasattr(p, "is_narrow_cpr") else p.get("is_narrow_cpr", False)
+                p_is_narrow_trap = (getattr(p, "is_narrow_bull_trap", False) or getattr(p, "is_narrow_bear_trap", False)) if hasattr(p, "is_narrow_bull_trap") else p.get("is_narrow_trap_zone", False)
+                if not sig_dict.get("cpr_width_pct"):
+                    sig_dict["cpr_width_pct"] = p_cpr_width
+                if "is_narrow_cpr" not in sig_dict:
+                    sig_dict["is_narrow_cpr"] = p_is_narrow
+                if "is_narrow_trap_zone" not in sig_dict:
+                    sig_dict["is_narrow_trap_zone"] = p_is_narrow_trap
+
             self.signals.insert(0, sig_dict)  # Newest first
             if "BULLISH" in sig_dict.get("direction", ""):
                 self.stats["bullish_signals"] += 1
