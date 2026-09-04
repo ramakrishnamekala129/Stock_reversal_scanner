@@ -131,6 +131,11 @@
                         <option value="R2">🛡️ R2 Resistance Rejection Only</option>
                         <option value="ALL">All CPR Types</option>
                     </select>
+                    <select id="signalLiquidityFilter" onchange="applySignalFilters()">
+                        <option value="ALL">All Liquidity</option>
+                        <option value="ULTRA">🔥 Ultra Liquid Only</option>
+                        <option value="HIGH_PLUS">💧 High+ (>= 200 Cr)</option>
+                    </select>
                 </div>
 
                 <!-- Market Filter Options (Visible on Market Tab) -->
@@ -141,6 +146,11 @@
                         <option value="TRAP">🪤 Narrow Trap Zones (<= 0.21%) Stocks</option>
                         <option value="S2">🛡️ At S2 Support Bounce</option>
                         <option value="R2">🛡️ At R2 Resistance Rejection</option>
+                    </select>
+                    <select id="marketLiquidityFilter" onchange="renderMarketTable()">
+                        <option value="ALL">All Liquidity</option>
+                        <option value="ULTRA">🔥 Ultra Liquid Only</option>
+                        <option value="HIGH_PLUS">💧 High+ (>= 200 Cr)</option>
                     </select>
                 </div>
 

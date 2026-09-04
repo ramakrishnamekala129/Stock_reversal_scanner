@@ -290,7 +290,9 @@ let signalFilterPattern = 'ALL';
 let signalFilterStatus = 'TRIGGERED';
 let signalFilterScore = '7';
 let signalFilterCpr = 'PROFITABLE';
+let signalFilterLiquidity = 'ALL';
 let marketFilterCpr = 'ALL';
+let marketFilterLiquidity = 'ALL';
 let searchQuery = '';
 
 function applySignalFilters() {
@@ -304,6 +306,8 @@ function applySignalFilters() {
     signalFilterScore = scoreEl ? scoreEl.value : 'ALL';
     const cprEl = document.getElementById('signalCprFilter');
     signalFilterCpr = cprEl ? cprEl.value : 'ALL';
+    const liqEl = document.getElementById('signalLiquidityFilter');
+    signalFilterLiquidity = liqEl ? liqEl.value : 'ALL';
     renderSignalsTable();
 }
 
@@ -365,6 +369,15 @@ function renderSignalsTable() {
             if (!hasR2) return false;
         }
 
+        // Filter by Liquidity
+        if (signalFilterLiquidity === 'ULTRA') {
+            const isUltra = sig.is_most_liquid || (sig.liquidity_tier || '').includes('Ultra');
+            if (!isUltra) return false;
+        } else if (signalFilterLiquidity === 'HIGH_PLUS') {
+            const isHighPlus = sig.is_most_liquid || (sig.liquidity_tier || '').includes('Ultra') || (sig.liquidity_tier || '').includes('High') || (sig.turnover_cr || 0) >= 200;
+            if (!isHighPlus) return false;
+        }
+
         // Search Query
         if (searchQuery) {
             const q = searchQuery.toUpperCase();
@@ -374,7 +387,7 @@ function renderSignalsTable() {
     });
 
     if (filtered.length === 0) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="15">No matching signals detected.</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="18">No matching signals detected.</td></tr>`;
         return;
     }
 
@@ -462,6 +475,8 @@ function renderMarketTable() {
 
     const mCprEl = document.getElementById('marketCprFilter');
     marketFilterCpr = mCprEl ? mCprEl.value : 'ALL';
+    const mLiqEl = document.getElementById('marketLiquidityFilter');
+    marketFilterLiquidity = mLiqEl ? mLiqEl.value : 'ALL';
 
     const items = Array.from(marketDataMap.values()).filter(item => {
         // CPR Filter
@@ -473,6 +488,15 @@ function renderMarketTable() {
             if (!(item.zone || '').includes('S2')) return false;
         } else if (marketFilterCpr === 'R2') {
             if (!(item.zone || '').includes('R2')) return false;
+        }
+
+        // Liquidity Filter
+        if (marketFilterLiquidity === 'ULTRA') {
+            const isUltra = item.is_most_liquid || (item.liquidity_tier || '').includes('Ultra');
+            if (!isUltra) return false;
+        } else if (marketFilterLiquidity === 'HIGH_PLUS') {
+            const isHighPlus = item.is_most_liquid || (item.liquidity_tier || '').includes('Ultra') || (item.liquidity_tier || '').includes('High') || (item.turnover_cr || 0) >= 200;
+            if (!isHighPlus) return false;
         }
 
         if (searchQuery) {

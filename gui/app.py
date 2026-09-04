@@ -169,6 +169,7 @@ class ScannerTkinterGUI:
         self.signal_status_var = tk.StringVar(value="ALL STATUS")
         self.signal_vol_var = tk.StringVar(value="ALL VOLUMES")
         self.signal_score_var = tk.StringVar(value="🔥 High Conviction (>= 7)")
+        self.signal_liq_var = tk.StringVar(value="ALL LIQUIDITY")
         self.strict_zones_var = tk.BooleanVar(value=True)
         self.signal_cpr_var = tk.StringVar(value="ALL")
         self.signal_search_var = tk.StringVar(value="")
@@ -177,6 +178,7 @@ class ScannerTkinterGUI:
         self.signals_sort_rev = True
 
         self.market_cpr_var = tk.StringVar(value="ALL")
+        self.market_liq_var = tk.StringVar(value="ALL LIQUIDITY")
         self.market_search_var = tk.StringVar(value="")
         self.market_sort_var = tk.StringVar(value="⚡ CPR % (Narrowest First)")
         self.market_sort_col = "cpr_pct"
@@ -481,6 +483,16 @@ class ScannerTkinterGUI:
         score_combo.pack(side=tk.LEFT, padx=(0, 10))
         score_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
+        # Liquidity Filter Dropdown
+        tk.Label(toolbar, text="Liquid:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        liq_combo = ttk.Combobox(toolbar, textvariable=self.signal_liq_var, values=[
+            "ALL LIQUIDITY",
+            "🔥 Ultra Liquid Only",
+            "💧 High+ (>=200 Cr)",
+        ], state="readonly", width=16)
+        liq_combo.pack(side=tk.LEFT, padx=(0, 10))
+        liq_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
+
         # Sort Dropdown
         tk.Label(toolbar, text="Sort:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         sort_combo = ttk.Combobox(toolbar, textvariable=self.signal_sort_var, values=[
@@ -627,6 +639,16 @@ class ScannerTkinterGUI:
             on_change_callback=self._render_market
         )
         self.market_cpr_menu.pack(side=tk.LEFT, padx=(0, 12))
+
+        # Market Liquidity Filter
+        tk.Label(toolbar, text="Liquid:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        m_liq_combo = ttk.Combobox(toolbar, textvariable=self.market_liq_var, values=[
+            "ALL LIQUIDITY",
+            "🔥 Ultra Liquid Only",
+            "💧 High+ (>=200 Cr)",
+        ], state="readonly", width=16)
+        m_liq_combo.pack(side=tk.LEFT, padx=(0, 10))
+        m_liq_combo.bind("<<ComboboxSelected>>", lambda e: self._render_market())
 
         # Market Sort Options
         tk.Label(toolbar, text="Sort:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
@@ -975,6 +997,16 @@ class ScannerTkinterGUI:
                 elif ">= 6" in sc_mode and score < 6:
                     continue
 
+            # Apply Liquidity Filter
+            liq_mode = self.signal_liq_var.get() if hasattr(self, "signal_liq_var") else "ALL LIQUIDITY"
+            tier = str(s.get("liquidity_tier", ""))
+            turnover = float(s.get("turnover_cr", 0.0))
+            is_ultra = bool(s.get("is_most_liquid")) or "Ultra" in tier
+            if "Ultra" in liq_mode and not is_ultra:
+                continue
+            elif "High+" in liq_mode and not (is_ultra or "High" in tier or turnover >= 200.0):
+                continue
+
             # Apply Multi-Select CPR / Trap Filter
             has_cpr_pattern = "at CPR" in zone or any("at CPR" in str(c) or "at Narrow CPR" in str(c) for c in conds) or "Inside CPR" in zone
             has_cpr_bull = "CPR Support" in zone or any("CPR Support" in str(c) for c in conds)
@@ -1205,6 +1237,16 @@ class ScannerTkinterGUI:
                     continue
 
             if search_query and search_query not in symbol:
+                continue
+
+            # Apply Market Liquidity Filter
+            m_liq_mode = self.market_liq_var.get() if hasattr(self, "market_liq_var") else "ALL LIQUIDITY"
+            m_tier = str(m.get("liquidity_tier", ""))
+            m_turnover = float(m.get("turnover_cr", 0.0))
+            m_is_ultra = bool(m.get("is_most_liquid")) or "Ultra" in m_tier
+            if "Ultra" in m_liq_mode and not m_is_ultra:
+                continue
+            elif "High+" in m_liq_mode and not (m_is_ultra or "High" in m_tier or m_turnover >= 200.0):
                 continue
 
             filtered_m.append(m)

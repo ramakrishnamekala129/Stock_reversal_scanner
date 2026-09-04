@@ -73,6 +73,22 @@ def test_tkinter_gui_initialization(tk_root):
     assert gui.signal_cpr_menu.is_all_selected() is False
     assert "⚡ Narrow CPR (<= 0.21%)" in gui.signal_cpr_menu.get_selected()
 
+    # Verify Liquidity Filter widgets and logic
+    assert hasattr(gui, "signal_liq_var")
+    assert hasattr(gui, "market_liq_var")
+    assert gui.signal_liq_var.get() == "ALL LIQUIDITY"
+    assert gui.market_liq_var.get() == "ALL LIQUIDITY"
+
+    # Test filtering by Ultra Liquid Only
+    gui.signal_liq_var.set("🔥 Ultra Liquid Only")
+    gui._render_signals()
+    # RELIANCE is Tier-1 Ultra liquid, so it remains visible
+    assert len(gui.signals_tree.get_children()) >= 1
+
+    gui.market_liq_var.set("🔥 Ultra Liquid Only")
+    gui._render_market()
+    assert len(gui.market_tree.get_children()) >= 1
+
     # Verify Tab 3 (Candlestick Chart & CPR Levels)
     assert hasattr(gui, "tab_chart")
     assert hasattr(gui, "chart_frame")
