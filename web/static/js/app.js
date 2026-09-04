@@ -390,6 +390,12 @@ function renderSignalsTable() {
         return true;
     });
 
+    const uniqueSymbols = new Set(filtered.map(s => s.symbol).filter(Boolean)).size;
+    const countEl = document.getElementById('signalsCountBadge');
+    if (countEl) {
+        countEl.innerText = `${filtered.length} (${uniqueSymbols} stocks)`;
+    }
+
     if (filtered.length === 0) {
         tbody.innerHTML = `<tr class="empty-row"><td colspan="18">No matching signals detected.</td></tr>`;
         return;
@@ -508,6 +514,11 @@ function renderMarketTable() {
         }
         return true;
     });
+
+    const marketCountBadge = document.getElementById('marketCountBadge');
+    if (marketCountBadge) {
+        marketCountBadge.innerText = `${items.length} / ${marketDataMap.size}`;
+    }
 
     if (items.length === 0) {
         tbody.innerHTML = `<tr class="empty-row"><td colspan="24">No instruments found matching criteria.</td></tr>`;

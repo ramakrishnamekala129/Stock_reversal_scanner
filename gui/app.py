@@ -553,6 +553,19 @@ class ScannerTkinterGUI:
         )
         export_btn.pack(side=tk.RIGHT)
 
+        # Dynamic Signals & Stocks Counter Badge
+        self.signals_count_lbl = tk.Label(
+            row2,
+            text="📊 Showing: 0 Signals (0 Stocks)",
+            font=("Segoe UI", 9, "bold"),
+            fg="#38bdf8",
+            bg=CARD_BG,
+            padx=10,
+            pady=3,
+            relief="flat",
+        )
+        self.signals_count_lbl.pack(side=tk.RIGHT, padx=(0, 10))
+
         # Signals Treeview Frame
         tree_frame = tk.Frame(self.tab_signals, bg=BG_DARK)
         tree_frame.pack(fill=tk.BOTH, expand=True)
@@ -694,6 +707,19 @@ class ScannerTkinterGUI:
             cursor="hand2",
         )
         export_btn.pack(side=tk.RIGHT)
+
+        # Dynamic Market Stocks Counter Badge
+        self.market_count_lbl = tk.Label(
+            toolbar,
+            text="📊 Showing: 0 Stocks",
+            font=("Segoe UI", 9, "bold"),
+            fg="#38bdf8",
+            bg=CARD_BG,
+            padx=10,
+            pady=3,
+            relief="flat",
+        )
+        self.market_count_lbl.pack(side=tk.RIGHT, padx=(0, 10))
 
         # Market Treeview Frame
         tree_frame = tk.Frame(self.tab_market, bg=BG_DARK)
@@ -1113,6 +1139,17 @@ class ScannerTkinterGUI:
 
             filtered.append(s)
 
+        # Update dynamic count badge and tab label with number of signals and unique stocks
+        num_signals = len(filtered)
+        unique_stocks = len(set(s.get("symbol") for s in filtered if s.get("symbol")))
+        if hasattr(self, "signals_count_lbl"):
+            self.signals_count_lbl.config(text=f"📊 Showing: {num_signals} Signals ({unique_stocks} Stocks)")
+        if hasattr(self, "notebook") and hasattr(self, "tab_signals"):
+            try:
+                self.notebook.tab(self.tab_signals, text=f"  ⚡ 5-Minute Reversal Signals ({num_signals})  ")
+            except Exception:
+                pass
+
         # Apply Sorting
         if "Newest First" in sort_mode:
             filtered.sort(key=lambda s: str(s.get("timestamp", "")), reverse=True)
@@ -1274,6 +1311,16 @@ class ScannerTkinterGUI:
                 continue
 
             filtered_m.append(m)
+
+        # Update dynamic market count badge and tab label
+        total_market = len(self.cached_market) if hasattr(self, "cached_market") and self.cached_market else len(filtered_m)
+        if hasattr(self, "market_count_lbl"):
+            self.market_count_lbl.config(text=f"📊 Showing: {len(filtered_m)} / {total_market} Stocks")
+        if hasattr(self, "notebook") and hasattr(self, "tab_market"):
+            try:
+                self.notebook.tab(self.tab_market, text=f"  📊 Live Market & Daily Pivots ({len(filtered_m)} Stocks)  ")
+            except Exception:
+                pass
 
         # Apply Sorting to Market data
         if "Narrowest First" in m_sort:
