@@ -420,10 +420,23 @@ function renderSignalsTable() {
         if (tfVal === '3M') tfBadgeClass = 'badge-tf-3m';
         else if (tfVal === '15M') tfBadgeClass = 'badge-tf-15m';
 
+        const liqTier = sig.liquidity_tier || 'Normal';
+        let liqBadge = `<span class="badge badge-liquid-norm">${liqTier}</span>`;
+        if (liqTier.includes('Ultra') || sig.is_most_liquid) {
+            liqBadge = `<span class="badge badge-liquid-ultra">🔥 ULTRA</span>`;
+        } else if (liqTier.includes('High')) {
+            liqBadge = `<span class="badge badge-liquid-high">💧 HIGH</span>`;
+        }
+        const futContract = sig.fut_symbol || `${sig.symbol} FUT`;
+        const lotSize = sig.lot_size ? `<span class="badge-lot">(${sig.lot_size})</span>` : '';
+        const rowHighlightClass = (sig.is_most_liquid || liqTier.includes('Ultra')) ? 'row-highlight-liquid' : '';
+
         return `
-            <tr>
+            <tr class="${rowHighlightClass}">
                 <td class="mono"><strong>${timeDisplay}</strong></td>
                 <td><strong>${sig.symbol}</strong></td>
+                <td style="text-align: center;">${liqBadge}</td>
+                <td><span class="mono">${futContract}</span> ${lotSize}</td>
                 <td style="text-align: center;"><span class="badge ${tfBadgeClass}">${tfVal}</span></td>
                 <td><span class="badge ${badgeClass}">${sig.direction}</span></td>
                 <td><span class="badge badge-pattern">${sig.pattern}</span></td>
@@ -469,7 +482,7 @@ function renderMarketTable() {
     });
 
     if (items.length === 0) {
-        tbody.innerHTML = `<tr class="empty-row"><td colspan="20">No instruments found matching criteria.</td></tr>`;
+        tbody.innerHTML = `<tr class="empty-row"><td colspan="24">No instruments found matching criteria.</td></tr>`;
         return;
     }
 
@@ -485,9 +498,25 @@ function renderMarketTable() {
             cprDisplay = `<span class="badge badge-narrow">⚡ ${formatNumber(cprWidth)}% (Narrow)</span>`;
         }
 
+        const liqTier = item.liquidity_tier || 'Normal';
+        let liqBadge = `<span class="badge badge-liquid-norm">${liqTier}</span>`;
+        if (liqTier.includes('Ultra') || item.is_most_liquid) {
+            liqBadge = `<span class="badge badge-liquid-ultra">🔥 ULTRA</span>`;
+        } else if (liqTier.includes('High')) {
+            liqBadge = `<span class="badge badge-liquid-high">💧 HIGH</span>`;
+        }
+        const futContract = item.fut_symbol || `${item.symbol} FUT`;
+        const lotVal = item.lot_size || '--';
+        const turnoverVal = item.turnover_cr ? `₹${formatNumber(item.turnover_cr)} Cr` : '--';
+        const rowHighlightClass = (item.is_most_liquid || liqTier.includes('Ultra')) ? 'row-highlight-liquid' : '';
+
         return `
-            <tr id="market-row-${item.symbol}">
+            <tr id="market-row-${item.symbol}" class="${rowHighlightClass}">
                 <td><strong>${item.symbol}</strong></td>
+                <td style="text-align: center;">${liqBadge}</td>
+                <td><span class="mono">${futContract}</span></td>
+                <td class="num">${lotVal}</td>
+                <td class="num"><strong>${turnoverVal}</strong></td>
                 <td class="num cell-ltp"><strong>${formatNumber(item.ltp)}</strong></td>
                 <td class="num cell-chg ${chgClass}"><strong>${chgPrefix}${formatNumber(chgVal)}%</strong></td>
                 <td class="num cell-vol">${formatVolume(item.volume)}</td>
@@ -580,19 +609,19 @@ function exportCurrentTableToCSV() {
     let rows = [];
 
     if (currentTab === 'signals') {
-        rows.push(['Time', 'Symbol', 'Signal', 'Pattern', 'Price', 'Score', 'Pivot Zone', 'Pivot (PP)', 'PDH', 'PDL', 'R1', 'S1', 'Rel Vol', 'Conditions & Factors Met']);
+        rows.push(['Time', 'Symbol', 'Liquidity', 'Fut Contract', 'Signal', 'Pattern', 'Price', 'Score', 'Pivot Zone', 'Pivot (PP)', 'PDH', 'PDL', 'R1', 'S1', 'Rel Vol', 'Conditions & Factors Met']);
         signalsList.forEach(s => {
             rows.push([
-                s.timestamp, s.symbol, s.direction, s.pattern, s.price, s.score,
+                s.timestamp, s.symbol, s.liquidity_tier || 'Normal', s.fut_symbol || '', s.direction, s.pattern, s.price, s.score,
                 `"${s.zone || ''}"`, s.pivot || s.pp, s.pdh, s.pdl, s.r1, s.s1, s.relative_volume,
                 `"${(s.conditions_met || []).join('; ')}"`
             ]);
         });
     } else {
-        rows.push(['Symbol', 'LTP', 'Change %', 'Volume', 'Pivot Zone', 'Pivot (PP)', 'TC', 'BC', 'CPR Width %', 'R1', 'R2', 'R3', 'S1', 'S2', 'S3', 'PDO', 'PDH', 'PDL', 'PDC', 'Last Updated']);
+        rows.push(['Symbol', 'Liquidity', 'Fut Contract', 'Lot Size', 'Turnover (Cr)', 'LTP', 'Change %', 'Volume', 'Pivot Zone', 'Pivot (PP)', 'TC', 'BC', 'CPR Width %', 'R1', 'R2', 'R3', 'S1', 'S2', 'S3', 'PDO', 'PDH', 'PDL', 'PDC', 'Last Updated']);
         marketDataMap.forEach(m => {
             rows.push([
-                m.symbol, m.ltp, m.change_pct, m.volume, `"${m.zone || ''}"`, m.pp, m.tc, m.bc, `${m.cpr_width_pct}%`,
+                m.symbol, m.liquidity_tier || 'Normal', m.fut_symbol || '', m.lot_size || '', m.turnover_cr || 0, m.ltp, m.change_pct, m.volume, `"${m.zone || ''}"`, m.pp, m.tc, m.bc, `${m.cpr_width_pct}%`,
                 m.r1, m.r2, m.r3, m.s1, m.s2, m.s3, m.pdo, m.pdh, m.pdl, m.pdc, m.time
             ]);
         });

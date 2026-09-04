@@ -486,11 +486,12 @@ class ScannerTkinterGUI:
         sort_combo = ttk.Combobox(toolbar, textvariable=self.signal_sort_var, values=[
             "⏱️ Time (Newest First)",
             "⏱️ Time (Oldest First)",
-            "🔥 Score (Highest First)",
+            "🔥 Most Liquid (Top Turnover)",
+            "🎯 Score (Highest First)",
             "📊 Rel Vol (Highest First)",
             "🔤 Symbol (A to Z)",
             "💰 Price (Highest First)",
-        ], state="readonly", width=20)
+        ], state="readonly", width=22)
         sort_combo.pack(side=tk.LEFT, padx=(0, 10))
         sort_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
@@ -539,6 +540,8 @@ class ScannerTkinterGUI:
         cols = [
             ("time", "Time", 75, "center"),
             ("symbol", "Symbol", 95, "w"),
+            ("liquidity", "Liquidity", 85, "center"),
+            ("fut_contract", "Fut Contract", 175, "w"),
             ("tf", "TF", 50, "center"),
             ("signal", "Signal", 125, "w"),
             ("pattern", "Pattern", 140, "w"),
@@ -564,7 +567,7 @@ class ScannerTkinterGUI:
 
         for col_id, col_name, width, align in cols:
             self.signals_tree.heading(col_id, text=col_name, anchor=align, command=lambda c=col_id: self._on_signals_column_click(c))
-            self.signals_tree.column(col_id, width=width, anchor=align, stretch=(col_id in ("factors", "zone", "status")))
+            self.signals_tree.column(col_id, width=width, anchor=align, stretch=(col_id in ("factors", "zone", "status", "fut_contract")))
 
         # Scrollbars
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.signals_tree.yview)
@@ -586,6 +589,7 @@ class ScannerTkinterGUI:
         self.signals_tree.tag_configure("invalidated", background="#2a1215", foreground="#94a3b8")
         self.signals_tree.tag_configure("high_score", background="#062e22", foreground="#34d399")
         self.signals_tree.tag_configure("narrow_cpr", background="#0c2d48", foreground=ACCENT_BLUE)
+        self.signals_tree.tag_configure("most_liquid", background="#064e3b", foreground="#34d399")
         self.signals_tree.tag_configure("alt_row", background=TREE_ALT)
         self.signals_tree.bind("<Double-1>", self._on_signals_double_click)
         self._render_signals()
@@ -628,12 +632,13 @@ class ScannerTkinterGUI:
         tk.Label(toolbar, text="Sort:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         m_sort_combo = ttk.Combobox(toolbar, textvariable=self.market_sort_var, values=[
             "⚡ CPR % (Narrowest First)",
+            "🔥 Turnover / Liquidity (Highest First)",
             "📈 Change % (Top Gainers)",
             "📉 Change % (Top Losers)",
             "📊 Volume (Highest First)",
             "🔤 Symbol (A to Z)",
             "💰 LTP (Highest First)",
-        ], state="readonly", width=24)
+        ], state="readonly", width=25)
         m_sort_combo.pack(side=tk.LEFT, padx=(0, 12))
         m_sort_combo.bind("<<ComboboxSelected>>", lambda e: self._render_market())
 
@@ -665,7 +670,11 @@ class ScannerTkinterGUI:
         tree_frame.pack(fill=tk.BOTH, expand=True)
 
         m_cols = [
-            ("symbol", "Symbol", 100, "w"),
+            ("symbol", "Symbol", 95, "w"),
+            ("liquidity", "Liquidity", 85, "center"),
+            ("fut_contract", "Fut Contract", 170, "w"),
+            ("lot", "Lot", 55, "e"),
+            ("turnover", "Turnover (Cr)", 95, "e"),
             ("ltp", "LTP (₹)", 85, "e"),
             ("chg", "Chg %", 75, "e"),
             ("volume", "Volume", 85, "e"),
@@ -696,7 +705,7 @@ class ScannerTkinterGUI:
 
         for col_id, col_name, width, align in m_cols:
             self.market_tree.heading(col_id, text=col_name, anchor=align, command=lambda c=col_id: self._on_market_column_click(c))
-            self.market_tree.column(col_id, width=width, anchor=align, stretch=(col_id == "zone"))
+            self.market_tree.column(col_id, width=width, anchor=align, stretch=(col_id in ("zone", "fut_contract")))
 
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.market_tree.yview)
         hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.market_tree.xview)
@@ -714,6 +723,7 @@ class ScannerTkinterGUI:
         self.market_tree.tag_configure("trap_zone", background="#332200", foreground=ACCENT_AMBER)
         self.market_tree.tag_configure("up", foreground=ACCENT_GREEN)
         self.market_tree.tag_configure("down", foreground=ACCENT_RED)
+        self.market_tree.tag_configure("most_liquid", background="#064e3b", foreground="#34d399")
         self.market_tree.tag_configure("alt_row", background=TREE_ALT)
         self.market_tree.bind("<Double-1>", self._on_market_double_click)
         self._render_market()
@@ -1052,6 +1062,8 @@ class ScannerTkinterGUI:
             filtered.sort(key=lambda s: str(s.get("timestamp", "")), reverse=True)
         elif "Oldest First" in sort_mode:
             filtered.sort(key=lambda s: str(s.get("timestamp", "")), reverse=False)
+        elif "Most Liquid" in sort_mode:
+            filtered.sort(key=lambda s: (1 if s.get("is_most_liquid") else 0, float(s.get("turnover_cr", 0.0))), reverse=True)
         elif "Score" in sort_mode:
             filtered.sort(key=lambda s: (int(s.get("score", 0)), str(s.get("timestamp", ""))), reverse=True)
         elif "Rel Vol" in sort_mode:
@@ -1080,6 +1092,11 @@ class ScannerTkinterGUI:
             if any("Narrow CPR" in str(c) for c in conds):
                 tags.append("narrow_cpr")
 
+            is_most_liquid = bool(s.get("is_most_liquid", False))
+            liq_tier = str(s.get("liquidity_tier", "Normal"))
+            if is_most_liquid or "Ultra" in liq_tier:
+                tags.append("most_liquid")
+
             # Trigger Status value & tag
             trig_status = str(s.get("trigger_status", "PENDING")).upper()
             trig_time = str(s.get("trigger_time", ""))
@@ -1101,6 +1118,9 @@ class ScannerTkinterGUI:
 
             conds_str = " • ".join(conds) if conds else "Standard Setup"
             tf_str = str(s.get("timeframe", "5m")).upper()
+            fut_sym = str(s.get("fut_symbol", f"{symbol} FUT"))
+            lot_sz = s.get("lot_size", 0)
+            fut_display = f"{fut_sym} ({lot_sz})" if lot_sz else fut_sym
 
             self.signals_tree.insert(
                 "",
@@ -1108,6 +1128,8 @@ class ScannerTkinterGUI:
                 values=(
                     time_str,
                     symbol,
+                    liq_tier,
+                    fut_display,
                     tf_str,
                     direction,
                     pattern,
@@ -1129,12 +1151,12 @@ class ScannerTkinterGUI:
         if len(self.signals_tree.get_children()) == 0:
             if not self.cached_signals:
                 self.signals_tree.insert("", tk.END, values=(
-                    "--:--:--", "SCANNING...", "ALL", "INITIALIZING", "Downloading Candles & Scanning Today's Setups...",
+                    "--:--:--", "SCANNING...", "--", "--", "ALL", "INITIALIZING", "Downloading Candles & Scanning Today's Setups...",
                     "--", "--", "--", "Loading Universe...", "--", "--", "--", "--", "--", "--", "Evaluating 210 F&O stocks in background..."
                 ), tags=("narrow_cpr",))
             else:
                 self.signals_tree.insert("", tk.END, values=(
-                    "--:--:--", "--", "--", "NO SIGNALS", "No reversal signals matching current filters.",
+                    "--:--:--", "--", "--", "--", "--", "NO SIGNALS", "No reversal signals matching current filters.",
                     "--", "", "", "", "", "", "", "", "", "", "Try adjusting filters or search query."
                 ))
 
@@ -1190,6 +1212,8 @@ class ScannerTkinterGUI:
         # Apply Sorting to Market data
         if "Narrowest First" in m_sort:
             filtered_m.sort(key=lambda x: float(x.get("cpr_width_pct", 999.0)))
+        elif "Turnover" in m_sort or "Liquidity" in m_sort:
+            filtered_m.sort(key=lambda x: (1 if x.get("is_most_liquid") else 0, float(x.get("turnover_cr", 0.0))), reverse=True)
         elif "Top Gainers" in m_sort:
             filtered_m.sort(key=lambda x: float(x.get("change_pct", -999.0)), reverse=True)
         elif "Top Losers" in m_sort:
@@ -1209,12 +1233,12 @@ class ScannerTkinterGUI:
                 self.market_tree.delete(item)
             if not self.cached_market:
                 self.market_tree.insert("", tk.END, values=(
-                    "LOADING...", "--", "--", "--", "Calculating Daily Pivots & CPR for 210 stocks...",
+                    "LOADING...", "--", "--", "--", "--", "--", "--", "--", "Calculating Daily Pivots & CPR for 210 stocks...",
                     "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--"
                 ), tags=("narrow_cpr",))
             else:
                 self.market_tree.insert("", tk.END, values=(
-                    "NONE", "--", "--", "--", "No instruments matching current search/filter.",
+                    "NONE", "--", "--", "--", "--", "--", "--", "--", "No instruments matching current search/filter.",
                     "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
                 ))
             return
@@ -1250,11 +1274,25 @@ class ScannerTkinterGUI:
             elif chg < 0:
                 tags.append("down")
 
+            is_most_liquid = bool(m.get("is_most_liquid", False))
+            liq_tier = str(m.get("liquidity_tier", "Normal"))
+            if is_most_liquid or "Ultra" in liq_tier:
+                tags.append("most_liquid")
+
             if idx % 2 == 1:
                 tags.append("alt_row")
 
+            fut_sym = str(m.get("fut_symbol", f"{symbol} FUT"))
+            lot_sz = str(m.get("lot_size", "--")) if m.get("lot_size") else "--"
+            turnover_val = float(m.get("turnover_cr", 0.0))
+            turnover_str = f"₹{turnover_val:,.1f} Cr" if turnover_val > 0 else "--"
+
             row_vals = (
                 symbol,
+                liq_tier,
+                fut_sym,
+                lot_sz,
+                turnover_str,
                 f"{float(m.get('ltp', 0)):.2f}",
                 chg_str,
                 f"{int(m.get('volume', 0)):,}",
@@ -1335,11 +1373,13 @@ class ScannerTkinterGUI:
         try:
             with open(path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
-                writer.writerow(["Time", "Symbol", "Signal", "Pattern", "Trigger Status", "Trigger Time", "Setup High", "Setup Low", "Price", "Score", "Pivot Zone", "PP", "PDH", "PDL", "R1", "S1", "Rel Vol", "Conditions Met"])
+                writer.writerow(["Time", "Symbol", "Liquidity", "Fut Contract", "Signal", "Pattern", "Trigger Status", "Trigger Time", "Setup High", "Setup Low", "Price", "Score", "Pivot Zone", "PP", "PDH", "PDL", "R1", "S1", "Rel Vol", "Conditions Met"])
                 for s in self.cached_signals:
                     writer.writerow([
                         s.get("timestamp"),
                         s.get("symbol"),
+                        s.get("liquidity_tier", "Normal"),
+                        s.get("fut_symbol", ""),
                         s.get("direction"),
                         s.get("pattern"),
                         s.get("trigger_status", "PENDING"),
@@ -1376,10 +1416,14 @@ class ScannerTkinterGUI:
         try:
             with open(path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
-                writer.writerow(["Symbol", "LTP", "Change %", "Volume", "Zone", "PP", "TC", "BC", "CPR %", "R1", "R2", "R3", "S1", "S2", "S3", "PDO", "PDH", "PDL", "PDC", "Updated"])
+                writer.writerow(["Symbol", "Liquidity", "Fut Contract", "Lot Size", "Turnover (Cr)", "LTP", "Change %", "Volume", "Zone", "PP", "TC", "BC", "CPR %", "R1", "R2", "R3", "S1", "S2", "S3", "PDO", "PDH", "PDL", "PDC", "Updated"])
                 for m in self.cached_market:
                     writer.writerow([
                         m.get("symbol"),
+                        m.get("liquidity_tier", "Normal"),
+                        m.get("fut_symbol", ""),
+                        m.get("lot_size", ""),
+                        m.get("turnover_cr", 0.0),
                         m.get("ltp"),
                         m.get("change_pct"),
                         m.get("volume"),

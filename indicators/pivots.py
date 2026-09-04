@@ -46,6 +46,13 @@ class DailyPivots:
     is_narrow_bear_trap: bool = False  # Bear Trap range <= 0.20% of price
     is_narrow_trap_zone: bool = False  # True if bull or bear trap <= 0.20%
 
+    # Liquidity & Active Futures Contract
+    fut_symbol: str = ""
+    lot_size: int = 0
+    turnover_cr: float = 0.0
+    liquidity_tier: str = "Normal"
+    is_most_liquid: bool = False
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "symbol": self.symbol,
@@ -78,7 +85,37 @@ class DailyPivots:
             "is_narrow_bull_trap": self.is_narrow_bull_trap,
             "is_narrow_bear_trap": self.is_narrow_bear_trap,
             "is_narrow_trap_zone": self.is_narrow_trap_zone,
+            "fut_symbol": self.fut_symbol,
+            "lot_size": self.lot_size,
+            "turnover_cr": self.turnover_cr,
+            "liquidity_tier": self.liquidity_tier,
+            "is_most_liquid": self.is_most_liquid,
         }
+
+
+# Tier-1 Benchmark Ultra-Liquid F&O Stocks (1-tick spread <= 0.03%, massive depth)
+ULTRA_LIQUID_BENCHMARKS = {
+    "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "SBIN", "TATAMOTORS",
+    "BAJFINANCE", "AXISBANK", "MARUTI", "LT", "BHARTIARTL", "KOTAKBANK",
+    "SUNPHARMA", "TITAN", "M&M", "ADANIENT", "BSE", "COALINDIA", "NTPC",
+    "POWERGRID", "TATASTEEL", "HCLTECH", "JSWSTEEL", "ASIANPAINT", "ITC"
+}
+
+
+def classify_liquidity(symbol: str, turnover_cr: float) -> tuple[str, bool]:
+    """
+    Classifies stock liquidity tier and flags most liquid stocks:
+    1. '🔥 Ultra' (is_most_liquid=True): Turnover >= 500 Cr or Tier-1 Benchmark leader.
+    2. '💧 High' (is_most_liquid=False): Turnover >= 200 Cr.
+    3. 'Normal' (is_most_liquid=False): Standard F&O equity.
+    """
+    clean_sym = symbol.replace(" FUT", "").strip().upper()
+    if turnover_cr >= 500.0 or clean_sym in ULTRA_LIQUID_BENCHMARKS:
+        return "🔥 Ultra", True
+    elif turnover_cr >= 200.0:
+        return "💧 High", False
+    return "Normal", False
+
 
 
 def is_valid_cpr_breakout(
@@ -236,6 +273,8 @@ def calculate_daily_pivots(
     low_p: float,
     close_p: float,
     volume: int,
+    fut_symbol: str = "",
+    lot_size: int = 0,
 ) -> DailyPivots:
     """
     Calculates Standard Floor Pivots, Central Pivot Range (CPR), and Trap Zones.
@@ -277,6 +316,9 @@ def calculate_daily_pivots(
 
     is_narrow_trap_zone = is_narrow_bull_trap or is_narrow_bear_trap
 
+    turnover_cr = round((close_p * volume) / 1e7, 1) if (close_p and volume) else 0.0
+    liquidity_tier, is_most_liquid = classify_liquidity(symbol, turnover_cr)
+
     return DailyPivots(
         symbol=symbol,
         date=date_str,
@@ -307,6 +349,11 @@ def calculate_daily_pivots(
         is_narrow_bull_trap=is_narrow_bull_trap,
         is_narrow_bear_trap=is_narrow_bear_trap,
         is_narrow_trap_zone=is_narrow_trap_zone,
+        fut_symbol=fut_symbol,
+        lot_size=lot_size,
+        turnover_cr=turnover_cr,
+        liquidity_tier=liquidity_tier,
+        is_most_liquid=is_most_liquid,
     )
 
 

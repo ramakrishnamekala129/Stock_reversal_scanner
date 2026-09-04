@@ -92,6 +92,9 @@ class FNOIntradayScanner:
         # 3. Load Previous Trading Day OHLCV & Calculate Pivots
         pd_data_map = self.hist_loader.load_all_previous_day_ohlcv(self._universe, force_refresh=force_refresh, mode=self.market_mode)
         for sym, pd_item in pd_data_map.items():
+            fut_inst = self.instrument_mgr.get_futures_instrument(sym) if hasattr(self, "instrument_mgr") else None
+            fut_sym = fut_inst.trading_symbol if fut_inst else f"{sym} FUT"
+            lot_sz = fut_inst.lot_size if fut_inst and fut_inst.lot_size else 0
             pivot = calculate_daily_pivots(
                 symbol=sym,
                 date_str=pd_item.date,
@@ -100,6 +103,8 @@ class FNOIntradayScanner:
                 low_p=pd_item.low,
                 close_p=pd_item.close,
                 volume=pd_item.volume,
+                fut_symbol=fut_sym,
+                lot_size=lot_sz,
             )
             self._pivots[sym] = pivot
             if self.db:

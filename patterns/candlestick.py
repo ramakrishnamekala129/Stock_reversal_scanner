@@ -135,10 +135,12 @@ def is_bullish_engulfing(
     if c.body / c.total_range < config.ENGULFING_MIN_BODY_PCT:
         return False
 
-    # 3. Engulfs previous body
-    # c.open <= p.close and c.close >= p.open
-    tolerance = p.body * 0.05
-    return (c.open <= p.close + tolerance) and (c.close >= p.open - tolerance)
+    # 3. Current body must be strictly larger than previous body
+    if c.body <= p.body:
+        return False
+
+    # 4. Strictly engulfs previous body (c.open <= p.close and c.close > p.open)
+    return (c.open <= p.close) and (c.close > p.open)
 
 
 def is_hammer(
@@ -265,9 +267,12 @@ def is_bearish_engulfing(
     if c.body / c.total_range < config.ENGULFING_MIN_BODY_PCT:
         return False
 
-    # 3. Engulfs previous body
-    tolerance = p.body * 0.05
-    return (c.open >= p.close - tolerance) and (c.close <= p.open + tolerance)
+    # 3. Current body must be strictly larger than previous body
+    if c.body <= p.body:
+        return False
+
+    # 4. Strictly engulfs previous body (c.open >= p.close and c.close < p.open)
+    return (c.open >= p.close) and (c.close < p.open)
 
 
 def is_bearish_harami(

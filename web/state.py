@@ -247,6 +247,11 @@ class WebDashboardState:
                     "is_narrow_bull_trap": is_narrow_bull_trap,
                     "is_narrow_bear_trap": is_narrow_bear_trap,
                     "is_narrow_trap_zone": is_narrow_bull_trap or is_narrow_bear_trap,
+                    "fut_symbol": p.get("fut_symbol", f"{sym} FUT"),
+                    "lot_size": p.get("lot_size", 0),
+                    "turnover_cr": p.get("turnover_cr", 0.0),
+                    "liquidity_tier": p.get("liquidity_tier", "Normal"),
+                    "is_most_liquid": p.get("is_most_liquid", False),
                 })
 
             return {

@@ -58,6 +58,13 @@ class SignalEvent:
     trigger_time: str = ""
     trigger_price: float = 0.0
 
+    # Liquidity & Active Futures Contract
+    fut_symbol: str = ""
+    lot_size: int = 0
+    turnover_cr: float = 0.0
+    liquidity_tier: str = "Normal"
+    is_most_liquid: bool = False
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "symbol": self.symbol,
@@ -90,6 +97,11 @@ class SignalEvent:
             "trigger_status": self.trigger_status,
             "trigger_time": self.trigger_time,
             "trigger_price": self.trigger_price,
+            "fut_symbol": self.fut_symbol,
+            "lot_size": self.lot_size,
+            "turnover_cr": self.turnover_cr,
+            "liquidity_tier": self.liquidity_tier,
+            "is_most_liquid": self.is_most_liquid,
         }
 
 
@@ -424,6 +436,11 @@ class SignalEngine:
                     trigger_status="PENDING",
                     trigger_time="",
                     trigger_price=curr_high if not is_bearish else curr_low,
+                    fut_symbol=getattr(pivots, "fut_symbol", ""),
+                    lot_size=getattr(pivots, "lot_size", 0),
+                    turnover_cr=getattr(pivots, "turnover_cr", 0.0),
+                    liquidity_tier=getattr(pivots, "liquidity_tier", "Normal"),
+                    is_most_liquid=getattr(pivots, "is_most_liquid", False),
                 )
                 signals.append(signal_event)
 
