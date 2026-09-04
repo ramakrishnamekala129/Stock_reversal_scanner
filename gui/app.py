@@ -384,25 +384,29 @@ class ScannerTkinterGUI:
 
     def _build_signals_tab(self):
         """Builds Tab 1 toolbar and signals treeview."""
-        # Toolbar
-        toolbar = tk.Frame(self.tab_signals, bg=BG_DARK, pady=8)
+        # Toolbar Container
+        toolbar = tk.Frame(self.tab_signals, bg=BG_DARK, pady=6)
         toolbar.pack(fill=tk.X)
 
+        # Row 1: Setup & Signal Confluence Filters (Direction, TF, Pattern, Status, CPR/Trap, Strict Zones)
+        row1 = tk.Frame(toolbar, bg=BG_DARK, pady=2)
+        row1.pack(fill=tk.X)
+
         # Direction Filter
-        tk.Label(toolbar, text="Signal:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        dir_combo = ttk.Combobox(toolbar, textvariable=self.signal_direction_var, values=["ALL", "BULLISH SETUP", "BEARISH WARNING"], state="readonly", width=15)
+        tk.Label(row1, text="Signal:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        dir_combo = ttk.Combobox(row1, textvariable=self.signal_direction_var, values=["ALL", "BULLISH SETUP", "BEARISH WARNING"], state="readonly", width=16)
         dir_combo.pack(side=tk.LEFT, padx=(0, 10))
         dir_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
         # Timeframe Filter
-        tk.Label(toolbar, text="TF:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        tf_combo = ttk.Combobox(toolbar, textvariable=self.signal_tf_var, values=["ALL", "3m", "5m", "15m"], state="readonly", width=6)
+        tk.Label(row1, text="TF:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        tf_combo = ttk.Combobox(row1, textvariable=self.signal_tf_var, values=["ALL", "3m", "5m", "15m"], state="readonly", width=6)
         tf_combo.pack(side=tk.LEFT, padx=(0, 10))
         tf_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
         # Pattern Filter
-        tk.Label(toolbar, text="Pattern:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        pat_combo = ttk.Combobox(toolbar, textvariable=self.signal_pattern_var, values=[
+        tk.Label(row1, text="Pattern:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        pat_combo = ttk.Combobox(row1, textvariable=self.signal_pattern_var, values=[
             "ALL",
             "BULLISH ENGULFING",
             "BEARISH ENGULFING",
@@ -414,23 +418,23 @@ class ScannerTkinterGUI:
             "HANGING MAN",
             "BULLISH MARUBOZU",
             "BEARISH MARUBOZU",
-        ], state="readonly", width=18)
+        ], state="readonly", width=20)
         pat_combo.pack(side=tk.LEFT, padx=(0, 10))
         pat_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
         # Status Filter (Trigger Confirmation)
-        tk.Label(toolbar, text="Status:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        status_combo = ttk.Combobox(toolbar, textvariable=self.signal_status_var, values=[
+        tk.Label(row1, text="Status:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        status_combo = ttk.Combobox(row1, textvariable=self.signal_status_var, values=[
             "ALL STATUS",
             "✅ Triggered Only",
             "⏳ Pending Only",
             "❌ Invalidated Only",
-        ], state="readonly", width=16)
+        ], state="readonly", width=18)
         status_combo.pack(side=tk.LEFT, padx=(0, 10))
         status_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
         # Multi-Select CPR / Trap Filter
-        tk.Label(toolbar, text="CPR / Trap:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(row1, text="CPR / Trap:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         signal_cpr_options = [
             "⚡ Narrow CPR (<= 0.21%)",
             "🪤 Narrow Trap Zones (<= 0.21%)",
@@ -448,7 +452,7 @@ class ScannerTkinterGUI:
             "📌 Inside CPR Zone",
         ]
         self.signal_cpr_menu = MultiSelectDropdown(
-            toolbar,
+            row1,
             title="CPR/Trap",
             options=signal_cpr_options,
             default_selected=[
@@ -461,61 +465,11 @@ class ScannerTkinterGUI:
             ],
             on_change_callback=self._render_signals
         )
-        self.signal_cpr_menu.pack(side=tk.LEFT, padx=(0, 12))
-
-        # Volume Filter Dropdown
-        tk.Label(toolbar, text="Vol:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        vol_combo = ttk.Combobox(toolbar, textvariable=self.signal_vol_var, values=[
-            "ALL VOLUMES",
-            "🔥 Vol >= 1.0x (Confirmed)",
-            "⚡ Vol >= 1.5x (Surge)",
-        ], state="readonly", width=18)
-        vol_combo.pack(side=tk.LEFT, padx=(0, 10))
-        vol_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
-
-        # Score Filter Dropdown
-        tk.Label(toolbar, text="Score:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        score_combo = ttk.Combobox(toolbar, textvariable=self.signal_score_var, values=[
-            "ALL SCORES",
-            "⭐ Score >= 6",
-            "🔥 High Conviction (>= 7)",
-        ], state="readonly", width=17)
-        score_combo.pack(side=tk.LEFT, padx=(0, 10))
-        score_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
-
-        # Liquidity Filter Dropdown
-        tk.Label(toolbar, text="Liquid:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        liq_combo = ttk.Combobox(toolbar, textvariable=self.signal_liq_var, values=[
-            "ALL LIQUIDITY",
-            "🔥 Ultra Liquid Only",
-            "💧 High+ (>=200 Cr)",
-        ], state="readonly", width=16)
-        liq_combo.pack(side=tk.LEFT, padx=(0, 10))
-        liq_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
-
-        # Sort Dropdown
-        tk.Label(toolbar, text="Sort:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        sort_combo = ttk.Combobox(toolbar, textvariable=self.signal_sort_var, values=[
-            "⏱️ Time (Newest First)",
-            "⏱️ Time (Oldest First)",
-            "🔥 Most Liquid (Top Turnover)",
-            "🎯 Score (Highest First)",
-            "📊 Rel Vol (Highest First)",
-            "🔤 Symbol (A to Z)",
-            "💰 Price (Highest First)",
-        ], state="readonly", width=22)
-        sort_combo.pack(side=tk.LEFT, padx=(0, 10))
-        sort_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
-
-        # Search Box
-        tk.Label(toolbar, text="🔍 Search:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        search_entry = tk.Entry(toolbar, textvariable=self.signal_search_var, bg=CARD_BG, fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief="flat", font=("Segoe UI", 9), width=18)
-        search_entry.pack(side=tk.LEFT, padx=(0, 12), ipady=3)
-        self.signal_search_var.trace_add("write", lambda *args: self._render_signals())
+        self.signal_cpr_menu.pack(side=tk.LEFT, padx=(0, 10))
 
         # Strict Zones Toggle (Enabled by default)
         strict_cb = tk.Checkbutton(
-            toolbar,
+            row1,
             text="🎯 Strict Zones Only",
             variable=self.strict_zones_var,
             command=self._render_signals,
@@ -526,11 +480,65 @@ class ScannerTkinterGUI:
             activeforeground="#38bdf8",
             font=("Segoe UI", 9, "bold"),
         )
-        strict_cb.pack(side=tk.LEFT, padx=(0, 10))
+        strict_cb.pack(side=tk.LEFT, padx=(6, 0))
 
-        # Export CSV Button
+        # Row 2: Execution, Ranking & Tools (Liquidity, Volume, Score, Sort, Search, Export CSV)
+        row2 = tk.Frame(toolbar, bg=BG_DARK, pady=2)
+        row2.pack(fill=tk.X)
+
+        # Liquidity Filter Dropdown
+        tk.Label(row2, text="Liquid:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        liq_combo = ttk.Combobox(row2, textvariable=self.signal_liq_var, values=[
+            "ALL LIQUIDITY",
+            "🔥 Ultra Liquid Only",
+            "💧 High+ (>=200 Cr)",
+        ], state="readonly", width=18)
+        liq_combo.pack(side=tk.LEFT, padx=(0, 10))
+        liq_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
+
+        # Volume Filter Dropdown
+        tk.Label(row2, text="Vol:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        vol_combo = ttk.Combobox(row2, textvariable=self.signal_vol_var, values=[
+            "ALL VOLUMES",
+            "🔥 Vol >= 1.0x (Confirmed)",
+            "⚡ Vol >= 1.5x (Surge)",
+        ], state="readonly", width=20)
+        vol_combo.pack(side=tk.LEFT, padx=(0, 10))
+        vol_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
+
+        # Score Filter Dropdown
+        tk.Label(row2, text="Score:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        score_combo = ttk.Combobox(row2, textvariable=self.signal_score_var, values=[
+            "ALL SCORES",
+            "⭐ Score >= 6",
+            "🔥 High Conviction (>= 7)",
+        ], state="readonly", width=20)
+        score_combo.pack(side=tk.LEFT, padx=(0, 10))
+        score_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
+
+        # Sort Dropdown
+        tk.Label(row2, text="Sort:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        sort_combo = ttk.Combobox(row2, textvariable=self.signal_sort_var, values=[
+            "⏱️ Time (Newest First)",
+            "⏱️ Time (Oldest First)",
+            "🔥 Most Liquid (Top Turnover)",
+            "🎯 Score (Highest First)",
+            "📊 Rel Vol (Highest First)",
+            "🔤 Symbol (A to Z)",
+            "💰 Price (Highest First)",
+        ], state="readonly", width=24)
+        sort_combo.pack(side=tk.LEFT, padx=(0, 10))
+        sort_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
+
+        # Search Box
+        tk.Label(row2, text="🔍 Search:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        search_entry = tk.Entry(row2, textvariable=self.signal_search_var, bg=CARD_BG, fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief="flat", font=("Segoe UI", 9), width=20)
+        search_entry.pack(side=tk.LEFT, padx=(0, 12), ipady=3)
+        self.signal_search_var.trace_add("write", lambda *args: self._render_signals())
+
+        # Export CSV Button (Packed to Right)
         export_btn = tk.Button(
-            toolbar,
+            row2,
             text="📥 Export Signals CSV",
             command=self._export_signals_csv,
             bg=CARD_BG,
@@ -539,7 +547,7 @@ class ScannerTkinterGUI:
             activeforeground=TEXT_MAIN,
             font=("Segoe UI", 9, "bold"),
             relief="flat",
-            padx=10,
+            padx=12,
             pady=3,
             cursor="hand2",
         )
@@ -609,7 +617,7 @@ class ScannerTkinterGUI:
     def _build_market_tab(self):
         """Builds Tab 2 toolbar and 210-stock market pivots treeview."""
         # Toolbar
-        toolbar = tk.Frame(self.tab_market, bg=BG_DARK, pady=8)
+        toolbar = tk.Frame(self.tab_market, bg=BG_DARK, pady=6)
         toolbar.pack(fill=tk.X)
 
         # Market Multi-Select CPR / Trap Filter
@@ -638,7 +646,7 @@ class ScannerTkinterGUI:
             ],
             on_change_callback=self._render_market
         )
-        self.market_cpr_menu.pack(side=tk.LEFT, padx=(0, 12))
+        self.market_cpr_menu.pack(side=tk.LEFT, padx=(0, 14))
 
         # Market Liquidity Filter
         tk.Label(toolbar, text="Liquid:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
@@ -646,8 +654,8 @@ class ScannerTkinterGUI:
             "ALL LIQUIDITY",
             "🔥 Ultra Liquid Only",
             "💧 High+ (>=200 Cr)",
-        ], state="readonly", width=16)
-        m_liq_combo.pack(side=tk.LEFT, padx=(0, 10))
+        ], state="readonly", width=18)
+        m_liq_combo.pack(side=tk.LEFT, padx=(0, 14))
         m_liq_combo.bind("<<ComboboxSelected>>", lambda e: self._render_market())
 
         # Market Sort Options
@@ -660,13 +668,13 @@ class ScannerTkinterGUI:
             "📊 Volume (Highest First)",
             "🔤 Symbol (A to Z)",
             "💰 LTP (Highest First)",
-        ], state="readonly", width=25)
-        m_sort_combo.pack(side=tk.LEFT, padx=(0, 12))
+        ], state="readonly", width=28)
+        m_sort_combo.pack(side=tk.LEFT, padx=(0, 14))
         m_sort_combo.bind("<<ComboboxSelected>>", lambda e: self._render_market())
 
         # Search Box
         tk.Label(toolbar, text="🔍 Search:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        m_search_entry = tk.Entry(toolbar, textvariable=self.market_search_var, bg=CARD_BG, fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief="flat", font=("Segoe UI", 9), width=18)
+        m_search_entry = tk.Entry(toolbar, textvariable=self.market_search_var, bg=CARD_BG, fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief="flat", font=("Segoe UI", 9), width=20)
         m_search_entry.pack(side=tk.LEFT, padx=(0, 12), ipady=3)
         self.market_search_var.trace_add("write", lambda *args: self._render_market())
 
@@ -681,7 +689,7 @@ class ScannerTkinterGUI:
             activeforeground=TEXT_MAIN,
             font=("Segoe UI", 9, "bold"),
             relief="flat",
-            padx=10,
+            padx=12,
             pady=3,
             cursor="hand2",
         )
