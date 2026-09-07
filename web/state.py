@@ -25,6 +25,7 @@ class WebDashboardState:
         self.pivots: Dict[str, dict] = {}
         self.live_prices: Dict[str, dict] = {}
         self.signals: List[dict] = []
+        self.hema_signals: List[dict] = []
         self.stats: Dict[str, Any] = {
             "symbols_scanned": 0,
             "candles_processed": 0,
@@ -133,6 +134,42 @@ class WebDashboardState:
             "type": "NEW_SIGNAL",
             "data": sig_dict,
             "stats": self.get_stats(),
+        })
+
+    def add_hema_signal(self, signal: Any):
+        """Appends or updates a HEMA + T3 regime signal and broadcasts to WebSockets."""
+        sig_dict = signal.to_dict() if hasattr(signal, "to_dict") else dict(signal)
+        ts_val = sig_dict.get("timestamp")
+        if isinstance(ts_val, datetime):
+            if ts_val.tzinfo is None:
+                ts_val = ts_val.replace(tzinfo=IST_TZ)
+            else:
+                ts_val = ts_val.astimezone(IST_TZ)
+            sig_dict["timestamp"] = ts_val.strftime("%H:%M:%S")
+        elif isinstance(ts_val, str) and "T" in ts_val:
+            try:
+                dt = datetime.fromisoformat(ts_val)
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(IST_TZ)
+                sig_dict["timestamp"] = dt.strftime("%H:%M:%S")
+            except Exception:
+                pass
+
+        with self._lock:
+            # Update existing if same symbol + timeframe, else prepend
+            existing_idx = None
+            for idx, item in enumerate(self.hema_signals):
+                if item.get("symbol") == sig_dict.get("symbol") and item.get("timeframe") == sig_dict.get("timeframe"):
+                    existing_idx = idx
+                    break
+            if existing_idx is not None:
+                self.hema_signals[existing_idx] = sig_dict
+            else:
+                self.hema_signals.insert(0, sig_dict)
+
+        self._broadcast({
+            "type": "NEW_HEMA_SIGNAL",
+            "data": sig_dict,
         })
 
     def update_signal_trigger(self, symbol: str, timestamp: str, pattern: str, new_status: str, trigger_time: str = ""):
@@ -270,6 +307,7 @@ class WebDashboardState:
             return {
                 "market": market_data,
                 "signals": list(self.signals),
+                "hema_signals": list(self.hema_signals),
                 "stats": dict(self.stats),
                 "price_version": self.price_version,
             }

@@ -16,6 +16,7 @@ import config
 from database.repository import DatabaseRepository
 from excel.live_excel import LiveExcelManager
 from indicators.pivots import DailyPivots, calculate_daily_pivots
+from indicators.hema_t3 import HemaT3RegimeEngine, HemaT3Signal
 from market.candle_engine import Candle, CandleEngine, CandleStatus, MultiTimeframeCandleEngine
 from market.historical import HistoricalDataLoader, PreviousDayOHLCV
 from market.instruments import InstrumentManager
@@ -51,6 +52,7 @@ class FNOIntradayScanner:
         self.session_mgr = MarketSessionManager()
         self.dedup = EventDeduplicator()
         self.signal_engine = SignalEngine()
+        self.hema_engine = HemaT3RegimeEngine()
         self.trigger_tracker = SignalTriggerTracker()
         self.db = DatabaseRepository() if config.ENABLE_DB_STORAGE else None
         self.excel_mgr = LiveExcelManager() if enable_excel else None
@@ -259,6 +261,15 @@ class FNOIntradayScanner:
             if self.excel_mgr:
                 self.excel_mgr.add_signal(sig)
 
+        # 3. Evaluate HEMA + T3 Strategy with Anti-Sideways / Market-Regime Filter
+        if len(df_history) >= 20:
+            try:
+                hema_sig = self.hema_engine.evaluate(df_history, symbol=symbol, timeframe=timeframe)
+                if hema_sig:
+                    dashboard_state.add_hema_signal(hema_sig.to_dict())
+            except Exception as e:
+                logger.debug(f"HEMA+T3 evaluation error for {symbol} ({timeframe}): {e}")
+
     def evaluate_initial_history(self):
         """
         Scans all historical candles (3m, 5m, 15m) from 09:15 up to current time across the universe,
@@ -294,6 +305,32 @@ class FNOIntradayScanner:
         for sym, df_b in broker_dfs.items():
             self.candle_engine.sync_broker_candles(sym, df_b, key_map=key_map)
         logger.info(f"Broker candle sync complete for {len(broker_dfs)} symbols.")
+
+    def scan_hema_universe(self, timeframes: Optional[List[str]] = None, symbols: Optional[List[str]] = None):
+        """
+        Evaluates HEMA + T3 Strategy with Anti-Sideways / Market-Regime Filter across multiple timeframes.
+        Dispatches all signals and market regimes directly to dashboard_state.
+        """
+        if timeframes is None:
+            timeframes = ["15m", "30m", "1h", "2h", "4h", "1d"]
+        
+        target_universe = self._universe
+        if symbols:
+            sym_set = set(symbols)
+            target_universe = {k: v for k, v in self._universe.items() if k in sym_set}
+            
+        logger.info(f"Starting HEMA + T3 multi-timeframe scan across {len(target_universe)} symbols on {timeframes}...")
+        
+        for tf in timeframes:
+            try:
+                tf_dfs = self.hist_loader.refresh_latest_broker_candles(target_universe, timeframe=tf)
+                for sym, df in tf_dfs.items():
+                    if df is not None and len(df) >= 20:
+                        sig = self.hema_engine.evaluate(df, symbol=sym, timeframe=tf)
+                        if sig:
+                            dashboard_state.add_hema_signal(sig.to_dict())
+            except Exception as e:
+                logger.error(f"Error scanning HEMA+T3 on timeframe {tf}: {e}")
 
     def run_live(self):
         """

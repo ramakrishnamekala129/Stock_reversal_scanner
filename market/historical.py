@@ -9,7 +9,10 @@ from typing import Any, Dict, List, Optional
 import urllib.parse
 import httpx
 import pandas as pd
-import polars as pl
+try:
+    import polars as pl
+except ImportError:
+    pl = None
 import pytz
 
 import config
@@ -306,97 +309,128 @@ class HistoricalDataLoader:
         if not raw_1m:
             return None
 
-        rule_map = {"3m": "3m", "5m": "5m", "15m": "15m"}
-        rule = rule_map.get(timeframe, "5m")
+        rule_map = {
+            "3m": "3m",
+            "5m": "5m",
+            "15m": "15m",
+            "30m": "30m",
+            "1h": "1h",
+            "60m": "1h",
+            "2h": "2h",
+            "120m": "2h",
+            "4h": "4h",
+            "240m": "4h",
+            "1d": "1d",
+            "day": "1d",
+        }
+        rule = rule_map.get(timeframe.lower(), "5m")
 
-        cutoff_map = {"3m": dt_time(15, 27), "5m": dt_time(15, 25), "15m": dt_time(15, 15)}
-        cutoff = cutoff_map.get(timeframe, dt_time(15, 25))
+        cutoff_map = {
+            "3m": dt_time(15, 27),
+            "5m": dt_time(15, 25),
+            "15m": dt_time(15, 15),
+            "30m": dt_time(15, 15),
+            "1h": dt_time(15, 15),
+            "60m": dt_time(15, 15),
+            "2h": dt_time(15, 15),
+            "120m": dt_time(15, 15),
+            "4h": dt_time(15, 15),
+            "240m": dt_time(15, 15),
+            "1d": dt_time(15, 30),
+            "day": dt_time(15, 30),
+        }
+        cutoff = cutoff_map.get(timeframe.lower(), dt_time(15, 30))
 
-        try:
-            # 1. High-speed Polars Vectorized Ingestion & Resampling
-            df_pl = (
-                pl.DataFrame(
-                    raw_1m,
-                    schema=["timestamp", "open", "high", "low", "close", "volume"],
-                    orient="row",
+        if pl is not None:
+            try:
+                # 1. High-speed Polars Vectorized Ingestion & Resampling
+                df_pl = (
+                    pl.DataFrame(
+                        raw_1m,
+                        schema=["timestamp", "open", "high", "low", "close", "volume"],
+                        orient="row",
+                    )
+                    .with_columns([
+                        pl.col("timestamp").str.to_datetime(time_zone=config.MARKET_TIMEZONE),
+                        pl.col("open").cast(pl.Float64),
+                        pl.col("high").cast(pl.Float64),
+                        pl.col("low").cast(pl.Float64),
+                        pl.col("close").cast(pl.Float64),
+                        pl.col("volume").cast(pl.Int64),
+                    ])
+                    .filter(
+                        (pl.col("timestamp").dt.hour() > 9)
+                        | ((pl.col("timestamp").dt.hour() == 9) & (pl.col("timestamp").dt.minute() >= 15))
+                    )
+                    .filter(
+                        (pl.col("timestamp").dt.hour() < 15)
+                        | ((pl.col("timestamp").dt.hour() == 15) & (pl.col("timestamp").dt.minute() <= 30))
+                    )
+                    .sort("timestamp")
                 )
-                .with_columns([
-                    pl.col("timestamp").str.to_datetime(time_zone=config.MARKET_TIMEZONE),
-                    pl.col("open").cast(pl.Float64),
-                    pl.col("high").cast(pl.Float64),
-                    pl.col("low").cast(pl.Float64),
-                    pl.col("close").cast(pl.Float64),
-                    pl.col("volume").cast(pl.Int64),
-                ])
-                .filter(
-                    (pl.col("timestamp").dt.hour() > 9)
-                    | ((pl.col("timestamp").dt.hour() == 9) & (pl.col("timestamp").dt.minute() >= 15))
+
+                if df_pl.is_empty():
+                    return None
+
+                df_res_pl = (
+                    df_pl.group_by_dynamic(
+                        "timestamp",
+                        every=rule,
+                        period=rule,
+                        offset="15m",
+                    )
+                    .agg([
+                        pl.col("open").first(),
+                        pl.col("high").max(),
+                        pl.col("low").min(),
+                        pl.col("close").last(),
+                        pl.col("volume").sum(),
+                    ])
+                    .sort("timestamp")
                 )
-                .filter(
-                    (pl.col("timestamp").dt.hour() < 15)
-                    | ((pl.col("timestamp").dt.hour() == 15) & (pl.col("timestamp").dt.minute() <= 30))
-                )
-                .sort("timestamp")
-            )
 
-            if df_pl.is_empty():
-                return None
+                df_res = df_res_pl.to_pandas()
+                df_res = df_res[df_res["timestamp"].dt.time <= cutoff].reset_index(drop=True)
+                return df_res
 
-            df_res_pl = (
-                df_pl.group_by_dynamic(
-                    "timestamp",
-                    every=rule,
-                    period=rule,
-                    offset="15m",
-                )
-                .agg([
-                    pl.col("open").first(),
-                    pl.col("high").max(),
-                    pl.col("low").min(),
-                    pl.col("close").last(),
-                    pl.col("volume").sum(),
-                ])
-                .sort("timestamp")
-            )
+            except Exception as e:
+                logger.debug(f"Polars resampling fallback to Pandas: {e}")
 
-            df_res = df_res_pl.to_pandas()
-            df_res = df_res[df_res["timestamp"].dt.time <= cutoff].reset_index(drop=True)
-            return df_res
-
-        except Exception as e:
-            logger.debug(f"Polars resampling fallback to Pandas: {e}")
-            # Fallback to standard pandas pipeline
-            kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
-            records = []
-            for c in raw_1m:
-                ts = pd.to_datetime(c[0])
-                if ts.tzinfo is None:
-                    ts = ts.tz_localize("UTC").tz_convert(kolkata_tz)
-                else:
-                    ts = ts.tz_convert(kolkata_tz)
-                records.append({
-                    "timestamp": ts,
-                    "open": float(c[1]),
-                    "high": float(c[2]),
-                    "low": float(c[3]),
-                    "close": float(c[4]),
-                    "volume": int(c[5]),
-                })
-            if not records:
-                return None
-            records = [r for r in records if dt_time(9, 15) <= r["timestamp"].time() <= dt_time(15, 30)]
-            if not records:
-                return None
-            df_1m = pd.DataFrame(records).sort_values("timestamp").set_index("timestamp")
-            p_rule = {"3m": "3min", "5m": "5min", "15m": "15min"}.get(timeframe, "5min")
-            df_res = df_1m.resample(p_rule, origin="start_day", offset="15min").agg({
-                "open": "first",
-                "high": "max",
-                "low": "min",
-                "close": "last",
-                "volume": "sum",
-            }).dropna().reset_index()
-            return df_res[df_res["timestamp"].dt.time <= cutoff].reset_index(drop=True)
+        # Fallback to standard pandas pipeline
+        kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
+        records = []
+        for c in raw_1m:
+            ts = pd.to_datetime(c[0])
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC").tz_convert(kolkata_tz)
+            else:
+                ts = ts.tz_convert(kolkata_tz)
+            records.append({
+                "timestamp": ts,
+                "open": float(c[1]),
+                "high": float(c[2]),
+                "low": float(c[3]),
+                "close": float(c[4]),
+                "volume": int(c[5]),
+            })
+        if not records:
+            return None
+        records = [r for r in records if dt_time(9, 15) <= r["timestamp"].time() <= dt_time(15, 30)]
+        if not records:
+            return None
+        df_1m = pd.DataFrame(records).sort_values("timestamp").set_index("timestamp")
+        p_rule = {
+            "3m": "3min", "5m": "5min", "15m": "15min", "30m": "30min",
+            "1h": "60min", "2h": "120min", "4h": "240min", "1d": "1D", "day": "1D"
+        }.get(timeframe, "5min")
+        df_res = df_1m.resample(p_rule, origin="start_day", offset="15min").agg({
+            "open": "first",
+            "high": "max",
+            "low": "min",
+            "close": "last",
+            "volume": "sum",
+        }).dropna().reset_index()
+        return df_res[df_res["timestamp"].dt.time <= cutoff].reset_index(drop=True)
 
     def load_symbol_broker_5m(self, symbol: str, instrument_key: str, timeframe: str = "5m") -> Optional[pd.DataFrame]:
         """

@@ -184,6 +184,18 @@ class ScannerTkinterGUI:
         self.market_sort_col = "cpr_pct"
         self.market_sort_rev = False
 
+        # HEMA + T3 Strategy Scanner Filters & State
+        self.cached_hema_signals: List[dict] = []
+        self.hema_tf_var = tk.StringVar(value="ALL")
+        self.hema_signal_var = tk.StringVar(value="ALL")
+        self.hema_regime_var = tk.StringVar(value="ALL")
+        self.hema_score_var = tk.StringVar(value="ALL")
+        self.hema_sideways_filter_var = tk.StringVar(value="ALL")
+        self.hema_search_var = tk.StringVar(value="")
+        self.hema_sort_var = tk.StringVar(value="⏱️ Time (Newest First)")
+        self.hema_dirty = False
+        self.last_hema_render_time = 0.0
+
         # Setup Styling & UI Components
         self._setup_styles()
         self._build_header()
@@ -378,6 +390,11 @@ class ScannerTkinterGUI:
         self.notebook.add(self.tab_chart, text="  📈 5M Candle & CPR Chart  ")
         self.chart_frame = CandleChartFrame(self.tab_chart, scanner=self.scanner, db_repo=self.db_repo)
         self.chart_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Tab 4: HEMA + T3 Strategy Scanner
+        self.tab_hema = tk.Frame(self.notebook, bg=BG_DARK)
+        self.notebook.add(self.tab_hema, text="  🎯 HEMA + T3 Strategy Scanner  ")
+        self._build_hema_tab()
 
         # Tab Change Listener for instant, high-efficiency rendering
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
@@ -830,6 +847,10 @@ class ScannerTkinterGUI:
                 self.chart_frame.redraw_chart()
                 self.last_chart_render_time = now
                 self.chart_dirty = False
+            elif hasattr(self, "tab_hema") and cur == str(self.tab_hema):
+                self._render_hema_signals()
+                self.last_hema_render_time = now
+                self.hema_dirty = False
         except Exception:
             pass
 
@@ -914,6 +935,11 @@ class ScannerTkinterGUI:
                 self.card_bearish_val.set(str(bear_cnt))
                 self._render_signals()
 
+            hema_sigs = snapshot.get("hema_signals", [])
+            if len(hema_sigs) != len(self.cached_hema_signals):
+                self.cached_hema_signals = list(hema_sigs)
+                self.hema_dirty = True
+
             ws_status = stats.get("ws_status", "INITIALIZING...")
             if ws_status == "CONNECTED":
                 self.card_status_val.set("🟢 LIVE CONNECTED")
@@ -961,6 +987,13 @@ class ScannerTkinterGUI:
                             self.last_chart_render_time = now
                             self.chart_dirty = False
                             self.chart_frame.redraw_chart()
+
+                    # If on HEMA + T3 Strategy tab: throttle redraws to at most once every 1.0 second
+                    elif hasattr(self, "tab_hema") and cur_tab == str(self.tab_hema):
+                        if self.hema_dirty and (now - self.last_hema_render_time >= 1.0):
+                            self.last_hema_render_time = now
+                            self.hema_dirty = False
+                            self._render_hema_signals()
                 except Exception:
                     pass
 
@@ -1596,3 +1629,398 @@ class ScannerTkinterGUI:
                 logger.error(f"Error switching market mode to {new_mode}: {ex}")
 
         threading.Thread(target=_do_switch, daemon=True).start()
+
+    def _build_hema_tab(self):
+        """Builds Tab 4: HEMA + T3 Strict Buy Sell with Anti-Sideways Filter Scanner."""
+        toolbar = tk.Frame(self.tab_hema, bg=BG_DARK, pady=6)
+        toolbar.pack(fill=tk.X)
+
+        # Row 1: Primary Setup Filters (Timeframe, Signal Action, Market Regime, Trend Score, Sideways Filter)
+        row1 = tk.Frame(toolbar, bg=BG_DARK, pady=2)
+        row1.pack(fill=tk.X)
+
+        # Timeframe Filter
+        tk.Label(row1, text="Timeframe:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        tf_combo = ttk.Combobox(
+            row1,
+            textvariable=self.hema_tf_var,
+            values=["ALL", "15m", "30m", "1h", "2h", "4h", "1d"],
+            state="readonly",
+            width=7,
+        )
+        tf_combo.pack(side=tk.LEFT, padx=(0, 10))
+        tf_combo.bind("<<ComboboxSelected>>", lambda e: self._render_hema_signals())
+
+        # Signal Filter
+        tk.Label(row1, text="Signal:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        sig_combo = ttk.Combobox(
+            row1,
+            textvariable=self.hema_signal_var,
+            values=["ALL", "🟢 BUY (CALL Entry)", "🔴 SELL (PUT Entry)", "⚠️ SIDEWAYS / NO-TRADE", "HOLD"],
+            state="readonly",
+            width=22,
+        )
+        sig_combo.pack(side=tk.LEFT, padx=(0, 10))
+        sig_combo.bind("<<ComboboxSelected>>", lambda e: self._render_hema_signals())
+
+        # Market Regime Filter
+        tk.Label(row1, text="Regime:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        reg_combo = ttk.Combobox(
+            row1,
+            textvariable=self.hema_regime_var,
+            values=["ALL", "🚀 TRENDING", "⚠️ SIDEWAYS / NO-TRADE", "🛑 CHOP COOLDOWN"],
+            state="readonly",
+            width=22,
+        )
+        reg_combo.pack(side=tk.LEFT, padx=(0, 10))
+        reg_combo.bind("<<ComboboxSelected>>", lambda e: self._render_hema_signals())
+
+        # Trend Score Filter
+        tk.Label(row1, text="Trend Score:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        score_combo = ttk.Combobox(
+            row1,
+            textvariable=self.hema_score_var,
+            values=["ALL", "🔥 High Trend (>= 7)", "Moderate Trend (>= 5)"],
+            state="readonly",
+            width=18,
+        )
+        score_combo.pack(side=tk.LEFT, padx=(0, 10))
+        score_combo.bind("<<ComboboxSelected>>", lambda e: self._render_hema_signals())
+
+        # Sideways Score Filter
+        tk.Label(row1, text="Sideways Check:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        side_combo = ttk.Combobox(
+            row1,
+            textvariable=self.hema_sideways_filter_var,
+            values=["ALL", "🛡️ Trend Only (Sideways < 3)", "⚠️ High Sideways (>= 3)"],
+            state="readonly",
+            width=24,
+        )
+        side_combo.pack(side=tk.LEFT, padx=(0, 10))
+        side_combo.bind("<<ComboboxSelected>>", lambda e: self._render_hema_signals())
+
+        # Row 2: Secondary Controls (Search, Sort, Manual Multi-TF Scan, CSV Export, Live Counter)
+        row2 = tk.Frame(toolbar, bg=BG_DARK, pady=2)
+        row2.pack(fill=tk.X)
+
+        tk.Label(row2, text="Search:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        search_entry = ttk.Entry(row2, textvariable=self.hema_search_var, width=15)
+        search_entry.pack(side=tk.LEFT, padx=(0, 10))
+        search_entry.bind("<KeyRelease>", lambda e: self._render_hema_signals())
+
+        tk.Label(row2, text="Sort By:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        sort_combo = ttk.Combobox(
+            row2,
+            textvariable=self.hema_sort_var,
+            values=[
+                "⏱️ Time (Newest First)",
+                "⏱️ Time (Oldest First)",
+                "🔥 Trend Score (Highest First)",
+                "⚠️ Sideways Score (Lowest First)",
+                "🔤 Symbol (A to Z)",
+            ],
+            state="readonly",
+            width=24,
+        )
+        sort_combo.pack(side=tk.LEFT, padx=(0, 10))
+        sort_combo.bind("<<ComboboxSelected>>", lambda e: self._render_hema_signals())
+
+        # Scan Multi-TF Button
+        scan_btn = tk.Button(
+            row2,
+            text="🚀 Scan Multi-Timeframes",
+            command=self._trigger_hema_scan,
+            bg="#2563eb",
+            fg="#ffffff",
+            activebackground="#1d4ed8",
+            activeforeground="#ffffff",
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            padx=10,
+            pady=3,
+            cursor="hand2",
+        )
+        scan_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        # Export CSV Button
+        export_btn = tk.Button(
+            row2,
+            text="📥 Export HEMA CSV",
+            command=self._export_hema_csv,
+            bg=CARD_BG,
+            fg=ACCENT_BLUE,
+            activebackground=CARD_BORDER,
+            activeforeground=TEXT_MAIN,
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            padx=10,
+            pady=3,
+            cursor="hand2",
+        )
+        export_btn.pack(side=tk.RIGHT)
+
+        # Dynamic Counter Badge
+        self.hema_count_lbl = tk.Label(
+            row2,
+            text="🎯 Showing: 0 Signals (0 Stocks)",
+            font=("Segoe UI", 9, "bold"),
+            fg="#38bdf8",
+            bg=CARD_BG,
+            padx=10,
+            pady=3,
+            relief="flat",
+        )
+        self.hema_count_lbl.pack(side=tk.RIGHT, padx=(0, 10))
+
+        # HEMA Treeview
+        tree_frame = tk.Frame(self.tab_hema, bg=BG_DARK)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        h_cols = [
+            ("time", "Time", 75, "center"),
+            ("symbol", "Symbol", 90, "w"),
+            ("tf", "TF", 55, "center"),
+            ("signal", "Signal Action", 150, "center"),
+            ("regime", "Market Regime", 160, "center"),
+            ("price", "Price (₹)", 85, "e"),
+            ("trend_score", "Trend (0-10)", 85, "center"),
+            ("sideways_score", "Sideways (0-7)", 95, "center"),
+            ("hema", "HEMA(9)", 80, "e"),
+            ("t3_fast", "T3 Fast(13)", 80, "e"),
+            ("t3_slow", "T3 Slow(16)", 80, "e"),
+            ("adx", "ADX(14)", 65, "center"),
+            ("atr_ratio", "ATR / MA", 75, "center"),
+            ("slope", "Slope %", 70, "center"),
+            ("comp", "Consol %", 75, "center"),
+            ("vol", "Vol Surge", 75, "center"),
+            ("reasons", "Confluence Factors & Anti-Sideways Check", 320, "w"),
+        ]
+
+        self.hema_tree = ttk.Treeview(
+            tree_frame,
+            columns=[c[0] for c in h_cols],
+            show="headings",
+            selectmode="browse",
+        )
+
+        for col_id, col_name, width, align in h_cols:
+            self.hema_tree.heading(col_id, text=col_name, anchor=align)
+            self.hema_tree.column(col_id, width=width, anchor=align, stretch=(col_id in ("reasons", "regime", "signal")))
+
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.hema_tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.hema_tree.xview)
+        self.hema_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        self.hema_tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+
+        # Configure Color Tags
+        self.hema_tree.tag_configure("buy", background="#064e3b", foreground="#34d399")
+        self.hema_tree.tag_configure("sell", background="#4c0519", foreground="#fb7185")
+        self.hema_tree.tag_configure("sideways", background="#3b2907", foreground="#fbbf24")
+        self.hema_tree.tag_configure("chop", background="#2a1538", foreground="#c084fc")
+        self.hema_tree.tag_configure("alt_row", background=TREE_ALT)
+
+        self.hema_tree.bind("<Double-1>", self._on_hema_double_click)
+
+    def _on_hema_double_click(self, event):
+        """Double clicking a HEMA signal row opens its Candlestick & CPR chart in Tab 3."""
+        sel = self.hema_tree.selection()
+        if not sel:
+            return
+        item = self.hema_tree.item(sel[0])
+        vals = item.get("values", [])
+        if len(vals) >= 2:
+            sym = str(vals[1]).strip()
+            self.open_chart_for_symbol(sym)
+
+    def _trigger_hema_scan(self):
+        """Triggers asynchronous scan across universe for selected or all timeframes."""
+        if not self.scanner:
+            messagebox.showinfo("HEMA Scan", "Scanner backend is not running or available.")
+            return
+        selected_tf = self.hema_tf_var.get()
+        tfs = ["15m", "30m", "1h", "2h", "4h", "1d"] if selected_tf == "ALL" else [selected_tf]
+        self.hema_count_lbl.config(text=f"🔄 Scanning {tfs} across F&O universe...")
+        def _do_scan():
+            try:
+                self.scanner.scan_hema_universe(timeframes=tfs)
+                self.hema_dirty = True
+            except Exception as ex:
+                logger.error(f"Error executing HEMA scan: {ex}")
+        threading.Thread(target=_do_scan, daemon=True).start()
+
+    def _render_hema_signals(self):
+        """Renders filtered and sorted HEMA + T3 signals in Tab 4 Treeview."""
+        for item in self.hema_tree.get_children():
+            self.hema_tree.delete(item)
+
+        tf_filter = self.hema_tf_var.get()
+        sig_filter = self.hema_signal_var.get()
+        reg_filter = self.hema_regime_var.get()
+        score_filter = self.hema_score_var.get()
+        side_filter = self.hema_sideways_filter_var.get()
+        search_q = self.hema_search_var.get().strip().upper()
+        sort_by = self.hema_sort_var.get()
+
+        filtered = []
+        for s in self.cached_hema_signals:
+            sym = str(s.get("symbol", "")).upper()
+            if search_q and search_q not in sym:
+                continue
+
+            s_tf = str(s.get("timeframe", ""))
+            if tf_filter != "ALL" and s_tf.lower() != tf_filter.lower():
+                continue
+
+            s_type = str(s.get("signal_type", "")).upper()
+            if sig_filter == "🟢 BUY (CALL Entry)" and "BUY" not in s_type:
+                continue
+            elif sig_filter == "🔴 SELL (PUT Entry)" and "SELL" not in s_type:
+                continue
+            elif sig_filter == "⚠️ SIDEWAYS / NO-TRADE" and "SIDEWAYS" not in s_type:
+                continue
+            elif sig_filter == "HOLD" and "HOLD" not in s_type:
+                continue
+
+            s_regime = str(s.get("regime", "")).upper()
+            if reg_filter == "🚀 TRENDING" and "TRENDING" not in s_regime:
+                continue
+            elif reg_filter == "⚠️ SIDEWAYS / NO-TRADE" and "SIDEWAYS" not in s_regime:
+                continue
+            elif reg_filter == "🛑 CHOP COOLDOWN" and "CHOP" not in s_regime:
+                continue
+
+            t_score = int(s.get("trend_score", 0))
+            if ">= 7" in score_filter and t_score < 7:
+                continue
+            elif ">= 5" in score_filter and t_score < 5:
+                continue
+
+            s_score = int(s.get("sideways_score", 0))
+            if "Sideways < 3" in side_filter and s_score >= 3:
+                continue
+            elif "Sideways (>= 3)" in side_filter and s_score < 3:
+                continue
+
+            filtered.append(s)
+
+        # Sorting
+        if sort_by == "⏱️ Time (Newest First)":
+            filtered.sort(key=lambda x: str(x.get("timestamp", "")), reverse=True)
+        elif sort_by == "⏱️ Time (Oldest First)":
+            filtered.sort(key=lambda x: str(x.get("timestamp", "")))
+        elif sort_by == "🔥 Trend Score (Highest First)":
+            filtered.sort(key=lambda x: (x.get("trend_score", 0), str(x.get("timestamp", ""))), reverse=True)
+        elif sort_by == "⚠️ Sideways Score (Lowest First)":
+            filtered.sort(key=lambda x: (x.get("sideways_score", 99), str(x.get("timestamp", ""))))
+        elif sort_by == "🔤 Symbol (A to Z)":
+            filtered.sort(key=lambda x: str(x.get("symbol", "")))
+
+        unique_syms = {s.get("symbol") for s in filtered if s.get("symbol")}
+        self.hema_count_lbl.config(text=f"🎯 Showing: {len(filtered)} Signals ({len(unique_syms)} Stocks)")
+
+        for idx, s in enumerate(filtered):
+            sig_type = str(s.get("signal_type", ""))
+            regime = str(s.get("regime", ""))
+            tags = []
+
+            if "BUY" in sig_type:
+                tags.append("buy")
+            elif "SELL" in sig_type:
+                tags.append("sell")
+            elif "SIDEWAYS" in regime or "SIDEWAYS" in sig_type:
+                tags.append("sideways")
+            elif "CHOP" in regime:
+                tags.append("chop")
+
+            if idx % 2 == 1:
+                tags.append("alt_row")
+
+            reasons_list = s.get("conditions_met", [])
+            reasons_str = " • ".join(reasons_list) if reasons_list else "--"
+
+            self.hema_tree.insert(
+                "",
+                tk.END,
+                values=(
+                    str(s.get("timestamp", "--")),
+                    str(s.get("symbol", "--")),
+                    str(s.get("timeframe", "--")).upper(),
+                    sig_type,
+                    regime,
+                    f"{float(s.get('price', 0.0)):.2f}",
+                    f"{int(s.get('trend_score', 0))}/10",
+                    f"{int(s.get('sideways_score', 0))}/7",
+                    f"{float(s.get('hema', 0.0)):.2f}",
+                    f"{float(s.get('t3_fast', 0.0)):.2f}",
+                    f"{float(s.get('t3_slow', 0.0)):.2f}",
+                    f"{float(s.get('adx', 0.0)):.1f}",
+                    f"{float(s.get('atr_ratio', 0.0)):.2f}x",
+                    f"{float(s.get('ema_slope_pct', 0.0)):+.3f}%",
+                    f"{float(s.get('consolidation_compression_pct', 0.0)):.2f}%",
+                    f"{float(s.get('volume_ratio', 0.0)):.1f}x",
+                    reasons_str,
+                ),
+                tags=tuple(tags),
+            )
+
+        if len(self.hema_tree.get_children()) == 0:
+            if not self.cached_hema_signals:
+                self.hema_tree.insert("", tk.END, values=(
+                    "--:--:--", "SCANNER READY", "--", "READY", "Click '🚀 Scan Multi-Timeframes' to scan 15m, 30m, 1h, 2h, 4h, 1d",
+                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "Or wait for real-time multi-timeframe candle closures."
+                ), tags=("sideways",))
+            else:
+                self.hema_tree.insert("", tk.END, values=(
+                    "--:--:--", "--", "--", "NO MATCH", "No HEMA+T3 signals matching selected timeframe or filters.",
+                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "Try changing Timeframe dropdown to 'ALL' or resetting filters."
+                ))
+
+    def _export_hema_csv(self):
+        """Exports currently loaded HEMA + T3 signals into a CSV file."""
+        if not self.cached_hema_signals:
+            messagebox.showinfo("Export CSV", "No HEMA + T3 signals available to export.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
+            initialfile=f"hema_t3_signals_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "Time", "Symbol", "Timeframe", "Signal Action", "Market Regime", "Price",
+                    "Trend Score", "Sideways Score", "HEMA(9)", "T3 Fast(13)", "T3 Slow(16)",
+                    "ADX(14)", "ATR/MA Ratio", "EMA Slope %", "Consolidation %", "Volume Ratio", "Confluence Factors"
+                ])
+                for s in self.cached_hema_signals:
+                    writer.writerow([
+                        s.get("timestamp"),
+                        s.get("symbol"),
+                        s.get("timeframe"),
+                        s.get("signal_type"),
+                        s.get("regime"),
+                        s.get("price"),
+                        s.get("trend_score"),
+                        s.get("sideways_score"),
+                        s.get("hema"),
+                        s.get("t3_fast"),
+                        s.get("t3_slow"),
+                        s.get("adx"),
+                        s.get("atr_ratio"),
+                        s.get("ema_slope_pct"),
+                        s.get("consolidation_compression_pct"),
+                        s.get("volume_ratio"),
+                        "; ".join(s.get("conditions_met", [])),
+                    ])
+            messagebox.showinfo("Export Successful", f"Saved {len(self.cached_hema_signals)} HEMA+T3 signals to:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Could not export CSV: {e}")

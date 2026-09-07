@@ -1,5 +1,13 @@
 import asyncio
 from contextlib import asynccontextmanager
+import starlette.routing
+_orig_router_init = starlette.routing.Router.__init__
+def _compat_router_init(self, *args, **kwargs):
+    kwargs.pop("on_startup", None)
+    kwargs.pop("on_shutdown", None)
+    return _orig_router_init(self, *args, **kwargs)
+starlette.routing.Router.__init__ = _compat_router_init
+
 from pathlib import Path
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
