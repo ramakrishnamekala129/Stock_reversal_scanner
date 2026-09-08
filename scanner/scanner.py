@@ -266,7 +266,8 @@ class FNOIntradayScanner:
                 self.excel_mgr.add_signal(sig)
 
         # 3. Evaluate HEMA + T3 Strategy with Anti-Sideways / Market-Regime Filter
-        if len(df_history) >= 5:
+        # Only evaluate on supported HEMA multi-timeframes (e.g. 15m, 30m, 1h, 2h, 4h, 1d)
+        if len(df_history) >= 5 and timeframe in config.HEMA_TIMEFRAMES:
             try:
                 hema_sig = self.hema_engine.evaluate(df_history, symbol=symbol, timeframe=timeframe)
                 if hema_sig:

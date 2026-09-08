@@ -45,6 +45,7 @@ CANDLE_DURATION_MINUTES = 5
 DEFAULT_MARKET_MODE = "FUTURES"
 SCANNER_TIMEFRAMES = ["3m", "5m", "15m"]
 TIMEFRAME_MINUTES = {"3m": 3, "5m": 5, "15m": 15}
+HEMA_TIMEFRAMES = ["15m", "30m", "1h", "2h", "4h", "1d"]
 
 # Volume Confirmation
 VOLUME_LOOKBACK = 20

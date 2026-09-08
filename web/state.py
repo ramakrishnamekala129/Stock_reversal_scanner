@@ -139,6 +139,10 @@ class WebDashboardState:
     def add_hema_signal(self, signal: Any):
         """Appends or updates a HEMA + T3 regime signal and broadcasts to WebSockets."""
         sig_dict = signal.to_dict() if hasattr(signal, "to_dict") else dict(signal)
+        tf_val = str(sig_dict.get("timeframe", "")).lower()
+        if tf_val not in {"15m", "30m", "1h", "2h", "4h", "1d"}:
+            return
+
         ts_val = sig_dict.get("timestamp")
         if isinstance(ts_val, datetime):
             if ts_val.tzinfo is None:
@@ -179,6 +183,10 @@ class WebDashboardState:
         formatted = []
         for signal in signals:
             sig_dict = signal.to_dict() if hasattr(signal, "to_dict") else dict(signal)
+            tf_val = str(sig_dict.get("timeframe", "")).lower()
+            if tf_val not in {"15m", "30m", "1h", "2h", "4h", "1d"}:
+                continue
+
             ts_val = sig_dict.get("timestamp")
             if isinstance(ts_val, datetime):
                 if ts_val.tzinfo is None:

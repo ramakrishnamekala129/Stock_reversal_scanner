@@ -1913,9 +1913,13 @@ class ScannerTkinterGUI:
             if search_q and search_q not in sym:
                 continue
 
-            s_tf = str(s.get("timeframe", ""))
-            if tf_filter != "ALL" and s_tf.lower() != tf_filter.lower():
-                continue
+            s_tf = str(s.get("timeframe", "")).lower()
+            if tf_filter != "ALL":
+                if s_tf != tf_filter.lower():
+                    continue
+            else:
+                if s_tf not in {"15m", "30m", "1h", "2h", "4h", "1d"}:
+                    continue
 
             s_type = str(s.get("signal_type", "")).upper()
             if sig_filter == "🟢 BUY (CALL Entry)" and "BUY" not in s_type:
