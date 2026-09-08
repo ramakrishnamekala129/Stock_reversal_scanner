@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 import urllib.parse
 import httpx
 import pandas as pd
@@ -18,6 +18,9 @@ import pytz
 
 import config
 from database.repository import DatabaseRepository
+from database.historical_db import HistoricalCandleDatabase
+from market.gap_detector import GapDetector
+from market.gap_filler import GapFiller
 from upstox.rest import UpstoxRestClient
 
 logger = logging.getLogger(__name__)
@@ -80,6 +83,9 @@ class HistoricalDataLoader:
     def __init__(self, rest_client: UpstoxRestClient, db: Optional[DatabaseRepository] = None):
         self.rest_client = rest_client
         self.db = db or DatabaseRepository()
+        self.hist_db = HistoricalCandleDatabase()
+        self.gap_detector = GapDetector(self.hist_db)
+        self.gap_filler = GapFiller(self.hist_db, access_token=rest_client.access_token)
         self._pd_cache: Dict[str, PreviousDayOHLCV] = {}
         self._raw_1m_cache: Dict[str, Tuple[List[Any], float]] = {}
         self._db_candle_cache: Dict[str, pd.DataFrame] = {}
@@ -621,6 +627,14 @@ class HistoricalDataLoader:
             cache_entry = self._raw_1m_cache.get(sym)
             raw_candles = cache_entry[0] if cache_entry else None
 
+            # 0. Check HistoricalCandleDatabase (stores complete multi-day 1m candles)
+            df_hist_1m = None
+            if hasattr(self, "hist_db") and self.hist_db:
+                try:
+                    df_hist_1m = self.hist_db.get_candles_by_symbol(sym, limit=3500)
+                except Exception:
+                    df_hist_1m = None
+
             # 1. Check in-memory candle engine (fastest: 0.00001s, zero disk I/O)
             df_db = None
             if candle_engine:
@@ -645,22 +659,43 @@ class HistoricalDataLoader:
 
             for tf in timeframes:
                 df = None
-                if raw_candles:
-                    df = self._process_raw_1m_to_5m(raw_candles, timeframe=tf)
+                tf_key = str(tf).lower()
+                p_rule = rule_map.get(tf_key, "15min")
+                is_daily = str(p_rule).upper().endswith("D") or "DAY" in str(p_rule).upper()
+                resample_kwargs = {"origin": "start_day"}
+                if not is_daily:
+                    resample_kwargs["offset"] = "15min"
 
-                # Fallback or merge with multi-day historical 5m candles
+                # 0. Resample from HistoricalCandleDatabase if available
+                if df_hist_1m is not None and len(df_hist_1m) >= 15:
+                    try:
+                        df_res_1m = df_hist_1m.copy()
+                        if not pd.api.types.is_datetime64_any_dtype(df_res_1m["timestamp"]):
+                            df_res_1m["timestamp"] = pd.to_datetime(df_res_1m["timestamp"])
+                        df_res_1m = df_res_1m.sort_values("timestamp").set_index("timestamp")
+                        df = df_res_1m.resample(p_rule, **resample_kwargs).agg({
+                            "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"
+                        }).dropna().reset_index()
+                    except Exception as err:
+                        logger.debug(f"Hist_db resample error for {sym} {tf}: {err}")
+                        df = None
+
+                # 1. Fallback or merge with today's raw 1m broker candles
+                if raw_candles:
+                    raw_df = self._process_raw_1m_to_5m(raw_candles, timeframe=tf)
+                    if raw_df is not None and not raw_df.empty:
+                        if df is not None and not df.empty:
+                            df = pd.concat([df, raw_df], ignore_index=True).drop_duplicates(subset=["timestamp"], keep="last").sort_values("timestamp").reset_index(drop=True)
+                        else:
+                            df = raw_df
+
+                # 2. Fallback or merge with multi-day historical 5m candles
                 if (df is None or len(df) < 20) and df_db is not None and not df_db.empty:
-                    tf_key = str(tf).lower()
-                    p_rule = rule_map.get(tf_key, "15min")
-                    is_daily = str(p_rule).upper().endswith("D") or "DAY" in str(p_rule).upper()
                     try:
                         df_res = df_db.copy()
                         if not pd.api.types.is_datetime64_any_dtype(df_res["timestamp"]):
                             df_res["timestamp"] = pd.to_datetime(df_res["timestamp"])
                         df_res = df_res.sort_values("timestamp").set_index("timestamp")
-                        resample_kwargs = {"origin": "start_day"}
-                        if not is_daily:
-                            resample_kwargs["offset"] = "15min"
                         resampled = df_res.resample(p_rule, **resample_kwargs).agg({
                             "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"
                         }).dropna().reset_index()
@@ -687,3 +722,33 @@ class HistoricalDataLoader:
                 results[sym] = tf_dict
 
         return results
+
+    def ensure_historical_candles_complete(
+        self,
+        universe: Dict[str, Dict[str, Any]],
+        lookback_days: int = config.HISTORICAL_LOOKBACK_DAYS,
+        on_progress: Optional[Callable[[int, int, str], None]] = None,
+    ) -> Dict[str, int]:
+        """
+        Scans all universe symbols for missing dates and gaps in the historical 1m database
+        and automatically backfills them using GapFiller via Upstox API asynchronously.
+        Does not block GUI, designed to run in a background worker thread.
+        """
+        if not getattr(config, "ENABLE_HISTORICAL_GAP_FILLER", True):
+            logger.info("Historical gap filler is disabled in config.")
+            return {}
+
+        logger.info(f"Starting historical gap reconciliation for {len(universe)} symbols (lookback={lookback_days}d)...")
+        if hasattr(self.rest_client, "access_token") and self.rest_client.access_token:
+            self.gap_filler.access_token = self.rest_client.access_token
+
+        try:
+            return self.gap_filler.reconcile_universe_gaps(
+                universe=universe,
+                lookback_days=lookback_days,
+                on_progress=on_progress,
+            )
+        except Exception as e:
+            logger.error(f"Error in ensure_historical_candles_complete: {e}", exc_info=True)
+            return {}
+

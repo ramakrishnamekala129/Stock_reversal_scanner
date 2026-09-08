@@ -60,6 +60,12 @@ HEMA_TIMEFRAMES = ["15m", "30m", "1h", "2h", "4h", "1d"]
 # Feature Flags (Tab 1 5-Minute Reversal Signals disabled by default per user request)
 ENABLE_TAB1_REVERSAL_SIGNALS = os.getenv("ENABLE_TAB1_REVERSAL_SIGNALS", "false").lower() in ("true", "1", "yes")
 
+# Historical Candle Database & Automated Gap Filler Settings
+HISTORICAL_DB_PATH = DATA_DIR / "historical_candles.db"
+ENABLE_HISTORICAL_GAP_FILLER = os.getenv("ENABLE_HISTORICAL_GAP_FILLER", "true").lower() in ("true", "1", "yes")
+HISTORICAL_LOOKBACK_DAYS = int(os.getenv("HISTORICAL_LOOKBACK_DAYS", "30"))
+HISTORICAL_CANDLE_GRANULARITY = os.getenv("HISTORICAL_CANDLE_GRANULARITY", "1minute")
+
 # Volume Confirmation
 VOLUME_LOOKBACK = 20
 MIN_RELATIVE_VOLUME = 1.2

@@ -163,6 +163,24 @@ class FNOIntradayScanner:
         if self.web_server:
             self.web_server.start()
 
+        # 6b. Launch background historical gap reconciliation (non-blocking)
+        if getattr(config, "ENABLE_HISTORICAL_GAP_FILLER", True) and self.auth.has_access_token:
+            def _bg_gap_reconcile():
+                try:
+                    logger.info("Background worker started: verifying historical database completeness...")
+                    filled = self.hist_loader.ensure_historical_candles_complete(self._universe)
+                    total_filled = sum(filled.values())
+                    if total_filled > 0:
+                        logger.info(f"Background gap reconciliation complete: Backfilled {total_filled} candles across {len(filled)} symbols.")
+                    else:
+                        logger.info("Background gap reconciliation complete: All historical candles are up-to-date.")
+                except Exception as ex:
+                    logger.warning(f"Background gap reconciliation encountered an error: {ex}")
+
+            gap_thread = threading.Thread(target=_bg_gap_reconcile, name="HistGapReconcilerThread", daemon=True)
+            gap_thread.start()
+
+
         # 7. Display Startup Banner
         ConsoleFormatter.print_startup_banner(
             rest_status=rest_status,
