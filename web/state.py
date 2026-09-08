@@ -26,6 +26,7 @@ class WebDashboardState:
         self.live_prices: Dict[str, dict] = {}
         self.signals: List[dict] = []
         self.hema_signals: List[dict] = []
+        self.chartink_signals: List[dict] = []
         self.stats: Dict[str, Any] = {
             "symbols_scanned": 0,
             "candles_processed": 0,
@@ -231,6 +232,92 @@ class WebDashboardState:
             "count": len(formatted),
         })
 
+    def add_chartink_signal(self, signal: Any):
+        """Appends or updates a Chartink intraday breakout signal and broadcasts to WebSockets."""
+        sig_dict = signal.to_dict() if hasattr(signal, "to_dict") else dict(signal)
+        ts_val = sig_dict.get("timestamp")
+        if isinstance(ts_val, datetime):
+            if ts_val.tzinfo is None:
+                ts_val = ts_val.replace(tzinfo=IST_TZ)
+            else:
+                ts_val = ts_val.astimezone(IST_TZ)
+            sig_dict["timestamp"] = ts_val.strftime("%H:%M:%S")
+        elif isinstance(ts_val, str) and "T" in ts_val:
+            try:
+                dt = datetime.fromisoformat(ts_val)
+                if dt.tzinfo is not None:
+                    dt = dt.astimezone(IST_TZ)
+                sig_dict["timestamp"] = dt.strftime("%H:%M:%S")
+            except Exception:
+                pass
+
+        with self._lock:
+            existing_idx = None
+            for idx, item in enumerate(self.chartink_signals):
+                if (item.get("symbol") == sig_dict.get("symbol")
+                    and item.get("strategy_tag") == sig_dict.get("strategy_tag")
+                    and item.get("timestamp") == sig_dict.get("timestamp")):
+                    existing_idx = idx
+                    break
+            if existing_idx is not None:
+                self.chartink_signals[existing_idx] = sig_dict
+            else:
+                self.chartink_signals.insert(0, sig_dict)
+                if len(self.chartink_signals) > 3000:
+                    self.chartink_signals.pop()
+
+        self._broadcast({
+            "type": "NEW_CHARTINK_SIGNAL",
+            "data": sig_dict,
+        })
+
+    def add_chartink_signals_batch(self, signals: List[Any]):
+        """Batch-updates Chartink intraday breakout signals under atomic lock."""
+        if not signals:
+            return
+        formatted = []
+        for signal in signals:
+            sig_dict = signal.to_dict() if hasattr(signal, "to_dict") else dict(signal)
+            ts_val = sig_dict.get("timestamp")
+            if isinstance(ts_val, datetime):
+                if ts_val.tzinfo is None:
+                    ts_val = ts_val.replace(tzinfo=IST_TZ)
+                else:
+                    ts_val = ts_val.astimezone(IST_TZ)
+                sig_dict["timestamp"] = ts_val.strftime("%H:%M:%S")
+            elif isinstance(ts_val, str) and "T" in ts_val:
+                try:
+                    dt = datetime.fromisoformat(ts_val)
+                    if dt.tzinfo is not None:
+                        dt = dt.astimezone(IST_TZ)
+                    sig_dict["timestamp"] = dt.strftime("%H:%M:%S")
+                except Exception:
+                    pass
+            formatted.append(sig_dict)
+
+        with self._lock:
+            existing_keys = {
+                (s.get("symbol"), s.get("strategy_tag"), s.get("timestamp")): idx
+                for idx, s in enumerate(self.chartink_signals)
+            }
+            new_items = []
+            for s in formatted:
+                key = (s.get("symbol"), s.get("strategy_tag"), s.get("timestamp"))
+                if key in existing_keys:
+                    self.chartink_signals[existing_keys[key]] = s
+                else:
+                    new_items.append(s)
+            if new_items:
+                self.chartink_signals = new_items + self.chartink_signals
+
+            if len(self.chartink_signals) > 3000:
+                self.chartink_signals = self.chartink_signals[:3000]
+
+        self._broadcast({
+            "type": "BATCH_CHARTINK_SIGNALS",
+            "count": len(formatted),
+        })
+
     def update_signal_trigger(self, symbol: str, timestamp: str, pattern: str, new_status: str, trigger_time: str = ""):
         """Updates the trigger confirmation status of an existing signal and broadcasts update."""
         updated_sig = None
@@ -371,6 +458,7 @@ class WebDashboardState:
                 "market": self._cached_market_data,
                 "signals": list(self.signals),
                 "hema_signals": list(self.hema_signals),
+                "chartink_signals": list(self.chartink_signals),
                 "stats": dict(self.stats),
                 "price_version": self.price_version,
             }

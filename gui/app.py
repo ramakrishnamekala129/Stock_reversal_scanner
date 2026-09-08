@@ -196,6 +196,14 @@ class ScannerTkinterGUI:
         self.hema_dirty = False
         self.last_hema_render_time = 0.0
 
+        # Chartink Intraday Screener Filters & State
+        self.cached_chartink_signals: List[dict] = []
+        self.chartink_strategy_var = tk.StringVar(value="ALL STRATEGIES")
+        self.chartink_search_var = tk.StringVar(value="")
+        self.chartink_sort_var = tk.StringVar(value="⏱️ Time (Newest First)")
+        self.chartink_dirty = False
+        self.last_chartink_render_time = 0.0
+
         # Setup Styling & UI Components
         self._setup_styles()
         self._build_header()
@@ -229,9 +237,11 @@ class ScannerTkinterGUI:
             is_running = getattr(self.scanner, "_is_running", False)
             if hasattr(self, "scanner") and self.scanner and (has_univ or is_running):
                 if not getattr(self.scanner, "_is_hema_scanning", False):
-                    # Auto-scan if Tab 4 is empty or scanner is running
+                    # Auto-scan if Tab 4/5 is empty or scanner is running
                     if not self.cached_hema_signals or is_running:
                         self._trigger_hema_scan(is_auto=True)
+                    if not self.cached_chartink_signals or is_running:
+                        self._trigger_chartink_scan(is_auto=True)
         except Exception:
             pass
         # If not loaded yet, retry in 3 seconds; otherwise auto-scan every 60 seconds
@@ -421,6 +431,11 @@ class ScannerTkinterGUI:
         self.notebook.add(self.tab_chart, text="  📈 5M Candle & CPR Chart  ")
         self.chart_frame = CandleChartFrame(self.tab_chart, scanner=self.scanner, db_repo=self.db_repo)
         self.chart_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Tab 4: Chartink Intraday Screener (Live Multi-Strategy Breakout)
+        self.tab_chartink = tk.Frame(self.notebook, bg=BG_DARK)
+        self.notebook.add(self.tab_chartink, text="  🎯 Chartink Intraday (0)  ")
+        self._build_chartink_tab()
 
         # 5-Minute Reversal Signals Tab (Disabled per user request; toggled via config.ENABLE_TAB1_REVERSAL_SIGNALS)
         self.tab_signals = tk.Frame(self.notebook, bg=BG_DARK)
@@ -878,6 +893,8 @@ class ScannerTkinterGUI:
                 self.chart_dirty = True
             elif hasattr(self, "tab_hema") and cur == str(self.tab_hema):
                 self.hema_dirty = True
+            elif hasattr(self, "tab_chartink") and cur == str(self.tab_chartink):
+                self.chartink_dirty = True
         except Exception:
             pass
 
@@ -974,6 +991,12 @@ class ScannerTkinterGUI:
                     self.cached_hema_signals = list(hema_sigs)
                     self.hema_dirty = True
 
+            chartink_sigs = snapshot.get("chartink_signals", [])
+            if chartink_sigs:
+                if len(chartink_sigs) != len(self.cached_chartink_signals) or not self.cached_chartink_signals:
+                    self.cached_chartink_signals = list(chartink_sigs)
+                    self.chartink_dirty = True
+
             ws_status = stats.get("ws_status", "INITIALIZING...")
             if ws_status == "CONNECTED":
                 new_status = "🟢 LIVE CONNECTED"
@@ -1046,6 +1069,13 @@ class ScannerTkinterGUI:
                             self.last_hema_render_time = now
                             self.hema_dirty = False
                             self._render_hema_signals()
+
+                    # If on Chartink Intraday Screener tab: throttle redraws to at most once every 1.5 seconds
+                    elif hasattr(self, "tab_chartink") and cur_tab == str(self.tab_chartink):
+                        if self.chartink_dirty and (now - self.last_chartink_render_time >= 1.5):
+                            self.last_chartink_render_time = now
+                            self.chartink_dirty = False
+                            self._render_chartink_signals()
 
                 except Exception:
                     pass
@@ -2117,5 +2147,334 @@ class ScannerTkinterGUI:
                         "; ".join(s.get("conditions_met", [])),
                     ])
             messagebox.showinfo("Export Successful", f"Saved {len(self.cached_hema_signals)} HEMA+T3 signals to:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Could not export CSV: {e}")
+
+    def _build_chartink_tab(self):
+        """Builds Tab: Chartink Intraday Screener (Formula from chartink.com/screener/intraday-screener-27102787)."""
+        toolbar = tk.Frame(self.tab_chartink, bg=BG_DARK, pady=6)
+        toolbar.pack(fill=tk.X)
+
+        row1 = tk.Frame(toolbar, bg=BG_DARK, pady=2)
+        row1.pack(fill=tk.X)
+
+        # Strategy Sub-Filter
+        tk.Label(row1, text="Strategy:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        strat_combo = ttk.Combobox(
+            row1,
+            textvariable=self.chartink_strategy_var,
+            values=[
+                "ALL STRATEGIES",
+                "Monthly Breakout (Sub 1)",
+                "20W High + 200 SMA (Sub 2)",
+                "MA + RSI + Vol Surge (Sub 3)",
+            ],
+            state="readonly",
+            width=26,
+        )
+        strat_combo.pack(side=tk.LEFT, padx=(0, 10))
+        strat_combo.bind("<<ComboboxSelected>>", lambda e: self._render_chartink_signals())
+
+        # Search Entry
+        tk.Label(row1, text="Search:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        search_entry = ttk.Entry(row1, textvariable=self.chartink_search_var, width=14)
+        search_entry.pack(side=tk.LEFT, padx=(0, 10))
+        search_entry.bind("<KeyRelease>", lambda e: self._debounce("chartink_search", 250, self._render_chartink_signals))
+
+        # Sort Combo
+        tk.Label(row1, text="Sort By:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        sort_combo = ttk.Combobox(
+            row1,
+            textvariable=self.chartink_sort_var,
+            values=[
+                "⏱️ Time (Newest First)",
+                "⏱️ Time (Oldest First)",
+                "🚀 Pivot Diff % (Highest First)",
+                "💰 Turnover (Highest First)",
+                "📊 RSI(14) (Highest First)",
+                "🔤 Symbol (A to Z)",
+            ],
+            state="readonly",
+            width=24,
+        )
+        sort_combo.pack(side=tk.LEFT, padx=(0, 10))
+        sort_combo.bind("<<ComboboxSelected>>", lambda e: self._render_chartink_signals())
+
+        # Scan Button
+        scan_btn = tk.Button(
+            row1,
+            text="⚡ Scan Chartink",
+            command=self._trigger_chartink_scan,
+            bg="#2563eb",
+            fg="#ffffff",
+            activebackground="#1d4ed8",
+            activeforeground="#ffffff",
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            padx=10,
+            pady=3,
+            cursor="hand2",
+        )
+        scan_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        # Export CSV Button
+        export_btn = tk.Button(
+            row1,
+            text="📥 Export CSV",
+            command=self._export_chartink_csv,
+            bg=CARD_BG,
+            fg=ACCENT_BLUE,
+            activebackground=CARD_BORDER,
+            activeforeground=TEXT_MAIN,
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            padx=10,
+            pady=3,
+            cursor="hand2",
+        )
+        export_btn.pack(side=tk.RIGHT)
+
+        # Dynamic Counter Badge
+        self.chartink_count_lbl = tk.Label(
+            row1,
+            text="🎯 Showing: 0 Candidates",
+            font=("Segoe UI", 9, "bold"),
+            fg="#38bdf8",
+            bg=CARD_BG,
+            padx=10,
+            pady=3,
+            relief="flat",
+        )
+        self.chartink_count_lbl.pack(side=tk.RIGHT, padx=(0, 10))
+
+        # Chartink Treeview
+        tree_frame = tk.Frame(self.tab_chartink, bg=BG_DARK)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        c_cols = [
+            ("time", "Time", 75, "center"),
+            ("symbol", "Symbol", 90, "w"),
+            ("price", "Price (₹)", 85, "e"),
+            ("strategy", "Matched Sub-Strategy", 220, "w"),
+            ("pivot_diff", "Pivot Clearance %", 110, "center"),
+            ("turnover", "Turnover (Cr)", 95, "e"),
+            ("rsi", "RSI(14)", 70, "center"),
+            ("ma_crossed", "MA Crossed", 100, "center"),
+            ("vol_surge", "Vol Surge", 80, "center"),
+            ("reasons", "Chartink Confluence & Breakout Factors", 360, "w"),
+        ]
+
+        self.chartink_tree = ttk.Treeview(
+            tree_frame,
+            columns=[c[0] for c in c_cols],
+            show="headings",
+            selectmode="browse",
+        )
+
+        for col_id, col_name, width, align in c_cols:
+            self.chartink_tree.heading(col_id, text=col_name, anchor=align)
+            self.chartink_tree.column(col_id, width=width, anchor=align, stretch=(col_id in ("strategy", "reasons")))
+
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.chartink_tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.chartink_tree.xview)
+        self.chartink_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        self.chartink_tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+
+        # Configure Color Tags
+        self.chartink_tree.tag_configure("sub1", background="#064e3b", foreground="#34d399")
+        self.chartink_tree.tag_configure("sub2", background="#1e3a8a", foreground="#60a5fa")
+        self.chartink_tree.tag_configure("sub3", background="#4c1d95", foreground="#c084fc")
+        self.chartink_tree.tag_configure("alt_row", background=TREE_ALT)
+
+        self.chartink_tree.bind("<Double-1>", self._on_chartink_double_click)
+
+    def _on_chartink_double_click(self, event):
+        """Double clicking a Chartink candidate opens its Candlestick & CPR chart in Tab 3."""
+        sel = self.chartink_tree.selection()
+        if not sel:
+            return
+        item = self.chartink_tree.item(sel[0])
+        vals = item.get("values", [])
+        if len(vals) >= 2:
+            sym = str(vals[1]).strip()
+            self.open_chart_for_symbol(sym)
+
+    def _trigger_chartink_scan(self, is_auto: bool = False):
+        """Triggers parallel scan across universe evaluating the exact Chartink Screener conditions."""
+        if not self.scanner:
+            if not is_auto:
+                self.chartink_count_lbl.config(text="⚠️ Scanner backend initializing...")
+            return
+        if getattr(self.scanner, "_is_chartink_scanning", False):
+            if not is_auto:
+                self.chartink_count_lbl.config(text="⏳ Scan already in progress...")
+            return
+        has_univ = hasattr(self.scanner, "_universe") and bool(self.scanner._universe)
+        is_running = getattr(self.scanner, "_is_running", False)
+        if not has_univ and not is_running:
+            if not is_auto:
+                self.chartink_count_lbl.config(text="⏳ Scanner starting up, please wait...")
+            return
+
+        self.chartink_count_lbl.config(text="🔄 Scanning Chartink Formula...")
+
+        def _do_scan():
+            try:
+                res = self.scanner.scan_chartink_universe()
+                if isinstance(res, tuple):
+                    elapsed, n_tasks, n_sigs = res
+                    self.root.after(0, lambda: self.chartink_count_lbl.config(
+                        text=f"⚡ Scanned {n_tasks} stocks in {elapsed:.2f}s • {n_sigs} candidates"
+                    ))
+                self.chartink_dirty = True
+            except Exception as ex:
+                logger.error(f"Error executing Chartink scan: {ex}")
+
+        threading.Thread(target=_do_scan, daemon=True, name="ChartinkScanWorker").start()
+
+    def _render_chartink_signals(self):
+        """Renders filtered and sorted Chartink screener breakout candidates in Treeview."""
+        strat_filter = self.chartink_strategy_var.get()
+        search_q = self.chartink_search_var.get().strip().upper()
+        sort_by = self.chartink_sort_var.get()
+
+        filtered = []
+        for s in self.cached_chartink_signals:
+            sym = str(s.get("symbol", "")).upper()
+            if search_q and search_q not in sym:
+                continue
+
+            strat_tag = str(s.get("strategy_tag", ""))
+            if strat_filter != "ALL STRATEGIES":
+                if strat_filter not in strat_tag:
+                    continue
+
+            filtered.append(s)
+
+        # Sorting
+        if sort_by == "⏱️ Time (Newest First)":
+            filtered.sort(key=lambda x: str(x.get("timestamp", "")), reverse=True)
+        elif sort_by == "⏱️ Time (Oldest First)":
+            filtered.sort(key=lambda x: str(x.get("timestamp", "")))
+        elif sort_by == "🚀 Pivot Diff % (Highest First)":
+            filtered.sort(key=lambda x: float(x.get("median_pivot_diff_pct", 0.0)), reverse=True)
+        elif sort_by == "💰 Turnover (Highest First)":
+            filtered.sort(key=lambda x: float(x.get("turnover_cr", 0.0)), reverse=True)
+        elif sort_by == "📊 RSI(14) (Highest First)":
+            filtered.sort(key=lambda x: float(x.get("rsi_14", 0.0)), reverse=True)
+        elif sort_by == "🔤 Symbol (A to Z)":
+            filtered.sort(key=lambda x: str(x.get("symbol", "")))
+
+        unique_syms = {s.get("symbol") for s in filtered if s.get("symbol")}
+        self.chartink_count_lbl.config(text=f"🎯 Showing: {len(filtered)} Candidates ({len(unique_syms)} Stocks)")
+        if hasattr(self, "notebook") and hasattr(self, "tab_chartink"):
+            try:
+                self.notebook.tab(self.tab_chartink, text=f"  🎯 Chartink Intraday ({len(filtered)})  ")
+            except Exception:
+                pass
+
+        existing_children = list(self.chartink_tree.get_children())
+        target_ids = [f"{s.get('symbol')}_{s.get('strategy_tag')}_{idx}" for idx, s in enumerate(filtered)]
+
+        if not target_ids:
+            if existing_children:
+                self.chartink_tree.delete(*existing_children)
+            if not self.cached_chartink_signals:
+                self.chartink_tree.insert("", tk.END, values=(
+                    "--:--:--", "SCANNING...", "--", "Evaluating Chartink Formulas (Sub 1, Sub 2, Sub 3)...",
+                    "--", "--", "--", "--", "--", "Click 'Scan Chartink' to evaluate 210 F&O universe stocks."
+                ), tags=("sub1",))
+            else:
+                self.chartink_tree.insert("", tk.END, values=(
+                    "--:--:--", "--", "--", "NO MATCH",
+                    "--", "--", "--", "--", "--", "No breakout candidates matching active strategy filter."
+                ))
+            return
+
+        if not hasattr(self, "_chartink_row_cache"):
+            self._chartink_row_cache = {}
+
+        needs_full_rebuild = (existing_children != target_ids)
+        if needs_full_rebuild:
+            self._chartink_row_cache.clear()
+            if existing_children:
+                self.chartink_tree.delete(*existing_children)
+
+        for idx, s in enumerate(filtered):
+            strat = str(s.get("strategy_tag", ""))
+            tags = []
+            if "Sub 1" in strat or "Monthly" in strat:
+                tags.append("sub1")
+            elif "Sub 2" in strat or "20W" in strat:
+                tags.append("sub2")
+            elif "Sub 3" in strat or "MA" in strat:
+                tags.append("sub3")
+
+            if idx % 2 == 1:
+                tags.append("alt_row")
+
+            row_vals = (
+                str(s.get("timestamp", "--")),
+                str(s.get("symbol", "--")),
+                f"{float(s.get('price', 0.0)):.2f}",
+                strat,
+                f"+{float(s.get('median_pivot_diff_pct', 0.0)):.2f}%",
+                f"₹{float(s.get('turnover_cr', 0.0)):.1f} Cr",
+                f"{float(s.get('rsi_14', 0.0)):.1f}",
+                str(s.get("ma_crossed_str", "--")),
+                f"{float(s.get('vol_surge_ratio', 1.0)):.1f}x",
+                str(s.get("reasons_str", "--")),
+            )
+            tag_tuple = tuple(tags)
+            row_id = target_ids[idx]
+
+            if needs_full_rebuild:
+                self.chartink_tree.insert("", tk.END, iid=row_id, values=row_vals, tags=tag_tuple)
+                self._chartink_row_cache[row_id] = (row_vals, tag_tuple)
+            else:
+                cached = self._chartink_row_cache.get(row_id)
+                if cached is None or cached[0] != row_vals or cached[1] != tag_tuple:
+                    self.chartink_tree.item(row_id, values=row_vals, tags=tag_tuple)
+                    self._chartink_row_cache[row_id] = (row_vals, tag_tuple)
+
+    def _export_chartink_csv(self):
+        """Exports currently loaded Chartink candidates into a CSV file."""
+        if not self.cached_chartink_signals:
+            messagebox.showinfo("Export CSV", "No Chartink candidates available to export.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
+            initialfile=f"chartink_intraday_breakout_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "Time", "Symbol", "Price", "Strategy", "Pivot Clearance %",
+                    "Turnover (Cr)", "RSI(14)", "MA Crossed", "Vol Surge Ratio", "Confluences"
+                ])
+                for s in self.cached_chartink_signals:
+                    writer.writerow([
+                        s.get("timestamp"),
+                        s.get("symbol"),
+                        s.get("price"),
+                        s.get("strategy_tag"),
+                        s.get("median_pivot_diff_pct"),
+                        s.get("turnover_cr"),
+                        s.get("rsi_14"),
+                        s.get("ma_crossed_str"),
+                        s.get("vol_surge_ratio"),
+                        s.get("reasons_str"),
+                    ])
+            messagebox.showinfo("Export Successful", f"Saved {len(self.cached_chartink_signals)} Chartink breakout signals to:\n{path}")
         except Exception as e:
             messagebox.showerror("Export Failed", f"Could not export CSV: {e}")

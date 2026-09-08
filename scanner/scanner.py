@@ -19,6 +19,7 @@ from database.repository import DatabaseRepository
 from excel.live_excel import LiveExcelManager
 from indicators.pivots import DailyPivots, calculate_daily_pivots
 from indicators.hema_t3 import HemaT3RegimeEngine, HemaT3Signal
+from indicators.chartink_screener import ChartinkIntradayEngine, ChartinkSignal
 from market.candle_engine import Candle, CandleEngine, CandleStatus, MultiTimeframeCandleEngine
 from market.historical import HistoricalDataLoader, PreviousDayOHLCV
 from market.instruments import InstrumentManager
@@ -55,6 +56,7 @@ class FNOIntradayScanner:
         self.dedup = EventDeduplicator()
         self.signal_engine = SignalEngine()
         self.hema_engine = HemaT3RegimeEngine()
+        self.chartink_engine = ChartinkIntradayEngine()
         self.trigger_tracker = SignalTriggerTracker()
         self.db = DatabaseRepository() if config.ENABLE_DB_STORAGE else None
         self.excel_mgr = LiveExcelManager() if enable_excel else None
@@ -68,6 +70,8 @@ class FNOIntradayScanner:
         self._is_running = False
         self._is_hema_scanning = False
         self._hema_scan_lock = threading.Lock()
+        self._is_chartink_scanning = False
+        self._chartink_scan_lock = threading.Lock()
 
     def startup(self, force_refresh: bool = False, symbols: Optional[List[str]] = None, mode: Optional[str] = None):
         """
@@ -323,11 +327,12 @@ class FNOIntradayScanner:
         else:
             logger.info("Tab 1 5-Minute Reversal Signals disabled in configuration. Skipping historical reversal replay.")
 
-        # Automatically kick off ultra-fast parallel HEMA + T3 scan on startup so Tab 4 works out of the box like Tab 1
+        # Automatically kick off ultra-fast parallel HEMA + T3 scan and Chartink scan on startup
         try:
             threading.Thread(target=self.scan_hema_universe, daemon=True, name="StartupHemaScan").start()
+            threading.Thread(target=self.scan_chartink_universe, daemon=True, name="StartupChartinkScan").start()
         except Exception as e:
-            logger.debug(f"Startup HEMA scan error: {e}")
+            logger.debug(f"Startup scan error: {e}")
 
     def sync_broker_candles_for_all(self):
         """
@@ -340,11 +345,12 @@ class FNOIntradayScanner:
             self.candle_engine.sync_broker_candles(sym, df_b, key_map=key_map)
         logger.info(f"Broker candle sync complete for {len(broker_dfs)} symbols.")
 
-        # Automatically re-evaluate HEMA + T3 strategy across universe on every candle sync
+        # Automatically re-evaluate HEMA + T3 and Chartink strategy across universe on every candle sync
         try:
             threading.Thread(target=self.scan_hema_universe, daemon=True, name="SyncHemaScan").start()
+            threading.Thread(target=self.scan_chartink_universe, daemon=True, name="SyncChartinkScan").start()
         except Exception as e:
-            logger.debug(f"Sync HEMA scan error: {e}")
+            logger.debug(f"Sync scan error: {e}")
 
     def scan_hema_universe(self, timeframes: Optional[List[str]] = None, symbols: Optional[List[str]] = None):
         """
@@ -430,6 +436,91 @@ class FNOIntradayScanner:
 
             finally:
                 self._is_hema_scanning = False
+
+    def scan_chartink_universe(self, symbols: Optional[List[str]] = None):
+        """
+        Evaluates Chartink Intraday Screener rules across the F&O universe.
+        Checks:
+        1. Mandatory Master Filter: ((high + low) / 2) < (typical - typical * 0.003)
+        2. Sub 1: SMA(Vol, 20) * Open >= 10 Cr and Monthly Close >= Prev Month High
+        3. Sub 2: Weekly Close > 20-week Max Close and Daily Close > Daily SMA(200)
+        4. Sub 3: Daily Vol SMA(7) > 100k, Close >= 100, Higher Low, Green Candle,
+                  SMA(11..35) crossover, RSI(14) crossover (11..55), Vol >= SMA(5..20)
+        """
+        if self._is_chartink_scanning:
+            logger.debug("Chartink scan already running in background. Skipping overlapping request.")
+            return (0.0, 0, 0)
+
+        with self._chartink_scan_lock:
+            self._is_chartink_scanning = True
+            try:
+                target_universe = self._universe
+                if symbols:
+                    sym_set = set(symbols)
+                    target_universe = {k: v for k, v in self._universe.items() if k in sym_set}
+
+                if not target_universe:
+                    return (0.0, 0, 0)
+
+                t0 = time.time()
+                logger.info(f"Starting Chartink Intraday Screener scan across {len(target_universe)} symbols...")
+
+                multi_tf_candles = self.hist_loader.load_multi_timeframe_candles(
+                    target_universe, timeframes=["1d"], candle_engine=self.candle_engine
+                )
+
+                tasks = []
+                for sym, tf_map in multi_tf_candles.items():
+                    inst_info = target_universe.get(sym, {})
+                    fut_inst = getattr(self, "instrument_mgr", None)
+                    fut = fut_inst.get_futures_instrument(sym) if fut_inst else None
+                    fut_sym = fut.trading_symbol if fut else f"{sym} FUT"
+                    lot_sz = fut.lot_size if fut and fut.lot_size else inst_info.get("lot_size", 0)
+                    t_cr = inst_info.get("turnover_cr", 0.0)
+                    l_tier = inst_info.get("liquidity_tier", "Normal")
+                    is_liq = inst_info.get("is_most_liquid", False)
+
+                    df_daily = tf_map.get("1d")
+                    if df_daily is not None and len(df_daily) >= 5:
+                        tasks.append((sym, df_daily, fut_sym, lot_sz, t_cr, l_tier, is_liq))
+
+                def _chartink_worker(task):
+                    sym, df, fut_sym, lot_sz, t_cr, l_tier, is_liq = task
+                    try:
+                        today_override = None
+                        lp = dashboard_state.live_prices.get(sym)
+                        if lp and lp.get("ltp", 0) > 0:
+                            today_override = {
+                                "timestamp": datetime.now(),
+                                "close": lp["ltp"],
+                                "volume": lp.get("volume", 0),
+                            }
+                        sig = self.chartink_engine.evaluate_stock(
+                            symbol=sym,
+                            df_daily=df,
+                            today_override=today_override,
+                            fut_symbol=fut_sym,
+                            lot_size=lot_sz,
+                            turnover_cr=t_cr,
+                            liquidity_tier=l_tier,
+                            is_most_liquid=is_liq,
+                        )
+                        return sig
+                    except Exception as ex:
+                        logger.debug(f"Chartink eval error for {sym}: {ex}")
+                        return None
+
+                workers = min(4, os.cpu_count() or 2)
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    raw_signals = list(executor.map(_chartink_worker, tasks))
+
+                valid_signals = [s.to_dict() for s in raw_signals if s is not None]
+                dashboard_state.add_chartink_signals_batch(valid_signals)
+                elapsed = time.time() - t0
+                logger.info(f"Chartink scan complete: Evaluated {len(tasks)} stocks in {elapsed:.2f}s! Found {len(valid_signals)} breakout candidates.")
+                return elapsed, len(tasks), len(valid_signals)
+            finally:
+                self._is_chartink_scanning = False
 
     def run_live(self):
         """
