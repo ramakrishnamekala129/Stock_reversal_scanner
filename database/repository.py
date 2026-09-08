@@ -2,6 +2,7 @@
 SQLite Database Repository for Intraday Candles, Daily Levels, and Scanner Signals.
 """
 
+import json
 import logging
 from pathlib import Path
 import sqlite3
@@ -103,23 +104,24 @@ class DatabaseRepository:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_pd_mode_date ON previous_day_ohlcv_cache(mode, date)")
 
             # 4. instruments_master_cache table (replaces nse_instruments_*.json)
+            # Safe migration: ensure raw_json column exists
+            try:
+                cur = conn.cursor()
+                cur.execute("PRAGMA table_info(instruments_master_cache)")
+                cols = [c[1] for c in cur.fetchall()]
+                if cols and "raw_json" not in cols:
+                    conn.execute("DROP TABLE instruments_master_cache")
+            except Exception:
+                pass
+
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS instruments_master_cache (
                     instrument_key TEXT PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    trading_symbol TEXT NOT NULL,
-                    name TEXT,
-                    exchange TEXT NOT NULL,
-                    instrument_type TEXT,
-                    expiry TEXT,
-                    strike_price REAL,
-                    lot_size INTEGER,
-                    tick_size REAL,
+                    raw_json TEXT NOT NULL,
                     updated_date TEXT NOT NULL
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_inst_upd ON instruments_master_cache(updated_date)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_inst_sym ON instruments_master_cache(symbol)")
 
             # 3. scanner_signals table
             conn.execute("""
@@ -445,7 +447,7 @@ class DatabaseRepository:
             return {}
 
     def save_instruments_master(self, instruments: List[Dict[str, Any]], updated_date: str) -> int:
-        """Batch saves NSE instruments master list into SQLite instruments_master_cache table."""
+        """Batch saves NSE instruments master list into SQLite instruments_master_cache table with full JSON metadata."""
         if not instruments:
             return 0
         rows = []
@@ -453,39 +455,16 @@ class DatabaseRepository:
             ikey = inst.get("instrument_key")
             if not ikey:
                 continue
-            rows.append((
-                str(ikey),
-                str(inst.get("name", "") or inst.get("trading_symbol", "")),
-                str(inst.get("trading_symbol", "")),
-                str(inst.get("name", "")),
-                str(inst.get("exchange", "")),
-                str(inst.get("instrument_type", "")),
-                str(inst.get("expiry", "") or ""),
-                float(inst.get("strike_price") or 0.0),
-                int(inst.get("lot_size") or 0),
-                float(inst.get("tick_size") or 0.05),
-                str(updated_date),
-            ))
+            rows.append((str(ikey), json.dumps(inst), str(updated_date)))
 
         conn = self._get_connection()
         try:
             with conn:
                 conn.executemany("""
-                    INSERT INTO instruments_master_cache (
-                        instrument_key, symbol, trading_symbol, name, exchange,
-                        instrument_type, expiry, strike_price, lot_size, tick_size, updated_date
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO instruments_master_cache (instrument_key, raw_json, updated_date)
+                    VALUES (?, ?, ?)
                     ON CONFLICT(instrument_key) DO UPDATE SET
-                        symbol = excluded.symbol,
-                        trading_symbol = excluded.trading_symbol,
-                        name = excluded.name,
-                        exchange = excluded.exchange,
-                        instrument_type = excluded.instrument_type,
-                        expiry = excluded.expiry,
-                        strike_price = excluded.strike_price,
-                        lot_size = excluded.lot_size,
-                        tick_size = excluded.tick_size,
+                        raw_json = excluded.raw_json,
                         updated_date = excluded.updated_date
                 """, rows)
             return len(rows)
@@ -494,16 +473,16 @@ class DatabaseRepository:
             return 0
 
     def load_instruments_master(self, updated_date: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Loads NSE instruments master list from SQLite DB."""
+        """Loads NSE instruments master list from SQLite DB with all original metadata intact."""
         conn = self._get_connection()
         try:
             cur = conn.cursor()
             if updated_date:
-                cur.execute("SELECT * FROM instruments_master_cache WHERE updated_date = ?", (updated_date,))
+                cur.execute("SELECT raw_json FROM instruments_master_cache WHERE updated_date = ?", (updated_date,))
             else:
-                cur.execute("SELECT * FROM instruments_master_cache")
+                cur.execute("SELECT raw_json FROM instruments_master_cache")
             rows = cur.fetchall()
-            return [dict(r) for r in rows]
+            return [json.loads(r["raw_json"]) for r in rows]
         except Exception as e:
             logger.debug(f"Error loading instruments from DB: {e}")
             return []

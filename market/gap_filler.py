@@ -259,6 +259,7 @@ class GapFiller:
         self,
         universe: Dict[str, Dict[str, Any]],
         lookback_days: int = 30,
+        progress_cb: Optional[Callable[[int, int, str], None]] = None,
     ) -> Dict[str, Any]:
         """Convenience method to run reconciliation synchronously."""
         try:
@@ -269,6 +270,15 @@ class GapFiller:
         if loop and loop.is_running():
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, self.reconcile_universe_async(universe, lookback_days)).result()
+                return pool.submit(asyncio.run, self.reconcile_universe_async(universe, lookback_days, progress_cb=progress_cb)).result()
         else:
-            return asyncio.run(self.reconcile_universe_async(universe, lookback_days))
+            return asyncio.run(self.reconcile_universe_async(universe, lookback_days, progress_cb=progress_cb))
+
+    def reconcile_universe_gaps(
+        self,
+        universe: Dict[str, Dict[str, Any]],
+        lookback_days: int = 30,
+        on_progress: Optional[Callable[[int, int, str], None]] = None,
+    ) -> Dict[str, Any]:
+        """Alias for reconcile_universe_sync supporting on_progress callback."""
+        return self.reconcile_universe_sync(universe, lookback_days=lookback_days, progress_cb=on_progress)
