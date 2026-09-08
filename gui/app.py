@@ -1839,16 +1839,21 @@ class ScannerTkinterGUI:
             self.open_chart_for_symbol(sym)
 
     def _trigger_hema_scan(self):
-        """Triggers asynchronous scan across universe for selected or all timeframes."""
+        """Triggers ultra-fast parallel Numba scan across universe for selected or all timeframes."""
         if not self.scanner:
             messagebox.showinfo("HEMA Scan", "Scanner backend is not running or available.")
             return
         selected_tf = self.hema_tf_var.get()
         tfs = ["15m", "30m", "1h", "2h", "4h", "1d"] if selected_tf == "ALL" else [selected_tf]
-        self.hema_count_lbl.config(text=f"🔄 Scanning {tfs} across F&O universe...")
+        self.hema_count_lbl.config(text=f"🔄 Parallel Scanning {len(tfs)} TF(s)...")
         def _do_scan():
             try:
-                self.scanner.scan_hema_universe(timeframes=tfs)
+                res = self.scanner.scan_hema_universe(timeframes=tfs)
+                if isinstance(res, tuple):
+                    elapsed, n_tasks, n_sigs = res
+                    self.root.after(0, lambda: self.hema_count_lbl.config(
+                        text=f"⚡ Scanned {n_tasks} setups ({len(tfs)} TF) in {elapsed:.2f}s • {n_sigs} signals"
+                    ))
                 self.hema_dirty = True
             except Exception as ex:
                 logger.error(f"Error executing HEMA scan: {ex}")
