@@ -47,20 +47,19 @@ class UpstoxRestClient:
 
     def download_nse_instruments(self, force_refresh: bool = False) -> List[Dict[str, Any]]:
         """
-        Downloads and caches the official Upstox NSE instrument master.
+        Downloads and caches the official Upstox NSE instrument master in SQLite DB.
         Returns a list of raw instrument dictionaries.
         """
-        cache_file = config.CACHE_DIR / f"nse_instruments_{date.today().isoformat()}.json"
+        today_str = date.today().isoformat()
+        from database.repository import DatabaseRepository
+        db_repo = DatabaseRepository()
 
-        # Check local cache first unless force_refresh is True
-        if not force_refresh and cache_file.exists():
-            try:
-                with open(cache_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    logger.info(f"Loaded {len(data)} NSE instruments from local cache: {cache_file.name}")
-                    return data
-            except Exception as e:
-                logger.warning(f"Failed to read cached instruments: {e}. Downloading fresh copy...")
+        # Check SQLite DB cache first unless force_refresh is True
+        if not force_refresh:
+            cached_instruments = db_repo.load_instruments_master(today_str)
+            if cached_instruments:
+                logger.info(f"Loaded {len(cached_instruments)} NSE instruments from SQLite DB cache.")
+                return cached_instruments
 
         logger.info(f"Downloading NSE instruments from {self.INSTRUMENT_NSE_URL}...")
         req = urllib.request.Request(self.INSTRUMENT_NSE_URL, headers={"User-Agent": "Mozilla/5.0"})
@@ -69,13 +68,12 @@ class UpstoxRestClient:
                 content = gz.read().decode("utf-8")
                 data = json.loads(content)
 
-        # Write to cache
+        # Write to SQLite DB cache
         try:
-            with open(cache_file, "w", encoding="utf-8") as f:
-                json.dump(data, f)
-            logger.info(f"Cached {len(data)} instruments to {cache_file.name}")
+            inserted = db_repo.save_instruments_master(data, today_str)
+            logger.info(f"Cached {inserted} instruments into SQLite DB table (instruments_master_cache).")
         except Exception as e:
-            logger.warning(f"Could not write instruments to cache: {e}")
+            logger.warning(f"Could not write instruments to DB cache: {e}")
 
         return data
 

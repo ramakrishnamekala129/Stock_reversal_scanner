@@ -106,18 +106,16 @@ class HistoricalDataLoader:
         """
         today_str = date.today().isoformat()
         mode_tag = mode.lower() if mode else "futures"
-        cache_file = config.CACHE_DIR / f"previous_day_ohlcv_{mode_tag}_{today_str}.json"
+        from database.repository import DatabaseRepository
+        db_repo = DatabaseRepository()
 
-        if not force_refresh and cache_file.exists():
-            try:
-                with open(cache_file, "r", encoding="utf-8") as f:
-                    cached_data = json.load(f)
-                    for sym, d in cached_data.items():
-                        self._pd_cache[sym] = PreviousDayOHLCV(**d)
-                    logger.info(f"Loaded {len(self._pd_cache)} previous-day OHLCV records ({mode_tag}) from cache.")
-                    return self._pd_cache
-            except Exception as e:
-                logger.warning(f"Failed to read previous-day cache: {e}. Fetching via REST...")
+        if not force_refresh:
+            cached_data = db_repo.load_previous_day_ohlcv(mode=mode_tag, date_str=today_str)
+            if cached_data:
+                for sym, d in cached_data.items():
+                    self._pd_cache[sym] = PreviousDayOHLCV(**d)
+                logger.info(f"Loaded {len(self._pd_cache)} previous-day OHLCV records ({mode_tag}) from SQLite DB cache.")
+                return self._pd_cache
 
         logger.info(f"Fetching previous trading-day OHLCV ({mode_tag}) for {len(universe)} symbols via asyncio (Rate Limit: {config.UPSTOX_RATE_LIMIT_PER_SEC} req/s)...")
         token = self.rest_client.access_token
@@ -226,12 +224,16 @@ class HistoricalDataLoader:
         self._pd_cache = results
         logger.info(f"Successfully retrieved previous-day OHLCV for {len(results)} symbols.")
 
-        # Cache to disk
+        # Cache to SQLite DB table
         try:
-            with open(cache_file, "w", encoding="utf-8") as f:
-                json.dump({sym: pd_data.to_dict() for sym, pd_data in results.items()}, f)
+            inserted = db_repo.save_previous_day_ohlcv_batch(
+                {sym: pd_data.to_dict() for sym, pd_data in results.items()},
+                mode=mode_tag,
+                date_str=today_str,
+            )
+            logger.info(f"Cached {inserted} previous-day OHLCV records ({mode_tag}) into SQLite DB.")
         except Exception as e:
-            logger.warning(f"Failed to write previous-day cache: {e}")
+            logger.warning(f"Failed to write previous-day DB cache: {e}")
 
         return results
 

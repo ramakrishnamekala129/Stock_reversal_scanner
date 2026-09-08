@@ -78,27 +78,31 @@ class FNOIntradayScanner:
         self._daily_cache_loaded: bool = False
 
     def _load_daily_candles_cache(self):
-        """Loads 2024-2026 daily candles cache into memory for ultra-fast, sub-second Chartink screening."""
+        """Loads daily candles cache from SQLite database for ultra-fast, sub-second Chartink screening."""
         if self._daily_cache_loaded and self._daily_dfs_cache:
-            return
-        cache_path = Path("data/cache/all_daily_candles_2026.json")
-        if not cache_path.exists():
             return
         try:
             t0 = time.time()
-            with open(cache_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            dfs = {}
-            for sym, candles in data.items():
-                df = pd.DataFrame(candles, columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
-                df["timestamp"] = pd.to_datetime(df["timestamp"])
-                df = df.sort_values("timestamp").reset_index(drop=True)
-                dfs[sym] = df
-            self._daily_dfs_cache = dfs
-            self._daily_cache_loaded = True
-            logger.info(f"Preloaded {len(dfs)} stocks daily candle cache in {time.time() - t0:.2f}s for real-time Chartink scanning.")
+            from database.historical_db import HistoricalCandleDatabase
+            hist_db = HistoricalCandleDatabase()
+            dfs = hist_db.get_all_daily_candles_map()
+
+            # If SQLite DB is empty, auto-seed from JSON cache if present
+            if not dfs:
+                cache_path = Path("data/cache/all_daily_candles_2026.json")
+                if cache_path.exists():
+                    logger.info("Seeding daily candles into SQLite database from JSON cache...")
+                    with open(cache_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    hist_db.save_all_daily_candles_bulk(data)
+                    dfs = hist_db.get_all_daily_candles_map()
+
+            if dfs:
+                self._daily_dfs_cache = dfs
+                self._daily_cache_loaded = True
+                logger.info(f"Loaded {len(dfs)} stocks daily candle cache from SQLite DB in {time.time() - t0:.2f}s for real-time Chartink scanning.")
         except Exception as e:
-            logger.warning(f"Error loading daily candles cache: {e}")
+            logger.warning(f"Error loading daily candles cache from DB: {e}")
 
     def startup(self, force_refresh: bool = False, symbols: Optional[List[str]] = None, mode: Optional[str] = None):
         """

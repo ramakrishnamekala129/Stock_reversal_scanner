@@ -85,6 +85,42 @@ class DatabaseRepository:
                 )
             """)
 
+            # 3. previous_day_ohlcv_cache table (replaces previous_day_ohlcv_*.json)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS previous_day_ohlcv_cache (
+                    symbol TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    date TEXT NOT NULL,
+                    open REAL NOT NULL,
+                    high REAL NOT NULL,
+                    low REAL NOT NULL,
+                    close REAL NOT NULL,
+                    volume INTEGER NOT NULL,
+                    instrument_key TEXT,
+                    PRIMARY KEY (symbol, mode, date)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_pd_mode_date ON previous_day_ohlcv_cache(mode, date)")
+
+            # 4. instruments_master_cache table (replaces nse_instruments_*.json)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS instruments_master_cache (
+                    instrument_key TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    trading_symbol TEXT NOT NULL,
+                    name TEXT,
+                    exchange TEXT NOT NULL,
+                    instrument_type TEXT,
+                    expiry TEXT,
+                    strike_price REAL,
+                    lot_size INTEGER,
+                    tick_size REAL,
+                    updated_date TEXT NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_inst_upd ON instruments_master_cache(updated_date)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_inst_sym ON instruments_master_cache(symbol)")
+
             # 3. scanner_signals table
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS scanner_signals (
@@ -329,3 +365,145 @@ class DatabaseRepository:
         """)
         row = cur.fetchone()
         return dict(row) if row else {}
+
+    def save_previous_day_ohlcv_batch(
+        self,
+        records: Dict[str, Dict[str, Any]],
+        mode: str,
+        date_str: str,
+    ) -> int:
+        """Saves previous-day OHLCV dictionary into SQLite previous_day_ohlcv_cache table."""
+        if not records:
+            return 0
+        rows = []
+        mode_clean = mode.lower()
+        for sym, d in records.items():
+            if isinstance(d, dict):
+                o = float(d.get("open", 0.0))
+                h = float(d.get("high", 0.0))
+                l = float(d.get("low", 0.0))
+                cl = float(d.get("close", 0.0))
+                v = int(d.get("volume", 0))
+                ikey = str(d.get("instrument_key", ""))
+                d_date = str(d.get("date", date_str))
+            else:
+                o = float(getattr(d, "open", 0.0))
+                h = float(getattr(d, "high", 0.0))
+                l = float(getattr(d, "low", 0.0))
+                cl = float(getattr(d, "close", 0.0))
+                v = int(getattr(d, "volume", 0))
+                ikey = str(getattr(d, "instrument_key", ""))
+                d_date = str(getattr(d, "date", date_str))
+            rows.append((sym, mode_clean, d_date, o, h, l, cl, v, ikey))
+
+        conn = self._get_connection()
+        try:
+            with conn:
+                conn.executemany("""
+                    INSERT INTO previous_day_ohlcv_cache (symbol, mode, date, open, high, low, close, volume, instrument_key)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol, mode, date) DO UPDATE SET
+                        open = excluded.open,
+                        high = excluded.high,
+                        low = excluded.low,
+                        close = excluded.close,
+                        volume = excluded.volume,
+                        instrument_key = excluded.instrument_key
+                """, rows)
+            return len(rows)
+        except Exception as e:
+            logger.error(f"Failed to batch insert previous day OHLCV into DB: {e}")
+            return 0
+
+    def load_previous_day_ohlcv(self, mode: str, date_str: str) -> Dict[str, Dict[str, Any]]:
+        """Loads previous day OHLCV from SQLite DB for the specified mode and date."""
+        conn = self._get_connection()
+        mode_clean = mode.lower()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT symbol, instrument_key, date, open, high, low, close, volume
+                FROM previous_day_ohlcv_cache
+                WHERE mode = ?
+            """, (mode_clean,))
+            rows = cur.fetchall()
+            results = {}
+            for r in rows:
+                results[r["symbol"]] = {
+                    "symbol": r["symbol"],
+                    "instrument_key": r["instrument_key"],
+                    "date": r["date"],
+                    "open": float(r["open"]),
+                    "high": float(r["high"]),
+                    "low": float(r["low"]),
+                    "close": float(r["close"]),
+                    "volume": int(r["volume"]),
+                }
+            return results
+        except Exception as e:
+            logger.debug(f"Error reading previous day OHLCV from DB: {e}")
+            return {}
+
+    def save_instruments_master(self, instruments: List[Dict[str, Any]], updated_date: str) -> int:
+        """Batch saves NSE instruments master list into SQLite instruments_master_cache table."""
+        if not instruments:
+            return 0
+        rows = []
+        for inst in instruments:
+            ikey = inst.get("instrument_key")
+            if not ikey:
+                continue
+            rows.append((
+                str(ikey),
+                str(inst.get("name", "") or inst.get("trading_symbol", "")),
+                str(inst.get("trading_symbol", "")),
+                str(inst.get("name", "")),
+                str(inst.get("exchange", "")),
+                str(inst.get("instrument_type", "")),
+                str(inst.get("expiry", "") or ""),
+                float(inst.get("strike_price") or 0.0),
+                int(inst.get("lot_size") or 0),
+                float(inst.get("tick_size") or 0.05),
+                str(updated_date),
+            ))
+
+        conn = self._get_connection()
+        try:
+            with conn:
+                conn.executemany("""
+                    INSERT INTO instruments_master_cache (
+                        instrument_key, symbol, trading_symbol, name, exchange,
+                        instrument_type, expiry, strike_price, lot_size, tick_size, updated_date
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(instrument_key) DO UPDATE SET
+                        symbol = excluded.symbol,
+                        trading_symbol = excluded.trading_symbol,
+                        name = excluded.name,
+                        exchange = excluded.exchange,
+                        instrument_type = excluded.instrument_type,
+                        expiry = excluded.expiry,
+                        strike_price = excluded.strike_price,
+                        lot_size = excluded.lot_size,
+                        tick_size = excluded.tick_size,
+                        updated_date = excluded.updated_date
+                """, rows)
+            return len(rows)
+        except Exception as e:
+            logger.error(f"Failed to batch insert instruments into DB: {e}")
+            return 0
+
+    def load_instruments_master(self, updated_date: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Loads NSE instruments master list from SQLite DB."""
+        conn = self._get_connection()
+        try:
+            cur = conn.cursor()
+            if updated_date:
+                cur.execute("SELECT * FROM instruments_master_cache WHERE updated_date = ?", (updated_date,))
+            else:
+                cur.execute("SELECT * FROM instruments_master_cache")
+            rows = cur.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.debug(f"Error loading instruments from DB: {e}")
+            return []

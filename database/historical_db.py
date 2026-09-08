@@ -82,6 +82,22 @@ class HistoricalCandleDatabase:
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_sync_sym_date ON candle_sync_meta(symbol, date)")
 
+            # 3. Multi-Year Daily Historical Candles Cache (replaces all_daily_candles_2026.json)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS candles_history_daily (
+                    symbol TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    open REAL NOT NULL,
+                    high REAL NOT NULL,
+                    low REAL NOT NULL,
+                    close REAL NOT NULL,
+                    volume INTEGER NOT NULL,
+                    oi INTEGER DEFAULT 0,
+                    PRIMARY KEY (symbol, timestamp)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_hist_daily_sym_ts ON candles_history_daily(symbol, timestamp)")
+
     def save_candles_batch(
         self,
         symbol: str,
@@ -249,3 +265,133 @@ class HistoricalCandleDatabase:
         except Exception as e:
             logger.debug(f"Error retrieving DB stats: {e}")
             return {"total_symbols": 0, "total_candles": 0}
+
+    def save_daily_candles_batch(
+        self,
+        symbol: str,
+        candle_records: List[Union[List[Any], Dict[str, Any]]],
+    ) -> int:
+        """Batch saves daily historical candles into SQLite candles_history_daily table."""
+        if not candle_records:
+            return 0
+        rows = []
+        for c in candle_records:
+            if isinstance(c, (list, tuple)):
+                if len(c) < 6:
+                    continue
+                ts_str = str(c[0])
+                o, h, l, cl = float(c[1]), float(c[2]), float(c[3]), float(c[4])
+                v = int(c[5])
+                oi = int(c[6]) if len(c) > 6 else 0
+            elif isinstance(c, dict):
+                ts_str = str(c.get("timestamp", ""))
+                o = float(c.get("open", 0.0))
+                h = float(c.get("high", 0.0))
+                l = float(c.get("low", 0.0))
+                cl = float(c.get("close", 0.0))
+                v = int(c.get("volume", 0))
+                oi = int(c.get("oi", 0))
+            else:
+                continue
+            rows.append((symbol, ts_str, o, h, l, cl, v, oi))
+
+        if not rows:
+            return 0
+
+        conn = self._get_connection()
+        try:
+            with conn:
+                conn.executemany("""
+                    INSERT INTO candles_history_daily (symbol, timestamp, open, high, low, close, volume, oi)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol, timestamp) DO UPDATE SET
+                        open = excluded.open,
+                        high = excluded.high,
+                        low = excluded.low,
+                        close = excluded.close,
+                        volume = excluded.volume,
+                        oi = excluded.oi
+                """, rows)
+            return len(rows)
+        except Exception as e:
+            logger.error(f"Failed to batch insert daily candles for {symbol}: {e}")
+            return 0
+
+    def save_all_daily_candles_bulk(self, all_candles_map: Dict[str, List[Any]]) -> int:
+        """Bulk inserts multi-year daily candles across entire universe in a single SQLite transaction."""
+        total_rows = []
+        for sym, candles in all_candles_map.items():
+            for c in candles:
+                if isinstance(c, (list, tuple)) and len(c) >= 6:
+                    total_rows.append((sym, str(c[0]), float(c[1]), float(c[2]), float(c[3]), float(c[4]), int(c[5]), int(c[6]) if len(c) > 6 else 0))
+                elif isinstance(c, dict):
+                    total_rows.append((sym, str(c.get("timestamp", "")), float(c.get("open", 0)), float(c.get("high", 0)), float(c.get("low", 0)), float(c.get("close", 0)), int(c.get("volume", 0)), int(c.get("oi", 0))))
+
+        if not total_rows:
+            return 0
+
+        conn = self._get_connection()
+        try:
+            with conn:
+                conn.executemany("""
+                    INSERT INTO candles_history_daily (symbol, timestamp, open, high, low, close, volume, oi)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol, timestamp) DO UPDATE SET
+                        open = excluded.open,
+                        high = excluded.high,
+                        low = excluded.low,
+                        close = excluded.close,
+                        volume = excluded.volume,
+                        oi = excluded.oi
+                """, total_rows)
+            return len(total_rows)
+        except Exception as e:
+            logger.error(f"Failed to bulk insert daily candles: {e}")
+            return 0
+
+    def get_daily_candles(self, symbol: str) -> pd.DataFrame:
+        """Retrieves daily candles for a symbol sorted chronologically."""
+        conn = self._get_connection()
+        try:
+            df = pd.read_sql_query(
+                "SELECT timestamp, open, high, low, close, volume, oi FROM candles_history_daily WHERE symbol = ? ORDER BY timestamp ASC",
+                conn,
+                params=[symbol],
+            )
+            if df.empty:
+                return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            return df
+        except Exception as e:
+            logger.error(f"Failed to get daily candles for {symbol}: {e}")
+            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+
+    def get_all_daily_candles_map(self) -> Dict[str, pd.DataFrame]:
+        """Loads all daily candles from SQLite DB across all symbols into DataFrames."""
+        conn = self._get_connection()
+        try:
+            df = pd.read_sql_query(
+                "SELECT symbol, timestamp, open, high, low, close, volume, oi FROM candles_history_daily ORDER BY symbol, timestamp ASC",
+                conn,
+            )
+            if df.empty:
+                return {}
+            df["timestamp"] = pd.to_datetime(df["timestamp"])
+            dfs = {}
+            for sym, group in df.groupby("symbol"):
+                dfs[sym] = group.reset_index(drop=True)
+            return dfs
+        except Exception as e:
+            logger.error(f"Failed to load daily candles from DB: {e}")
+            return {}
+
+    def get_daily_candles_count(self) -> int:
+        """Returns total daily candles in SQLite DB."""
+        conn = self._get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM candles_history_daily")
+            row = cur.fetchone()
+            return row[0] if row else 0
+        except Exception:
+            return 0

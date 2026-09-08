@@ -370,16 +370,17 @@ def run_intraday_backtest():
     mgr = InstrumentManager(client)
     univ = mgr.load_fno_universe(mode="SPOT")
 
-    # Load Daily Historical Candles for context
-    daily_cache = Path("data/cache/all_daily_candles_2026.json")
-    with open(daily_cache, "r", encoding="utf-8") as f:
-        raw_daily = json.load(f)
-    daily_dfs = {}
-    for s, c in raw_daily.items():
-        if c:
-            d = pd.DataFrame(c, columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
-            d["timestamp"] = pd.to_datetime(d["timestamp"])
-            daily_dfs[s] = d.sort_values("timestamp").reset_index(drop=True)
+    # Load Daily Historical Candles from SQLite DB for context
+    from database.historical_db import HistoricalCandleDatabase
+    hist_db = HistoricalCandleDatabase()
+    daily_dfs = hist_db.get_all_daily_candles_map()
+    if not daily_dfs:
+        daily_cache = Path("data/cache/all_daily_candles_2026.json")
+        if daily_cache.exists():
+            with open(daily_cache, "r", encoding="utf-8") as f:
+                raw_daily = json.load(f)
+            hist_db.save_all_daily_candles_bulk(raw_daily)
+            daily_dfs = hist_db.get_all_daily_candles_map()
 
     # Extract target symbols needed for simulation
     target_symbols = set(df_truth_sample["Symbol"].str.strip().str.upper().unique())

@@ -25,20 +25,22 @@ logger = logging.getLogger("chartink_backtest")
 
 
 async def download_all_daily_candles(universe: Dict[str, dict], token: str, cache_file: Path) -> Dict[str, pd.DataFrame]:
-    """Downloads multi-year daily candles for all symbols asynchronously with disk cache."""
+    """Retrieves multi-year daily candles for all symbols from SQLite DB or API."""
+    from database.historical_db import HistoricalCandleDatabase
+    hist_db = HistoricalCandleDatabase()
+    dfs = hist_db.get_all_daily_candles_map()
+    if dfs:
+        logger.info(f"Loaded {len(dfs)} cached daily dataframes from SQLite DB.")
+        return dfs
+
     if cache_file.exists():
-        logger.info(f"Loading daily candle cache from {cache_file}...")
+        logger.info(f"Loading daily candle cache from {cache_file} into SQLite DB...")
         try:
             with open(cache_file, "r", encoding="utf-8") as f:
                 raw_data = json.load(f)
-            dfs = {}
-            for sym, candles in raw_data.items():
-                if candles:
-                    df = pd.DataFrame(candles, columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
-                    df["timestamp"] = pd.to_datetime(df["timestamp"])
-                    df = df.sort_values("timestamp").reset_index(drop=True)
-                    dfs[sym] = df
-            logger.info(f"Loaded {len(dfs)} cached daily dataframes.")
+            hist_db.save_all_daily_candles_bulk(raw_data)
+            dfs = hist_db.get_all_daily_candles_map()
+            logger.info(f"Loaded {len(dfs)} cached daily dataframes from SQLite DB.")
             return dfs
         except Exception as ex:
             logger.warning(f"Cache load error: {ex}. Re-downloading...")
