@@ -228,42 +228,43 @@ class FNOIntradayScanner:
         if not pivots:
             return
 
-        # 2. Run multi-factor signal detection on newly closed candle with specific timeframe
-        signals = self.signal_engine.evaluate_candle(symbol, df_history, pivots, timeframe=timeframe)
+        # 2. Run multi-factor signal detection on newly closed candle with specific timeframe (if enabled)
+        if getattr(config, "ENABLE_TAB1_REVERSAL_SIGNALS", False):
+            signals = self.signal_engine.evaluate_candle(symbol, df_history, pivots, timeframe=timeframe)
 
-        for sig in signals:
-            self.session_mgr.stats.patterns_detected += 1
-            pat_name = sig.pattern
-            self.session_mgr.stats.pattern_breakdown[pat_name] = (
-                self.session_mgr.stats.pattern_breakdown.get(pat_name, 0) + 1
-            )
+            for sig in signals:
+                self.session_mgr.stats.patterns_detected += 1
+                pat_name = sig.pattern
+                self.session_mgr.stats.pattern_breakdown[pat_name] = (
+                    self.session_mgr.stats.pattern_breakdown.get(pat_name, 0) + 1
+                )
 
-            # Deduplication check with timeframe
-            if self.dedup.is_duplicate(sig.symbol, sig.timestamp, sig.pattern, timeframe=timeframe):
-                continue
+                # Deduplication check with timeframe
+                if self.dedup.is_duplicate(sig.symbol, sig.timestamp, sig.pattern, timeframe=timeframe):
+                    continue
 
-            self.dedup.mark_seen(sig.symbol, sig.timestamp, sig.pattern, timeframe=timeframe)
+                self.dedup.mark_seen(sig.symbol, sig.timestamp, sig.pattern, timeframe=timeframe)
 
-            if "BULLISH" in sig.direction:
-                self.session_mgr.stats.bullish_signals += 1
-            elif "BEARISH" in sig.direction:
-                self.session_mgr.stats.bearish_signals += 1
-                self.session_mgr.stats.hanging_man_signals += 1
+                if "BULLISH" in sig.direction:
+                    self.session_mgr.stats.bullish_signals += 1
+                elif "BEARISH" in sig.direction:
+                    self.session_mgr.stats.bearish_signals += 1
+                    self.session_mgr.stats.hanging_man_signals += 1
 
-            sig_dict = sig.to_dict()
-            # Register newly formed signal with trigger tracker
-            self.trigger_tracker.register_signal(sig_dict)
+                sig_dict = sig.to_dict()
+                # Register newly formed signal with trigger tracker
+                self.trigger_tracker.register_signal(sig_dict)
 
-            # Output formatted signal card to terminal (if live)
-            if print_console:
-                ConsoleFormatter.print_signal(sig)
+                # Output formatted signal card to terminal (if live)
+                if print_console:
+                    ConsoleFormatter.print_signal(sig)
 
-            # Save signal to database, broadcast to FastAPI Web Dashboard & optional Excel
-            if self.db:
-                self.db.save_signal(sig_dict)
-            dashboard_state.add_signal(sig_dict)
-            if self.excel_mgr:
-                self.excel_mgr.add_signal(sig)
+                # Save signal to database, broadcast to FastAPI Web Dashboard & optional Excel
+                if self.db:
+                    self.db.save_signal(sig_dict)
+                dashboard_state.add_signal(sig_dict)
+                if self.excel_mgr:
+                    self.excel_mgr.add_signal(sig)
 
         # 3. Evaluate HEMA + T3 Strategy with Anti-Sideways / Market-Regime Filter
         # Only evaluate on supported HEMA multi-timeframes (e.g. 15m, 30m, 1h, 2h, 4h, 1d)
@@ -282,24 +283,27 @@ class FNOIntradayScanner:
         and accurately confirming/invalidating their trigger states.
         Automatically kicks off HEMA + T3 multi-timeframe scan at startup.
         """
-        logger.info("Scanning existing intraday candles of today's session across timeframes for reversal setups...")
-        total_eval = 0
-        
-        # Chronological multi-timeframe replay: for each timeframe, replay candle by candle
-        for tf in config.SCANNER_TIMEFRAMES:
-            engine = self.candle_engine.get_engine(tf)
-            if not engine:
-                continue
-            for sym, candles in list(engine._history.items()):
-                df_full = engine.get_candle_history_df(sym)
-                if len(candles) >= 2:
-                    for i in range(2, len(candles) + 1):
-                        sub_candle = candles[i - 1]
-                        sub_df = df_full.iloc[:i]
-                        self._handle_candle_closed(sym, sub_candle, sub_df, timeframe=tf, print_console=False)
-                        total_eval += 1
-                        
-        logger.info(f"Startup candle scan complete: Evaluated {total_eval} historical candles across timeframes, detected {len(self.dedup._seen_events)} signals.")
+        if getattr(config, "ENABLE_TAB1_REVERSAL_SIGNALS", False):
+            logger.info("Scanning existing intraday candles of today's session across timeframes for reversal setups...")
+            total_eval = 0
+            
+            # Chronological multi-timeframe replay: for each timeframe, replay candle by candle
+            for tf in config.SCANNER_TIMEFRAMES:
+                engine = self.candle_engine.get_engine(tf)
+                if not engine:
+                    continue
+                for sym, candles in list(engine._history.items()):
+                    df_full = engine.get_candle_history_df(sym)
+                    if len(candles) >= 2:
+                        for i in range(2, len(candles) + 1):
+                            sub_candle = candles[i - 1]
+                            sub_df = df_full.iloc[:i]
+                            self._handle_candle_closed(sym, sub_candle, sub_df, timeframe=tf, print_console=False)
+                            total_eval += 1
+                            
+            logger.info(f"Startup candle scan complete: Evaluated {total_eval} historical candles across timeframes, detected {len(self.dedup._seen_events)} signals.")
+        else:
+            logger.info("Tab 1 5-Minute Reversal Signals disabled in configuration. Skipping historical reversal replay.")
 
         # Automatically kick off ultra-fast parallel HEMA + T3 scan on startup so Tab 4 works out of the box like Tab 1
         try:

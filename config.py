@@ -57,6 +57,9 @@ else:
 TIMEFRAME_MINUTES = {"3m": 3, "5m": 5, "15m": 15}
 HEMA_TIMEFRAMES = ["15m", "30m", "1h", "2h", "4h", "1d"]
 
+# Feature Flags (Tab 1 5-Minute Reversal Signals disabled by default per user request)
+ENABLE_TAB1_REVERSAL_SIGNALS = os.getenv("ENABLE_TAB1_REVERSAL_SIGNALS", "false").lower() in ("true", "1", "yes")
+
 # Volume Confirmation
 VOLUME_LOOKBACK = 20
 MIN_RELATIVE_VOLUME = 1.2

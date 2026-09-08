@@ -406,10 +406,10 @@ class ScannerTkinterGUI:
         self.notebook = ttk.Notebook(container)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # Tab 1: Signals Stream
-        self.tab_signals = tk.Frame(self.notebook, bg=BG_DARK)
-        self.notebook.add(self.tab_signals, text="  ⚡ 5-Minute Reversal Signals  ")
-        self._build_signals_tab()
+        # Tab 1: HEMA + T3 Strategy Scanner (Primary Active Strategy)
+        self.tab_hema = tk.Frame(self.notebook, bg=BG_DARK)
+        self.notebook.add(self.tab_hema, text="  🎯 HEMA + T3 Strategy Scanner  ")
+        self._build_hema_tab()
 
         # Tab 2: Live Market & Pivots
         self.tab_market = tk.Frame(self.notebook, bg=BG_DARK)
@@ -422,10 +422,11 @@ class ScannerTkinterGUI:
         self.chart_frame = CandleChartFrame(self.tab_chart, scanner=self.scanner, db_repo=self.db_repo)
         self.chart_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Tab 4: HEMA + T3 Strategy Scanner
-        self.tab_hema = tk.Frame(self.notebook, bg=BG_DARK)
-        self.notebook.add(self.tab_hema, text="  🎯 HEMA + T3 Strategy Scanner  ")
-        self._build_hema_tab()
+        # 5-Minute Reversal Signals Tab (Disabled per user request; toggled via config.ENABLE_TAB1_REVERSAL_SIGNALS)
+        self.tab_signals = tk.Frame(self.notebook, bg=BG_DARK)
+        self._build_signals_tab()
+        if getattr(config, "ENABLE_TAB1_REVERSAL_SIGNALS", False):
+            self.notebook.add(self.tab_signals, text="  ⚡ 5-Minute Reversal Signals  ")
 
         # Tab Change Listener for instant, high-efficiency rendering
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
