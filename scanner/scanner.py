@@ -11,6 +11,8 @@ import sys
 import threading
 import time
 from datetime import datetime
+import json
+from pathlib import Path
 from typing import Dict, List, Optional
 import pandas as pd
 
@@ -72,6 +74,31 @@ class FNOIntradayScanner:
         self._hema_scan_lock = threading.Lock()
         self._is_chartink_scanning = False
         self._chartink_scan_lock = threading.Lock()
+        self._daily_dfs_cache: Dict[str, pd.DataFrame] = {}
+        self._daily_cache_loaded: bool = False
+
+    def _load_daily_candles_cache(self):
+        """Loads 2024-2026 daily candles cache into memory for ultra-fast, sub-second Chartink screening."""
+        if self._daily_cache_loaded and self._daily_dfs_cache:
+            return
+        cache_path = Path("data/cache/all_daily_candles_2026.json")
+        if not cache_path.exists():
+            return
+        try:
+            t0 = time.time()
+            with open(cache_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            dfs = {}
+            for sym, candles in data.items():
+                df = pd.DataFrame(candles, columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+                df["timestamp"] = pd.to_datetime(df["timestamp"])
+                df = df.sort_values("timestamp").reset_index(drop=True)
+                dfs[sym] = df
+            self._daily_dfs_cache = dfs
+            self._daily_cache_loaded = True
+            logger.info(f"Preloaded {len(dfs)} stocks daily candle cache in {time.time() - t0:.2f}s for real-time Chartink scanning.")
+        except Exception as e:
+            logger.warning(f"Error loading daily candles cache: {e}")
 
     def startup(self, force_refresh: bool = False, symbols: Optional[List[str]] = None, mode: Optional[str] = None):
         """
@@ -327,8 +354,9 @@ class FNOIntradayScanner:
         else:
             logger.info("Tab 1 5-Minute Reversal Signals disabled in configuration. Skipping historical reversal replay.")
 
-        # Automatically kick off ultra-fast parallel HEMA + T3 scan and Chartink scan on startup
+        # Automatically pre-load daily candles and kick off ultra-fast parallel HEMA + T3 scan and Chartink scan on startup
         try:
+            self._load_daily_candles_cache()
             threading.Thread(target=self.scan_hema_universe, daemon=True, name="StartupHemaScan").start()
             threading.Thread(target=self.scan_chartink_universe, daemon=True, name="StartupChartinkScan").start()
         except Exception as e:
@@ -454,24 +482,22 @@ class FNOIntradayScanner:
         with self._chartink_scan_lock:
             self._is_chartink_scanning = True
             try:
+                self._load_daily_candles_cache()
+
                 target_universe = self._universe
                 if symbols:
                     sym_set = set(symbols)
                     target_universe = {k: v for k, v in self._universe.items() if k in sym_set}
 
+                if not target_universe and self._daily_dfs_cache:
+                    target_universe = {s: {"symbol": s} for s in self._daily_dfs_cache.keys()}
+
                 if not target_universe:
                     return (0.0, 0, 0)
 
                 t0 = time.time()
-                logger.info(f"Starting Chartink Intraday Screener scan across {len(target_universe)} symbols...")
-
-                multi_tf_candles = self.hist_loader.load_multi_timeframe_candles(
-                    target_universe, timeframes=["1d"], candle_engine=self.candle_engine
-                )
-
                 tasks = []
-                for sym, tf_map in multi_tf_candles.items():
-                    inst_info = target_universe.get(sym, {})
+                for sym, inst_info in target_universe.items():
                     fut_inst = getattr(self, "instrument_mgr", None)
                     fut = fut_inst.get_futures_instrument(sym) if fut_inst else None
                     fut_sym = fut.trading_symbol if fut else f"{sym} FUT"
@@ -480,9 +506,12 @@ class FNOIntradayScanner:
                     l_tier = inst_info.get("liquidity_tier", "Normal")
                     is_liq = inst_info.get("is_most_liquid", False)
 
-                    df_daily = tf_map.get("1d")
-                    if df_daily is not None and len(df_daily) >= 5:
+                    df_daily = self._daily_dfs_cache.get(sym)
+                    if df_daily is not None and len(df_daily) >= 15:
                         tasks.append((sym, df_daily, fut_sym, lot_sz, t_cr, l_tier, is_liq))
+
+                if not tasks:
+                    return (0.0, 0, 0)
 
                 def _chartink_worker(task):
                     sym, df, fut_sym, lot_sz, t_cr, l_tier, is_liq = task
@@ -492,8 +521,8 @@ class FNOIntradayScanner:
                         if lp and lp.get("ltp", 0) > 0:
                             today_override = {
                                 "timestamp": datetime.now(),
-                                "close": lp["ltp"],
-                                "volume": lp.get("volume", 0),
+                                "close": float(lp["ltp"]),
+                                "volume": int(lp.get("volume", 0)),
                             }
                         sig = self.chartink_engine.evaluate_stock(
                             symbol=sym,
@@ -510,7 +539,7 @@ class FNOIntradayScanner:
                         logger.debug(f"Chartink eval error for {sym}: {ex}")
                         return None
 
-                workers = min(4, os.cpu_count() or 2)
+                workers = min(8, os.cpu_count() or 4)
                 with ThreadPoolExecutor(max_workers=workers) as executor:
                     raw_signals = list(executor.map(_chartink_worker, tasks))
 
@@ -521,6 +550,19 @@ class FNOIntradayScanner:
                 return elapsed, len(tasks), len(valid_signals)
             finally:
                 self._is_chartink_scanning = False
+
+    def _chartink_live_loop(self):
+        """Dedicated real-time background monitor loop for Chartink Screener.
+        Continuously re-evaluates all 210 stocks every 10 seconds against live streaming quotes."""
+        logger.info("Chartink real-time background monitor loop started (every 10s).")
+        while self._is_running:
+            try:
+                time.sleep(10.0)
+                if not self._is_running:
+                    break
+                self.scan_chartink_universe()
+            except Exception as e:
+                logger.debug(f"Chartink live monitor loop exception: {e}")
 
     def run_live(self):
         """
@@ -538,6 +580,9 @@ class FNOIntradayScanner:
 
         logger.info("Scanner listening for live market events... Press Ctrl+C to stop.")
         last_synced_minute = -1
+
+        # Start real-time background loop for continuous Chartink evaluations
+        threading.Thread(target=self._chartink_live_loop, daemon=True, name="ChartinkLiveLoop").start()
 
         try:
             while self._is_running:

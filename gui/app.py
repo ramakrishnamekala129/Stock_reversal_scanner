@@ -215,8 +215,9 @@ class ScannerTkinterGUI:
         self._poll_data()
         self._update_clock()
 
-        # Background recurring auto-scan every 120s (only when scanner is active)
+        # Background recurring auto-scan loops (hands-free continuous scanning)
         self._schedule_auto_hema_scan()
+        self.root.after(1000, self._schedule_auto_chartink_scan)
 
     def _debounce(self, key: str, delay_ms: int, callback):
         """Cancels any pending callback for the given key and schedules a new one."""
@@ -237,16 +238,23 @@ class ScannerTkinterGUI:
             is_running = getattr(self.scanner, "_is_running", False)
             if hasattr(self, "scanner") and self.scanner and (has_univ or is_running):
                 if not getattr(self.scanner, "_is_hema_scanning", False):
-                    # Auto-scan if Tab 4/5 is empty or scanner is running
                     if not self.cached_hema_signals or is_running:
                         self._trigger_hema_scan(is_auto=True)
-                    if not self.cached_chartink_signals or is_running:
-                        self._trigger_chartink_scan(is_auto=True)
         except Exception:
             pass
-        # If not loaded yet, retry in 3 seconds; otherwise auto-scan every 60 seconds
         delay = 3000 if not self.cached_hema_signals else 60000
         self.root.after(delay, self._schedule_auto_hema_scan)
+
+    def _schedule_auto_chartink_scan(self):
+        """Continuously re-evaluates Chartink screener formulas in real-time background loop every 10 seconds."""
+        try:
+            if hasattr(self, "scanner") and self.scanner:
+                if not getattr(self.scanner, "_is_chartink_scanning", False):
+                    self._trigger_chartink_scan(is_auto=True)
+        except Exception:
+            pass
+        # Auto-evaluate every 10 seconds continuously (hands-free real-time operation)
+        self.root.after(10000, self._schedule_auto_chartink_scan)
 
     def _setup_styles(self):
         """Configures modern dark ttk styles for notebook, treeviews, and inputs."""
@@ -992,10 +1000,15 @@ class ScannerTkinterGUI:
                     self.hema_dirty = True
 
             chartink_sigs = snapshot.get("chartink_signals", [])
-            if chartink_sigs:
-                if len(chartink_sigs) != len(self.cached_chartink_signals) or not self.cached_chartink_signals:
+            if chartink_sigs is not None:
+                if chartink_sigs != self.cached_chartink_signals:
                     self.cached_chartink_signals = list(chartink_sigs)
                     self.chartink_dirty = True
+                    if hasattr(self, "notebook") and hasattr(self, "tab_chartink"):
+                        try:
+                            self.notebook.tab(self.tab_chartink, text=f"  🎯 Chartink Intraday ({len(self.cached_chartink_signals)})  ")
+                        except Exception:
+                            pass
 
             ws_status = stats.get("ws_status", "INITIALIZING...")
             if ws_status == "CONNECTED":
@@ -2200,22 +2213,35 @@ class ScannerTkinterGUI:
         sort_combo.pack(side=tk.LEFT, padx=(0, 10))
         sort_combo.bind("<<ComboboxSelected>>", lambda e: self._render_chartink_signals())
 
-        # Scan Button
-        scan_btn = tk.Button(
+        # Real-time Auto-Scan Indicator Badge
+        self.chartink_live_badge = tk.Label(
             row1,
-            text="⚡ Scan Chartink",
-            command=self._trigger_chartink_scan,
-            bg="#2563eb",
-            fg="#ffffff",
-            activebackground="#1d4ed8",
-            activeforeground="#ffffff",
+            text="🟢 LIVE AUTO-SCAN (10s)",
             font=("Segoe UI", 9, "bold"),
+            fg="#10b981",
+            bg="#064e3b",
             relief="flat",
             padx=10,
             pady=3,
+        )
+        self.chartink_live_badge.pack(side=tk.LEFT, padx=(0, 6))
+
+        # Optional Manual Quick Refresh Button
+        refresh_btn = tk.Button(
+            row1,
+            text="⚡ Refresh",
+            command=self._trigger_chartink_scan,
+            bg=CARD_BG,
+            fg=TEXT_MAIN,
+            activebackground=CARD_BORDER,
+            activeforeground="#ffffff",
+            font=("Segoe UI", 8, "bold"),
+            relief="flat",
+            padx=8,
+            pady=3,
             cursor="hand2",
         )
-        scan_btn.pack(side=tk.LEFT, padx=(0, 10))
+        refresh_btn.pack(side=tk.LEFT, padx=(0, 10))
 
         # Export CSV Button
         export_btn = tk.Button(
@@ -2306,31 +2332,34 @@ class ScannerTkinterGUI:
             self.open_chart_for_symbol(sym)
 
     def _trigger_chartink_scan(self, is_auto: bool = False):
-        """Triggers parallel scan across universe evaluating the exact Chartink Screener conditions."""
+        """Triggers ultra-fast parallel scan across universe evaluating the exact Chartink Screener conditions."""
         if not self.scanner:
             if not is_auto:
                 self.chartink_count_lbl.config(text="⚠️ Scanner backend initializing...")
             return
         if getattr(self.scanner, "_is_chartink_scanning", False):
-            if not is_auto:
-                self.chartink_count_lbl.config(text="⏳ Scan already in progress...")
             return
+
+        has_cache = hasattr(self.scanner, "_daily_dfs_cache") and bool(self.scanner._daily_dfs_cache)
         has_univ = hasattr(self.scanner, "_universe") and bool(self.scanner._universe)
         is_running = getattr(self.scanner, "_is_running", False)
-        if not has_univ and not is_running:
+
+        if not has_univ and not has_cache and not is_running:
             if not is_auto:
                 self.chartink_count_lbl.config(text="⏳ Scanner starting up, please wait...")
             return
 
-        self.chartink_count_lbl.config(text="🔄 Scanning Chartink Formula...")
+        if not is_auto:
+            self.chartink_count_lbl.config(text="🔄 Scanning Chartink Formula...")
 
         def _do_scan():
             try:
                 res = self.scanner.scan_chartink_universe()
                 if isinstance(res, tuple):
                     elapsed, n_tasks, n_sigs = res
+                    now_str = datetime.now().strftime("%H:%M:%S")
                     self.root.after(0, lambda: self.chartink_count_lbl.config(
-                        text=f"⚡ Scanned {n_tasks} stocks in {elapsed:.2f}s • {n_sigs} candidates"
+                        text=f"🟢 Auto-Scanned ({now_str}) • {n_sigs} Candidates ({n_tasks} Stocks)"
                     ))
                 self.chartink_dirty = True
             except Exception as ex:
@@ -2386,9 +2415,10 @@ class ScannerTkinterGUI:
             if existing_children:
                 self.chartink_tree.delete(*existing_children)
             if not self.cached_chartink_signals:
+                now_str = datetime.now().strftime("%H:%M:%S")
                 self.chartink_tree.insert("", tk.END, values=(
-                    "--:--:--", "SCANNING...", "--", "Evaluating Chartink Formulas (Sub 1, Sub 2, Sub 3)...",
-                    "--", "--", "--", "--", "--", "Click 'Scan Chartink' to evaluate 210 F&O universe stocks."
+                    now_str, "REAL-TIME ACTIVE", "--", "Continuous Background Scanner Monitoring (Sub 1, Sub 2, Sub 3)...",
+                    "--", "--", "--", "--", "--", "🟢 Auto-evaluating 210 F&O universe stocks every 10 seconds in background."
                 ), tags=("sub1",))
             else:
                 self.chartink_tree.insert("", tk.END, values=(
