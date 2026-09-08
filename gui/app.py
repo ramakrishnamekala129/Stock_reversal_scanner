@@ -207,6 +207,19 @@ class ScannerTkinterGUI:
         self._poll_data()
         self._update_clock()
 
+        # Automatically trigger HEMA multi-timeframe scan in background at startup so Tab 4 is ready like Tab 1
+        self.root.after(800, self._trigger_hema_scan)
+        self._schedule_auto_hema_scan()
+
+    def _schedule_auto_hema_scan(self):
+        """Periodically scans HEMA + T3 across universe in background without requiring manual clicks."""
+        try:
+            if hasattr(self, "scanner") and self.scanner and getattr(self.scanner, "_is_running", False):
+                self._trigger_hema_scan()
+        except Exception:
+            pass
+        self.root.after(60000, self._schedule_auto_hema_scan)
+
     def _setup_styles(self):
         """Configures modern dark ttk styles for notebook, treeviews, and inputs."""
         self.style = ttk.Style(self.root)
@@ -936,9 +949,10 @@ class ScannerTkinterGUI:
                 self._render_signals()
 
             hema_sigs = snapshot.get("hema_signals", [])
-            if len(hema_sigs) != len(self.cached_hema_signals):
-                self.cached_hema_signals = list(hema_sigs)
-                self.hema_dirty = True
+            if hema_sigs:
+                if len(hema_sigs) != len(self.cached_hema_signals) or not self.cached_hema_signals:
+                    self.cached_hema_signals = list(hema_sigs)
+                    self.hema_dirty = True
 
             ws_status = stats.get("ws_status", "INITIALIZING...")
             if ws_status == "CONNECTED":
@@ -1977,8 +1991,8 @@ class ScannerTkinterGUI:
         if len(self.hema_tree.get_children()) == 0:
             if not self.cached_hema_signals:
                 self.hema_tree.insert("", tk.END, values=(
-                    "--:--:--", "SCANNER READY", "--", "READY", "Click '🚀 Scan Multi-Timeframes' to scan 15m, 30m, 1h, 2h, 4h, 1d",
-                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "Or wait for real-time multi-timeframe candle closures."
+                    "--:--:--", "AUTO-SCANNING", "--", "STREAMING", "Multi-timeframe scanner active (15m, 30m, 1h, 2h, 4h, 1d)...",
+                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "Signals stream automatically like Tab 1. Click 'Scan' anytime to force instant re-scan."
                 ), tags=("sideways",))
             else:
                 self.hema_tree.insert("", tk.END, values=(

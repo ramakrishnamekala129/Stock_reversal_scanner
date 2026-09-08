@@ -381,12 +381,23 @@ class HemaT3RegimeEngine:
         Evaluates a complete closed-candle DataFrame for the specified symbol & timeframe.
         Returns the latest HemaT3Signal with comprehensive regime metrics.
         """
-        min_bars_needed = max(self.range_lookback, self.atr_ma_length, self.volume_ma_length, 30)
-        if df is None or len(df) < min_bars_needed:
+        if df is None or len(df) < 5:
             return None
 
         # Work on a copy to prevent side-effects
         df = df.copy()
+        n_bars = len(df)
+
+        # Adaptive parameter clamping to support higher timeframes with fewer bars
+        eff_hema_len = min(self.hema_length, max(2, n_bars - 1))
+        eff_t3_fast_len = min(self.t3_fast_length, max(2, n_bars - 1))
+        eff_t3_slow_len = min(self.t3_slow_length, max(3, n_bars - 1))
+        eff_adx_len = min(self.adx_length, max(2, n_bars - 1))
+        eff_atr_len = min(self.atr_length, max(2, n_bars - 1))
+        eff_atr_ma_len = min(self.atr_ma_length, n_bars)
+        eff_vol_ma_len = min(self.volume_ma_length, n_bars)
+        eff_range_lb = min(self.range_lookback, n_bars)
+        eff_slope_lb = min(self.ema_slope_lookback, max(1, n_bars - 1))
 
         # 1. Indicator Calculations
         close = df["close"]
@@ -395,22 +406,22 @@ class HemaT3RegimeEngine:
         vol = df["volume"]
         open_p = df["open"]
 
-        hema, sma_hema, diff = calculate_hema(close, self.hema_length)
-        t3_fast = calculate_t3(close, self.t3_fast_length)
-        t3_slow = calculate_t3(close, self.t3_slow_length)
+        hema, sma_hema, diff = calculate_hema(close, eff_hema_len)
+        t3_fast = calculate_t3(close, eff_t3_fast_len)
+        t3_slow = calculate_t3(close, eff_t3_slow_len)
 
-        # EMA 13 for slope calculation
-        ema13 = calculate_ema(close, self.t3_fast_length)
+        # EMA for slope calculation
+        ema13 = calculate_ema(close, eff_t3_fast_len)
 
-        # ADX(14)
-        adx, plus_di, minus_di = calculate_adx(df, self.adx_length)
+        # ADX
+        adx, plus_di, minus_di = calculate_adx(df, eff_adx_len)
 
-        # ATR(14) & Volatility MA(20)
-        atr = calculate_atr(df, self.atr_length)
-        atr_ma = calculate_sma(atr, self.atr_ma_length)
+        # ATR & Volatility MA
+        atr = calculate_atr(df, eff_atr_len)
+        atr_ma = calculate_sma(atr, eff_atr_ma_len)
 
         # Volume MA
-        vol_ma = calculate_sma(vol, self.volume_ma_length)
+        vol_ma = calculate_sma(vol, eff_vol_ma_len)
 
         # VWAP
         vwap = calculate_vwap(df)
@@ -436,20 +447,20 @@ class HemaT3RegimeEngine:
 
         curr_adx = float(adx.iloc[i])
         prev_adx = float(adx.iloc[i - 1])
-        adx_3ago = float(adx.iloc[i - self.ema_slope_lookback]) if i >= self.ema_slope_lookback else curr_adx
+        adx_3ago = float(adx.iloc[i - eff_slope_lb]) if i >= eff_slope_lb else curr_adx
 
-        curr_atr = float(atr.iloc[i]) if not np.isnan(atr.iloc[i]) else 0.0
-        curr_atr_ma = float(atr_ma.iloc[i]) if not np.isnan(atr_ma.iloc[i]) else 0.0
+        curr_atr = float(atr.iloc[i]) if not np.isnan(atr.iloc[i]) else (curr_high - curr_low)
+        curr_atr_ma = float(atr_ma.iloc[i]) if not np.isnan(atr_ma.iloc[i]) else curr_atr
 
         curr_ema13 = float(ema13.iloc[i])
-        ema13_3ago = float(ema13.iloc[i - self.ema_slope_lookback]) if i >= self.ema_slope_lookback else curr_ema13
+        ema13_3ago = float(ema13.iloc[i - eff_slope_lb]) if i >= eff_slope_lb else curr_ema13
         ema_slope = curr_ema13 - ema13_3ago
         ema_norm_slope = abs(ema_slope) / ema13_3ago if ema13_3ago > 0 else 0.0
 
-        # Range Compression (Last 20 bars)
-        recent_20_high = float(high.iloc[max(0, i - self.range_lookback + 1): i + 1].max())
-        recent_20_low = float(low.iloc[max(0, i - self.range_lookback + 1): i + 1].min())
-        range_width = recent_20_high - recent_20_low
+        # Range Compression
+        recent_range_high = float(high.iloc[max(0, i - eff_range_lb + 1): i + 1].max())
+        recent_range_low = float(low.iloc[max(0, i - eff_range_lb + 1): i + 1].min())
+        range_width = recent_range_high - recent_range_low
         range_percent = (range_width / curr_close * 100.0) if curr_close > 0 else 0.0
 
         # Volume Expansion
@@ -548,8 +559,8 @@ class HemaT3RegimeEngine:
         is_ema_slope_bear = ema_slope < 0 and ema_norm_slope >= self.min_ema_slope
         is_vol_expanding = rel_vol >= self.volume_multiplier
 
-        recent_res = float(high.iloc[max(0, i - self.range_lookback): i].max())
-        recent_sup = float(low.iloc[max(0, i - self.range_lookback): i].min())
+        recent_res = float(high.iloc[max(0, i - eff_range_lb): i].max())
+        recent_sup = float(low.iloc[max(0, i - eff_range_lb): i].min())
         bull_breakout = curr_close > recent_res and prev_close <= recent_res
         bear_breakout = curr_close < recent_sup and prev_close >= recent_sup
 
@@ -602,6 +613,10 @@ class HemaT3RegimeEngine:
             regime = "TRENDING BULLISH"
         elif bearish_trend and trend_score >= self.min_analytic_score:
             regime = "TRENDING BEARISH"
+        elif bullish_trend:
+            regime = "EARLY BULLISH"
+        elif bearish_trend:
+            regime = "EARLY BEARISH"
         else:
             regime = "SIDEWAYS / NO-TRADE"
 
@@ -613,6 +628,10 @@ class HemaT3RegimeEngine:
             conditions_met.append("HEMA Crossed Above Both T3 Fast & Slow")
         elif raw_sell:
             conditions_met.append("HEMA Crossed Below Both T3 Fast & Slow")
+        elif curr_above_both:
+            conditions_met.append("HEMA Sustained Above Both T3 Lines")
+        elif curr_below_both:
+            conditions_met.append("HEMA Sustained Below Both T3 Lines")
 
         if is_adx_trending:
             conditions_met.append(f"ADX Trending ({curr_adx:.1f})")
@@ -627,16 +646,28 @@ class HemaT3RegimeEngine:
         is_actionable = False
 
         if raw_buy and not no_trade and bullish_trend and is_separated and trend_score >= self.min_analytic_score:
-            signal = "BULLISH SETUP"
+            signal = "🟢 BUY (BULLISH ENTRY)"
             is_actionable = True
         elif raw_sell and not no_trade and bearish_trend and is_separated and trend_score >= self.min_analytic_score:
-            signal = "BEARISH WARNING"
+            signal = "🔴 SELL (BEARISH WARNING)"
             is_actionable = True
         elif raw_buy:
-            signal = "BULLISH SETUP"
+            signal = "🟢 BUY (BULLISH SETUP)"
             is_actionable = False  # Filtered out by regime / anti-sideways
         elif raw_sell:
-            signal = "BEARISH WARNING"
+            signal = "🔴 SELL (BEARISH WARNING)"
+            is_actionable = False
+        elif curr_above_both and not no_trade and trend_score >= 5:
+            signal = "🟢 BUY TREND (BULLISH HOLD)"
+            is_actionable = True
+        elif curr_below_both and not no_trade and trend_score >= 5:
+            signal = "🔴 SELL TREND (BEARISH HOLD)"
+            is_actionable = True
+        elif is_sideways or no_trade:
+            signal = "⚠️ SIDEWAYS / NO-TRADE"
+            is_actionable = False
+        else:
+            signal = "HOLD"
             is_actionable = False
 
         # Extract timestamp string

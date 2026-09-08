@@ -596,17 +596,52 @@ class HistoricalDataLoader:
 
         # In-memory multi-timeframe resampling in parallel using Polars/Pandas
         results: Dict[str, Dict[str, pd.DataFrame]] = {sym: {} for sym in universe.keys()}
+        rule_map = {
+            "3m": "3min", "5m": "5min", "15m": "15min", "30m": "30min",
+            "1h": "60min", "2h": "120min", "4h": "240min", "1d": "1D", "day": "1D"
+        }
 
         def _resample_stock(sym: str):
-            cache_entry = self._raw_1m_cache.get(sym)
-            if not cache_entry or not cache_entry[0]:
-                return sym, {}
-            candles = cache_entry[0]
             tf_dict = {}
+            cache_entry = self._raw_1m_cache.get(sym)
+            raw_candles = cache_entry[0] if cache_entry else None
+
+            df_db = None
+            if self.db:
+                try:
+                    df_db = self.db.get_candles_by_symbol(sym)
+                except Exception:
+                    df_db = None
+
             for tf in timeframes:
-                df = self._process_raw_1m_to_5m(candles, timeframe=tf)
+                df = None
+                if raw_candles:
+                    df = self._process_raw_1m_to_5m(raw_candles, timeframe=tf)
+
+                # Fallback or merge with multi-day historical 5m candles from database
+                if (df is None or len(df) < 20) and df_db is not None and not df_db.empty:
+                    p_rule = rule_map.get(tf, "15min")
+                    try:
+                        df_res = df_db.copy()
+                        if not pd.api.types.is_datetime64_any_dtype(df_res["timestamp"]):
+                            df_res["timestamp"] = pd.to_datetime(df_res["timestamp"])
+                        df_res = df_res.sort_values("timestamp").set_index("timestamp")
+                        resampled = df_res.resample(p_rule, origin="start_day").agg({
+                            "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"
+                        }).dropna().reset_index()
+
+                        if df is not None and not df.empty:
+                            combined = pd.concat([resampled, df], ignore_index=True)
+                            combined = combined.drop_duplicates(subset=["timestamp"], keep="last").sort_values("timestamp").reset_index(drop=True)
+                            df = combined
+                        else:
+                            df = resampled
+                    except Exception as err:
+                        logger.debug(f"Resample fallback error for {sym} {tf}: {err}")
+
                 if df is not None and not df.empty:
                     tf_dict[tf] = df
+
             return sym, tf_dict
 
         workers = min(32, (os.cpu_count() or 4) * 4)

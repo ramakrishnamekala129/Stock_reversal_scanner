@@ -264,7 +264,7 @@ class FNOIntradayScanner:
                 self.excel_mgr.add_signal(sig)
 
         # 3. Evaluate HEMA + T3 Strategy with Anti-Sideways / Market-Regime Filter
-        if len(df_history) >= 20:
+        if len(df_history) >= 5:
             try:
                 hema_sig = self.hema_engine.evaluate(df_history, symbol=symbol, timeframe=timeframe)
                 if hema_sig:
@@ -277,6 +277,7 @@ class FNOIntradayScanner:
         Scans all historical candles (3m, 5m, 15m) from 09:15 up to current time across the universe,
         detecting all pattern & reversal signals that occurred today in chronological sequence,
         and accurately confirming/invalidating their trigger states.
+        Automatically kicks off HEMA + T3 multi-timeframe scan at startup.
         """
         logger.info("Scanning existing intraday candles of today's session across timeframes for reversal setups...")
         total_eval = 0
@@ -297,6 +298,12 @@ class FNOIntradayScanner:
                         
         logger.info(f"Startup candle scan complete: Evaluated {total_eval} historical candles across timeframes, detected {len(self.dedup._seen_events)} signals.")
 
+        # Automatically kick off ultra-fast parallel HEMA + T3 scan on startup so Tab 4 works out of the box like Tab 1
+        try:
+            threading.Thread(target=self.scan_hema_universe, daemon=True, name="StartupHemaScan").start()
+        except Exception as e:
+            logger.debug(f"Startup HEMA scan error: {e}")
+
     def sync_broker_candles_for_all(self):
         """
         Fetches the latest official broker-side 5-minute candles for the entire F&O universe.
@@ -307,6 +314,12 @@ class FNOIntradayScanner:
         for sym, df_b in broker_dfs.items():
             self.candle_engine.sync_broker_candles(sym, df_b, key_map=key_map)
         logger.info(f"Broker candle sync complete for {len(broker_dfs)} symbols.")
+
+        # Automatically re-evaluate HEMA + T3 strategy across universe on every candle sync
+        try:
+            threading.Thread(target=self.scan_hema_universe, daemon=True, name="SyncHemaScan").start()
+        except Exception as e:
+            logger.debug(f"Sync HEMA scan error: {e}")
 
     def scan_hema_universe(self, timeframes: Optional[List[str]] = None, symbols: Optional[List[str]] = None):
         """
@@ -341,7 +354,7 @@ class FNOIntradayScanner:
             is_liq = inst_info.get("is_most_liquid", False)
             
             for tf, df in tf_map.items():
-                if df is not None and len(df) >= 20:
+                if df is not None and len(df) >= 5:
                     tasks.append((sym, tf, df, fut_sym, lot_sz, t_cr, l_tier, is_liq))
                     
         # 3. Parallel Numba-accelerated evaluation across all available CPU cores
