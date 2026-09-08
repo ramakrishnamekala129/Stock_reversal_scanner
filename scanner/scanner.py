@@ -392,7 +392,7 @@ class FNOIntradayScanner:
                         logger.debug(f"HEMA eval error for {sym} {tf}: {ex}")
                         return None
 
-                workers = min(8, os.cpu_count() or 4)
+                workers = min(4, os.cpu_count() or 2)
                 with ThreadPoolExecutor(max_workers=workers) as executor:
                     signals = list(executor.map(_evaluate_worker, tasks))
 

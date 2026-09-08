@@ -245,114 +245,118 @@ class WebDashboardState:
         self._broadcast({"type": "STATS_UPDATE", "stats": self.get_stats()})
 
     def get_snapshot(self) -> dict:
-        """Returns complete state snapshot for initial client render."""
+        """Returns complete state snapshot for initial client render.
+        Market data is cached and only rebuilt when price_version changes."""
         with self._lock:
-            # Combine pivots and live prices
-            market_data = []
-            for sym, p in sorted(self.pivots.items()):
-                lp = self.live_prices.get(sym, {})
-                ltp = lp.get("ltp", p.get("pdc", 0.0))
-                r3 = p.get("r3", 0.0)
-                r2 = p.get("r2", 0.0)
-                r1 = p.get("r1", 0.0)
-                pp = p.get("pp") or p.get("pivot", 0.0)
-                s1 = p.get("s1", 0.0)
-                s2 = p.get("s2", 0.0)
-                s3 = p.get("s3", 0.0)
+            # Only rebuild market data when prices have actually changed
+            if not hasattr(self, '_cached_market_data') or not hasattr(self, '_cached_market_version') or self._cached_market_version != self.price_version:
+                market_data = []
+                for sym, p in sorted(self.pivots.items()):
+                    lp = self.live_prices.get(sym, {})
+                    ltp = lp.get("ltp", p.get("pdc", 0.0))
+                    r3 = p.get("r3", 0.0)
+                    r2 = p.get("r2", 0.0)
+                    r1 = p.get("r1", 0.0)
+                    pp = p.get("pp") or p.get("pivot", 0.0)
+                    s1 = p.get("s1", 0.0)
+                    s2 = p.get("s2", 0.0)
+                    s3 = p.get("s3", 0.0)
 
-                tc = p.get("tc", pp)
-                bc = p.get("bc", pp)
-                cpr_top = p.get("cpr_top", max(tc, bc))
-                cpr_bottom = p.get("cpr_bottom", min(tc, bc))
-                cpr_width_pct = p.get("cpr_width_pct", 0.0)
+                    tc = p.get("tc", pp)
+                    bc = p.get("bc", pp)
+                    cpr_top = p.get("cpr_top", max(tc, bc))
+                    cpr_bottom = p.get("cpr_bottom", min(tc, bc))
+                    cpr_width_pct = p.get("cpr_width_pct", 0.0)
 
-                pdh = p.get("pdh", 0.0)
-                pdl = p.get("pdl", 0.0)
+                    pdh = p.get("pdh", 0.0)
+                    pdl = p.get("pdl", 0.0)
 
-                bull_trap_top = p.get("bull_trap_top", max(r1, pdh) if (r1 and pdh) else 0.0)
-                bull_trap_bottom = p.get("bull_trap_bottom", min(r1, pdh) if (r1 and pdh) else 0.0)
-                bull_trap_width_pct = p.get("bull_trap_width_pct", round(abs(r1 - pdh) / pp * 100.0, 3) if pp > 0 else 0.0)
-                is_narrow_bull_trap = p.get("is_narrow_bull_trap", bull_trap_width_pct <= 0.20)
+                    bull_trap_top = p.get("bull_trap_top", max(r1, pdh) if (r1 and pdh) else 0.0)
+                    bull_trap_bottom = p.get("bull_trap_bottom", min(r1, pdh) if (r1 and pdh) else 0.0)
+                    bull_trap_width_pct = p.get("bull_trap_width_pct", round(abs(r1 - pdh) / pp * 100.0, 3) if pp > 0 else 0.0)
+                    is_narrow_bull_trap = p.get("is_narrow_bull_trap", bull_trap_width_pct <= 0.20)
 
-                bear_trap_top = p.get("bear_trap_top", max(s1, pdl) if (s1 and pdl) else 0.0)
-                bear_trap_bottom = p.get("bear_trap_bottom", min(s1, pdl) if (s1 and pdl) else 0.0)
-                bear_trap_width_pct = p.get("bear_trap_width_pct", round(abs(s1 - pdl) / pp * 100.0, 3) if pp > 0 else 0.0)
-                is_narrow_bear_trap = p.get("is_narrow_bear_trap", bear_trap_width_pct <= 0.20)
+                    bear_trap_top = p.get("bear_trap_top", max(s1, pdl) if (s1 and pdl) else 0.0)
+                    bear_trap_bottom = p.get("bear_trap_bottom", min(s1, pdl) if (s1 and pdl) else 0.0)
+                    bear_trap_width_pct = p.get("bear_trap_width_pct", round(abs(s1 - pdl) / pp * 100.0, 3) if pp > 0 else 0.0)
+                    is_narrow_bear_trap = p.get("is_narrow_bear_trap", bear_trap_width_pct <= 0.20)
 
-                zone = "PP - R1 (Bullish Territory)"
-                if is_narrow_bull_trap and bull_trap_bottom > 0 and bull_trap_bottom <= ltp <= bull_trap_top:
-                    zone = f"🪤 Narrow Bull Trap ({bull_trap_width_pct:.2f}%)"
-                elif is_narrow_bear_trap and bear_trap_bottom > 0 and bear_trap_bottom <= ltp <= bear_trap_top:
-                    zone = f"🪤 Narrow Bear Trap ({bear_trap_width_pct:.2f}%)"
-                elif cpr_bottom > 0 and cpr_bottom <= ltp <= cpr_top:
-                    zone = "Inside CPR Zone (Choppy / Base)"
-                elif r3 > 0 and ltp >= r3:
-                    zone = "Above R3 (Super Breakout)"
-                elif r2 > 0 and abs(ltp - r2) / r2 <= 0.0035:
-                    zone = "🛡️ Rejection near R2 Resistance"
-                elif r2 > 0 and ltp >= r2:
-                    zone = "R2 - R3 (Bullish Extension)"
-                elif bull_trap_top > 0 and ltp > bull_trap_top:
-                    zone = "Above R1/PDH (Strong Bullish)"
-                elif bear_trap_bottom > 0 and ltp < bear_trap_bottom:
-                    if s2 > 0 and ltp < s2 * 0.9965:
+                    zone = "PP - R1 (Bullish Territory)"
+                    if is_narrow_bull_trap and bull_trap_bottom > 0 and bull_trap_bottom <= ltp <= bull_trap_top:
+                        zone = f"🪤 Narrow Bull Trap ({bull_trap_width_pct:.2f}%)"
+                    elif is_narrow_bear_trap and bear_trap_bottom > 0 and bear_trap_bottom <= ltp <= bear_trap_top:
+                        zone = f"🪤 Narrow Bear Trap ({bear_trap_width_pct:.2f}%)"
+                    elif cpr_bottom > 0 and cpr_bottom <= ltp <= cpr_top:
+                        zone = "Inside CPR Zone (Choppy / Base)"
+                    elif r3 > 0 and ltp >= r3:
+                        zone = "Above R3 (Super Breakout)"
+                    elif r2 > 0 and abs(ltp - r2) / r2 <= 0.0035:
+                        zone = "🛡️ Rejection near R2 Resistance"
+                    elif r2 > 0 and ltp >= r2:
+                        zone = "R2 - R3 (Bullish Extension)"
+                    elif bull_trap_top > 0 and ltp > bull_trap_top:
+                        zone = "Above R1/PDH (Strong Bullish)"
+                    elif bear_trap_bottom > 0 and ltp < bear_trap_bottom:
+                        if s2 > 0 and ltp < s2 * 0.9965:
+                            zone = "Below S2 (Oversold / Crash)"
+                        elif s2 > 0 and abs(ltp - s2) / s2 <= 0.0035 and ltp >= s2:
+                            zone = "🛡️ Bounce near S2 Support"
+                        else:
+                            zone = "Below S1/PDL (Strong Breakdown)"
+                    elif pp > 0 and ltp >= pp:
+                        zone = "PP - R1 (Bullish Territory)"
+                    elif s2 > 0 and ltp < s2 * 0.9965:
                         zone = "Below S2 (Oversold / Crash)"
                     elif s2 > 0 and abs(ltp - s2) / s2 <= 0.0035 and ltp >= s2:
                         zone = "🛡️ Bounce near S2 Support"
                     else:
-                        zone = "Below S1/PDL (Strong Breakdown)"
-                elif pp > 0 and ltp >= pp:
-                    zone = "PP - R1 (Bullish Territory)"
-                elif s2 > 0 and ltp < s2 * 0.9965:
-                    zone = "Below S2 (Oversold / Crash)"
-                elif s2 > 0 and abs(ltp - s2) / s2 <= 0.0035 and ltp >= s2:
-                    zone = "🛡️ Bounce near S2 Support"
-                else:
-                    zone = "S1 - PP (Support / Retest)"
+                        zone = "S1 - PP (Support / Retest)"
 
-                market_data.append({
-                    "symbol": sym,
-                    "ltp": ltp,
-                    "change_pct": lp.get("change_pct", 0.0),
-                    "volume": lp.get("volume", p.get("pdv", 0)),
-                    "zone": zone,
-                    "time": lp.get("time", "--"),
-                    "pdo": p.get("pdo", 0.0),
-                    "pdh": pdh,
-                    "pdl": pdl,
-                    "pdc": p.get("pdc", 0.0),
-                    "pdv": p.get("pdv", 0),
-                    "pp": pp,
-                    "tc": tc,
-                    "bc": bc,
-                    "cpr_top": cpr_top,
-                    "cpr_bottom": cpr_bottom,
-                    "cpr_width_pct": cpr_width_pct,
-                    "is_narrow_cpr": p.get("is_narrow_cpr", cpr_width_pct <= 0.20),
-                    "r1": r1,
-                    "r2": r2,
-                    "r3": r3,
-                    "s1": s1,
-                    "s2": s2,
-                    "s3": s3,
-                    "bull_trap_top": bull_trap_top,
-                    "bull_trap_bottom": bull_trap_bottom,
-                    "bear_trap_top": bear_trap_top,
-                    "bear_trap_bottom": bear_trap_bottom,
-                    "bull_trap_width_pct": bull_trap_width_pct,
-                    "bear_trap_width_pct": bear_trap_width_pct,
-                    "is_narrow_bull_trap": is_narrow_bull_trap,
-                    "is_narrow_bear_trap": is_narrow_bear_trap,
-                    "is_narrow_trap_zone": is_narrow_bull_trap or is_narrow_bear_trap,
-                    "fut_symbol": p.get("fut_symbol", f"{sym} FUT"),
-                    "lot_size": p.get("lot_size", 0),
-                    "turnover_cr": p.get("turnover_cr", 0.0),
-                    "liquidity_tier": p.get("liquidity_tier", "Normal"),
-                    "is_most_liquid": p.get("is_most_liquid", False),
-                })
+                    market_data.append({
+                        "symbol": sym,
+                        "ltp": ltp,
+                        "change_pct": lp.get("change_pct", 0.0),
+                        "volume": lp.get("volume", p.get("pdv", 0)),
+                        "zone": zone,
+                        "time": lp.get("time", "--"),
+                        "pdo": p.get("pdo", 0.0),
+                        "pdh": pdh,
+                        "pdl": pdl,
+                        "pdc": p.get("pdc", 0.0),
+                        "pdv": p.get("pdv", 0),
+                        "pp": pp,
+                        "tc": tc,
+                        "bc": bc,
+                        "cpr_top": cpr_top,
+                        "cpr_bottom": cpr_bottom,
+                        "cpr_width_pct": cpr_width_pct,
+                        "is_narrow_cpr": p.get("is_narrow_cpr", cpr_width_pct <= 0.20),
+                        "r1": r1,
+                        "r2": r2,
+                        "r3": r3,
+                        "s1": s1,
+                        "s2": s2,
+                        "s3": s3,
+                        "bull_trap_top": bull_trap_top,
+                        "bull_trap_bottom": bull_trap_bottom,
+                        "bear_trap_top": bear_trap_top,
+                        "bear_trap_bottom": bear_trap_bottom,
+                        "bull_trap_width_pct": bull_trap_width_pct,
+                        "bear_trap_width_pct": bear_trap_width_pct,
+                        "is_narrow_bull_trap": is_narrow_bull_trap,
+                        "is_narrow_bear_trap": is_narrow_bear_trap,
+                        "is_narrow_trap_zone": is_narrow_bull_trap or is_narrow_bear_trap,
+                        "fut_symbol": p.get("fut_symbol", f"{sym} FUT"),
+                        "lot_size": p.get("lot_size", 0),
+                        "turnover_cr": p.get("turnover_cr", 0.0),
+                        "liquidity_tier": p.get("liquidity_tier", "Normal"),
+                        "is_most_liquid": p.get("is_most_liquid", False),
+                    })
+                self._cached_market_data = market_data
+                self._cached_market_version = self.price_version
 
             return {
-                "market": market_data,
+                "market": self._cached_market_data,
                 "signals": list(self.signals),
                 "hema_signals": list(self.hema_signals),
                 "stats": dict(self.stats),

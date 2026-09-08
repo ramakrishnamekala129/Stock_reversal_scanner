@@ -421,12 +421,12 @@ class HistoricalDataLoader:
         records = [r for r in records if dt_time(9, 15) <= r["timestamp"].time() <= dt_time(15, 30)]
         if not records:
             return None
-        df_1m = pd.DataFrame(records).sort_values("timestamp").set_index("timestamp")
+        tf_key = str(timeframe).lower()
         p_rule = {
             "3m": "3min", "5m": "5min", "15m": "15min", "30m": "30min",
             "1h": "60min", "2h": "120min", "4h": "240min", "1d": "1D", "day": "1D"
-        }.get(timeframe, "5min")
-        is_daily = p_rule in ("1D", "D", "day")
+        }.get(tf_key, "5min")
+        is_daily = str(p_rule).upper().endswith("D") or "DAY" in str(p_rule).upper()
         resample_kwargs = {"origin": "start_day"}
         if not is_daily:
             resample_kwargs["offset"] = "15min"
@@ -650,8 +650,9 @@ class HistoricalDataLoader:
 
                 # Fallback or merge with multi-day historical 5m candles
                 if (df is None or len(df) < 20) and df_db is not None and not df_db.empty:
-                    p_rule = rule_map.get(tf, "15min")
-                    is_daily = p_rule in ("1D", "D", "day")
+                    tf_key = str(tf).lower()
+                    p_rule = rule_map.get(tf_key, "15min")
+                    is_daily = str(p_rule).upper().endswith("D") or "DAY" in str(p_rule).upper()
                     try:
                         df_res = df_db.copy()
                         if not pd.api.types.is_datetime64_any_dtype(df_res["timestamp"]):
@@ -678,8 +679,8 @@ class HistoricalDataLoader:
 
             return sym, tf_dict
 
-        # Tune workers to 8 max to keep CPU light and GUI ultra-smooth
-        workers = min(8, os.cpu_count() or 4)
+        # Tune workers to max 4 to keep GIL free and GUI ultra-smooth
+        workers = min(4, os.cpu_count() or 2)
         with ThreadPoolExecutor(max_workers=workers) as executor:
             res_items = executor.map(_resample_stock, universe.keys())
             for sym, tf_dict in res_items:

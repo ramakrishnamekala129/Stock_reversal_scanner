@@ -39,11 +39,21 @@ if not UPSTOX_ACCESS_TOKEN and TOKEN_FILE_PATH.exists():
 MARKET_TIMEZONE = "Asia/Kolkata"
 MARKET_OPEN = "09:15"
 MARKET_CLOSE = "15:30"
-TIMEFRAME = "5minute"
-CANDLE_DURATION_MINUTES = 5
+TIMEFRAME = os.getenv("TIMEFRAME", "5minute")
+CANDLE_DURATION_MINUTES = 5 if "5" in TIMEFRAME else (3 if "3" in TIMEFRAME else (15 if "15" in TIMEFRAME else 5))
 # Market Mode: 'FUTURES' (default: nearest active monthly contract) or 'SPOT' (cash equity)
 DEFAULT_MARKET_MODE = "FUTURES"
-SCANNER_TIMEFRAMES = ["3m", "5m", "15m"]
+
+# Primary Reversal Scanner Timeframes
+# Derive from TIMEFRAME unless explicitly overridden by SCANNER_TIMEFRAMES env
+_configured_tfs = os.getenv("SCANNER_TIMEFRAMES", "")
+if _configured_tfs:
+    SCANNER_TIMEFRAMES = [t.strip() for t in _configured_tfs.split(",") if t.strip()]
+else:
+    # Default timeframes strictly aligned with TIMEFRAME setting (no 3m unless configured)
+    base_tf = "5m" if "5" in TIMEFRAME else ("3m" if "3" in TIMEFRAME else ("15m" if "15" in TIMEFRAME else "5m"))
+    SCANNER_TIMEFRAMES = [base_tf, "15m"] if base_tf != "15m" else ["15m"]
+
 TIMEFRAME_MINUTES = {"3m": 3, "5m": 5, "15m": 15}
 HEMA_TIMEFRAMES = ["15m", "30m", "1h", "2h", "4h", "1d"]
 

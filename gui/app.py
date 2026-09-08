@@ -225,12 +225,18 @@ class ScannerTkinterGUI:
     def _schedule_auto_hema_scan(self):
         """Periodically scans HEMA + T3 across universe in background without requiring manual clicks."""
         try:
-            if hasattr(self, "scanner") and self.scanner and getattr(self.scanner, "_is_running", False):
+            has_univ = hasattr(self.scanner, "_universe") and bool(self.scanner._universe)
+            is_running = getattr(self.scanner, "_is_running", False)
+            if hasattr(self, "scanner") and self.scanner and (has_univ or is_running):
                 if not getattr(self.scanner, "_is_hema_scanning", False):
-                    self._trigger_hema_scan(is_auto=True)
+                    # Auto-scan if Tab 4 is empty or scanner is running
+                    if not self.cached_hema_signals or is_running:
+                        self._trigger_hema_scan(is_auto=True)
         except Exception:
             pass
-        self.root.after(120000, self._schedule_auto_hema_scan)
+        # If not loaded yet, retry in 3 seconds; otherwise auto-scan every 60 seconds
+        delay = 3000 if not self.cached_hema_signals else 60000
+        self.root.after(delay, self._schedule_auto_hema_scan)
 
     def _setup_styles(self):
         """Configures modern dark ttk styles for notebook, treeviews, and inputs."""
@@ -442,7 +448,7 @@ class ScannerTkinterGUI:
 
         # Timeframe Filter
         tk.Label(row1, text="TF:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
-        tf_combo = ttk.Combobox(row1, textvariable=self.signal_tf_var, values=["ALL", "3m", "5m", "15m"], state="readonly", width=6)
+        tf_combo = ttk.Combobox(row1, textvariable=self.signal_tf_var, values=["ALL"] + [t for t in config.SCANNER_TIMEFRAMES], state="readonly", width=6)
         tf_combo.pack(side=tk.LEFT, padx=(0, 10))
         tf_combo.bind("<<ComboboxSelected>>", lambda e: self._render_signals())
 
@@ -858,24 +864,19 @@ class ScannerTkinterGUI:
         self.root.after(20, self._process_tab_change)
 
     def _process_tab_change(self):
-        """Processes data rendering for the newly selected tab without freezing the UI."""
+        """Marks the newly selected tab as needing a render, letting _poll_data handle it."""
         try:
             if not hasattr(self, "notebook"):
                 return
             cur = self.notebook.select()
-            now = time.time()
-            if hasattr(self, "tab_market") and cur == str(self.tab_market):
-                self._render_market()
-                self.last_market_render_time = now
-                self.market_dirty = False
-            elif hasattr(self, "tab_chart") and cur == str(self.tab_chart) and hasattr(self, "chart_frame"):
-                self.chart_frame.redraw_chart()
-                self.last_chart_render_time = now
-                self.chart_dirty = False
+            if hasattr(self, "tab_signals") and cur == str(self.tab_signals):
+                self._signals_dirty = True
+            elif hasattr(self, "tab_market") and cur == str(self.tab_market):
+                self.market_dirty = True
+            elif hasattr(self, "tab_chart") and cur == str(self.tab_chart):
+                self.chart_dirty = True
             elif hasattr(self, "tab_hema") and cur == str(self.tab_hema):
-                self._render_hema_signals()
-                self.last_hema_render_time = now
-                self.hema_dirty = False
+                self.hema_dirty = True
         except Exception:
             pass
 
@@ -942,11 +943,17 @@ class ScannerTkinterGUI:
             price_ver = snapshot.get("price_version", 0)
 
             # Update Metric Cards only when values change
-            self.card_symbols_val.set(str(stats.get("symbols_scanned", len(market))))
-            self.card_candles_val.set(str(stats.get("candles_processed", 0)))
-            self.card_signals_val.set(str(len(signals)))
+            sym_count = str(stats.get("symbols_scanned", len(market)))
+            if self.card_symbols_val.get() != sym_count:
+                self.card_symbols_val.set(sym_count)
+            candle_count = str(stats.get("candles_processed", 0))
+            if self.card_candles_val.get() != candle_count:
+                self.card_candles_val.set(candle_count)
+            sig_count = str(len(signals))
+            if self.card_signals_val.get() != sig_count:
+                self.card_signals_val.set(sig_count)
 
-            # Only recount bullish/bearish when signal count changed
+            # Only recount bullish/bearish and mark dirty when signal count changed
             if len(signals) != len(self.cached_signals):
                 if len(signals) > len(self.cached_signals) and len(self.cached_signals) > 0:
                     latest = signals[0]
@@ -958,7 +965,7 @@ class ScannerTkinterGUI:
                 bear_cnt = sum(1 for s in signals if "BEARISH" in str(s.get("direction", "")))
                 self.card_bullish_val.set(str(bull_cnt))
                 self.card_bearish_val.set(str(bear_cnt))
-                self._render_signals()
+                self._signals_dirty = True
 
             hema_sigs = snapshot.get("hema_signals", [])
             if hema_sigs:
@@ -968,18 +975,21 @@ class ScannerTkinterGUI:
 
             ws_status = stats.get("ws_status", "INITIALIZING...")
             if ws_status == "CONNECTED":
-                self.card_status_val.set("🟢 LIVE CONNECTED")
+                new_status = "🟢 LIVE CONNECTED"
             elif ws_status == "DRY_RUN":
-                self.card_status_val.set("🔵 DRY RUN COMPLETE")
+                new_status = "🔵 DRY RUN COMPLETE"
             elif ws_status == "INITIALIZING...":
-                self.card_status_val.set("🟡 LOADING F&O DATA...")
+                new_status = "🟡 LOADING F&O DATA..."
             elif ws_status == "ERROR":
-                self.card_status_val.set("🔴 ERROR / CHECK TOKEN")
+                new_status = "🔴 ERROR / CHECK TOKEN"
             else:
-                self.card_status_val.set(f"🟡 {ws_status}")
+                new_status = f"🟡 {ws_status}"
+            if self.card_status_val.get() != new_status:
+                self.card_status_val.set(new_status)
 
-            if stats.get("last_updated"):
-                self.footer_sync_lbl.config(text=f"Last sync: {stats.get('last_updated')}")
+            last_upd = stats.get("last_updated")
+            if last_upd:
+                self.footer_sync_lbl.config(text=f"Last sync: {last_upd}")
 
             # Check if market data or live prices changed
             now = time.time()
@@ -987,7 +997,14 @@ class ScannerTkinterGUI:
                 self.last_price_version = price_ver
                 self.cached_market = list(market)
                 self.market_dirty = True
-                self.chart_dirty = True
+                # Only flag chart as dirty if the active chart symbol's price actually changed
+                active_sym = getattr(self.chart_frame, "current_symbol", "") if hasattr(self, "chart_frame") else ""
+                if active_sym:
+                    active_item = next((m for m in market if m.get("symbol") == active_sym), None)
+                    cur_ltp = active_item.get("ltp") if active_item else None
+                    if cur_ltp != getattr(self, "_last_active_chart_ltp", None):
+                        self._last_active_chart_ltp = cur_ltp
+                        self.chart_dirty = True
 
             # Populate chart symbols once market data is available
             if hasattr(self, "chart_frame") and not getattr(self, "chart_symbols_loaded", False):
@@ -1000,40 +1017,50 @@ class ScannerTkinterGUI:
             if hasattr(self, "notebook"):
                 try:
                     cur_tab = self.notebook.select()
-                    # If on Market tab: throttle updates to at most once every 1.2 seconds
-                    if hasattr(self, "tab_market") and cur_tab == str(self.tab_market):
-                        if self.market_dirty and (now - self.last_market_render_time >= 1.2):
+
+                    # If on Signals tab: throttle updates to at most once every 1.0 second
+                    if hasattr(self, "tab_signals") and cur_tab == str(self.tab_signals):
+                        if getattr(self, "_signals_dirty", False) and (now - getattr(self, "_last_signals_render_time", 0.0) >= 1.0):
+                            self._last_signals_render_time = now
+                            self._signals_dirty = False
+                            self._render_signals()
+
+                    # If on Market tab: throttle updates to at most once every 1.5 seconds
+                    elif hasattr(self, "tab_market") and cur_tab == str(self.tab_market):
+                        if self.market_dirty and (now - self.last_market_render_time >= 1.5):
                             self.last_market_render_time = now
                             self.market_dirty = False
                             self._render_market()
 
-                    # If on Chart tab: throttle redraws to at most once every 1.8 seconds
+                    # If on Chart tab: throttle redraws to at most once every 2.0 seconds
                     elif hasattr(self, "tab_chart") and cur_tab == str(self.tab_chart) and hasattr(self, "chart_frame"):
-                        if self.chart_dirty and (now - self.last_chart_render_time >= 1.8):
+                        if self.chart_dirty and (now - self.last_chart_render_time >= 2.0):
                             self.last_chart_render_time = now
                             self.chart_dirty = False
                             self.chart_frame.redraw_chart()
 
-                    # If on HEMA + T3 Strategy tab: throttle redraws to at most once every 1.0 second
+                    # If on HEMA + T3 Strategy tab: throttle redraws to at most once every 1.5 seconds
                     elif hasattr(self, "tab_hema") and cur_tab == str(self.tab_hema):
-                        if self.hema_dirty and (now - self.last_hema_render_time >= 1.0):
+                        if self.hema_dirty and (now - self.last_hema_render_time >= 1.5):
                             self.last_hema_render_time = now
                             self.hema_dirty = False
                             self._render_hema_signals()
+
                 except Exception:
                     pass
 
         except Exception as e:
             logger.debug(f"Error in Tkinter poll loop: {e}")
 
-        # Schedule next poll in 500ms (smooth, responsive, zero CPU lag)
-        self.root.after(500, self._poll_data)
+        # Schedule next poll in 800ms (smooth, responsive, zero CPU lag)
+        self.root.after(800, self._poll_data)
 
     def _render_signals(self):
         """Renders signals in Treeview according to active filters and sort order."""
-        # Clear existing items
-        for item in self.signals_tree.get_children():
-            self.signals_tree.delete(item)
+        # Clear existing items quickly in single batch
+        existing = self.signals_tree.get_children()
+        if existing:
+            self.signals_tree.delete(*existing)
 
         dir_filter = self.signal_direction_var.get()
         pat_filter = self.signal_pattern_var.get()
@@ -1874,7 +1901,9 @@ class ScannerTkinterGUI:
             if not is_auto:
                 self.hema_count_lbl.config(text="⏳ Scan already in progress...")
             return
-        if not getattr(self.scanner, "_is_running", False):
+        has_univ = hasattr(self.scanner, "_universe") and bool(self.scanner._universe)
+        is_running = getattr(self.scanner, "_is_running", False)
+        if not has_univ and not is_running:
             if not is_auto:
                 self.hema_count_lbl.config(text="⏳ Scanner starting up, please wait...")
             return
@@ -1969,11 +1998,11 @@ class ScannerTkinterGUI:
         self.hema_count_lbl.config(text=f"🎯 Showing: {len(filtered)} Signals ({len(unique_syms)} Stocks)")
 
         existing_children = list(self.hema_tree.get_children())
-        target_ids = [f"{s.get('symbol')}_{s.get('timeframe')}_{s.get('timestamp')}" for s in filtered]
+        target_ids = [f"{s.get('symbol')}_{s.get('timeframe')}_{idx}" for idx, s in enumerate(filtered)]
 
         if not target_ids:
-            for item in existing_children:
-                self.hema_tree.delete(item)
+            if existing_children:
+                self.hema_tree.delete(*existing_children)
             if not self.cached_hema_signals:
                 self.hema_tree.insert("", tk.END, values=(
                     "--:--:--", "AUTO-SCANNING", "--", "STREAMING", "Multi-timeframe scanner active (15m, 30m, 1h, 2h, 4h, 1d)...",
@@ -1992,8 +2021,8 @@ class ScannerTkinterGUI:
         needs_full_rebuild = (existing_children != target_ids)
         if needs_full_rebuild:
             self._hema_row_cache.clear()
-            for item in existing_children:
-                self.hema_tree.delete(item)
+            if existing_children:
+                self.hema_tree.delete(*existing_children)
 
         for idx, s in enumerate(filtered):
             sig_type = str(s.get("signal_type", ""))

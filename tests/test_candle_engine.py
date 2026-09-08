@@ -136,7 +136,7 @@ def test_multi_timeframe_candle_engine():
     def on_closed(symbol, candle, df, tf):
         events.append((symbol, candle, tf))
 
-    multi_engine = MultiTimeframeCandleEngine(on_candle_closed=on_closed)
+    multi_engine = MultiTimeframeCandleEngine(on_candle_closed=on_closed, timeframes=["3m", "5m", "15m"])
 
     # Send tick at 09:15:30
     multi_engine.process_tick(NormalizedTick(
