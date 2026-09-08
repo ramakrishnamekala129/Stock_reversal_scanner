@@ -27,7 +27,7 @@ Formulas:
 """
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time as dt_time, timedelta
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -128,6 +128,7 @@ class ChartinkIntradayEngine:
             t_dt = pd.to_datetime(today_override.get("timestamp", datetime.now()))
             # If today already exists, update last row, else append
             if df["timestamp"].iloc[-1].date() == t_dt.date():
+                df.loc[len(df) - 1, "timestamp"] = t_dt
                 for col in ["open", "high", "low", "close", "volume"]:
                     if col in today_override:
                         df.loc[len(df) - 1, col] = today_override[col]
@@ -300,7 +301,15 @@ class ChartinkIntradayEngine:
         if not matched_sub_strategies:
             return None
 
-        ts_str = today["timestamp"].strftime("%H:%M:%S") if isinstance(today["timestamp"], (pd.Timestamp, datetime)) else str(today["timestamp"])
+        t_val = today["timestamp"]
+        if isinstance(t_val, (pd.Timestamp, datetime)):
+            # If date-only daily candle without intraday time (00:00:00), use live scan time
+            if t_val.time() == dt_time(0, 0, 0):
+                ts_str = datetime.now().strftime("%H:%M:%S")
+            else:
+                ts_str = t_val.strftime("%H:%M:%S")
+        else:
+            ts_str = datetime.now().strftime("%H:%M:%S")
 
         return ChartinkSignal(
             symbol=symbol,
