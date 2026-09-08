@@ -420,14 +420,18 @@ def test_9_repainting_audit(df: pd.DataFrame) -> dict:
 # ==============================================================================
 # TEST 10: FIXED FRACTIONAL POSITION SIZING (PORTFOLIO CAPACITY SIMULATION)
 # ==============================================================================
-def test_10_fixed_fractional_portfolio(df: pd.DataFrame, initial_capital: float = 1_000_000.0, risk_pct_per_trade: float = 0.01, max_concurrent: int = 5) -> dict:
+def test_10_fixed_fractional_portfolio(
+    df: pd.DataFrame,
+    initial_capital: float = 100_000.0,
+    max_concurrent: int = 5,
+    margin_mult: float = 1.0,
+    deduct_taxes: bool = True,
+) -> dict:
     """
-    Simulates portfolio equity under fixed-fractional 1% risk per trade.
-    - Starting capital: Rs 10,00,000 (10 Lakhs).
-    - Fixed risk budget = 1% of current capital (Rs 10,000 initial).
-    - With Stop Loss = 1.0%, position size = Rs 10,000 / 0.01 = Rs 10,00,000 max, split among concurrent trades.
-    - Max concurrent open positions: 5 stocks.
-    - No unlimited geometric compounding: position size recalibrated per day/trade with realistic capital limits.
+    Simulates portfolio equity with initial capital Rs 1,00,000.
+    - Position size per slot = (capital * margin_mult) / max_concurrent.
+    - Accurately deducts statutory taxes (Brokerage, STT, NSE, SEBI, Stamp, GST).
+    - Realistic concurrency limit and daily recalibration.
     """
     capital = initial_capital
     peak_capital = initial_capital
@@ -458,12 +462,27 @@ def test_10_fixed_fractional_portfolio(df: pd.DataFrame, initial_capital: float 
         accepted_trades += 1
         active_positions.append(t_exit)
 
-        # Risk 1% of capital on 1% stop loss -> allocated position size = capital / max_concurrent
-        allocated_capital_per_trade = capital / max_concurrent
-        trade_pnl_rupees = allocated_capital_per_trade * (pnl_pct / 100.0)
+        # Position size in Rupees
+        allocated_position_size = (capital * margin_mult) / max_concurrent
+        gross_pnl_rupees = allocated_position_size * (pnl_pct / 100.0)
 
-        capital += trade_pnl_rupees
-        trade_pnls_rupees.append(trade_pnl_rupees)
+        # Statutory taxes (Rs 40 brokerage, STT, NSE, Stamp, GST ~ 0.0825% turnover)
+        if deduct_taxes:
+            # 0.03% or Rs 20 per order
+            brok = min(40.0, 0.0006 * allocated_position_size)
+            stt = 0.00025 * allocated_position_size
+            nse = 0.0000297 * 2 * allocated_position_size
+            stamp = 0.00003 * allocated_position_size
+            sebi = 0.000001 * 2 * allocated_position_size
+            gst = 0.18 * (brok + nse + sebi)
+            total_tax = brok + stt + nse + stamp + sebi + gst
+        else:
+            total_tax = 0.0
+
+        net_trade_pnl = gross_pnl_rupees - total_tax
+
+        capital += net_trade_pnl
+        trade_pnls_rupees.append(net_trade_pnl)
         equity_curve.append(capital)
         if capital > peak_capital:
             peak_capital = capital
@@ -488,6 +507,7 @@ def test_10_fixed_fractional_portfolio(df: pd.DataFrame, initial_capital: float 
         "portfolio_max_dd_pct": portfolio_max_dd,
         "portfolio_win_rate": win_rate,
         "profit_factor": (sum(win_trades) / abs(sum(loss_trades))) if loss_trades and sum(loss_trades) != 0 else 99.0,
+        "equity_curve": equity_curve,
     }
 
 
@@ -514,8 +534,13 @@ def run_full_10point_suite():
     res_regimes = test_8_market_regimes(df_trades)
     # 9. Lookahead Audit
     res_audit = test_9_repainting_audit(df_trades)
-    # 10. Fixed Fractional
-    res_portfolio = test_10_fixed_fractional_portfolio(df_trades)
+    # 10. Fixed Fractional Portfolio (Rs 1,00,000 Initial Capital)
+    p_models = [
+        ("Model A: Pure Cash (5 Slots = Rs 20,000 each)", test_10_fixed_fractional_portfolio(df_trades, initial_capital=100_000.0, max_concurrent=5, margin_mult=1.0)),
+        ("Model B: Pure Cash (3 Slots = Rs 33,333 each)", test_10_fixed_fractional_portfolio(df_trades, initial_capital=100_000.0, max_concurrent=3, margin_mult=1.0)),
+        ("Model C: Standard 3x MIS Margin (5 Slots = Rs 60,000 each)", test_10_fixed_fractional_portfolio(df_trades, initial_capital=100_000.0, max_concurrent=5, margin_mult=3.0)),
+        ("Model D: Full 5x MIS Margin (5 Slots = Rs 1,00,000 each)", test_10_fixed_fractional_portfolio(df_trades, initial_capital=100_000.0, max_concurrent=5, margin_mult=5.0)),
+    ]
 
     # PRINT COMPREHENSIVE INSTITUTIONAL REPORT
     print("\n" + "=" * 90)
@@ -604,14 +629,12 @@ def run_full_10point_suite():
 
     # 10. Fixed Fractional
     print("\n" + "-" * 90)
-    print("[TEST 10] FIXED FRACTIONAL POSITION SIZING (REALISTIC CAPITAL CONSTRAINTS)")
+    print("[TEST 10] FIXED FRACTIONAL POSITION SIZING (INITIAL CAPITAL: Rs 1,00,000)")
     print("-" * 90)
-    print(f"Starting Portfolio Capital        : Rs {res_portfolio['initial_capital_rupees']:,.2f} (10 Lakhs)")
-    print(f"Ending Portfolio Capital          : Rs {res_portfolio['final_capital_rupees']:,.2f}")
-    print(f"Net Realized Profit               : Rs {res_portfolio['net_profit_rupees']:,.2f} (+{res_portfolio['net_return_pct']:.2f}%)")
-    print(f"Portfolio Win Rate                : {res_portfolio['portfolio_win_rate']:.1f}%")
-    print(f"Portfolio Max Drawdown            : {res_portfolio['portfolio_max_dd_pct']:.2f}%")
-    print(f"Trades Taken / Concurrency Skips  : {res_portfolio['accepted_trades']} taken / {res_portfolio['concurrency_skipped_trades']} skipped (Max 5 concurrent)")
+    print(f"{'Sizing / Margin Model':<40} | {'Trades':<6} | {'Final Capital':<15} | {'Net Profit':<14} | {'Max DD':<6}")
+    print("-" * 90)
+    for m_label, p_res in p_models:
+        print(f"{m_label[:40]:<40} | {p_res['accepted_trades']:<6} | Rs {p_res['final_capital_rupees']:>11,.2f} | Rs {p_res['net_profit_rupees']:>10,.2f} | {p_res['portfolio_max_dd_pct']:>5.2f}%")
     print("=" * 90)
 
     # Save summary files
