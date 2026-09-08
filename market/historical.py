@@ -426,7 +426,11 @@ class HistoricalDataLoader:
             "3m": "3min", "5m": "5min", "15m": "15min", "30m": "30min",
             "1h": "60min", "2h": "120min", "4h": "240min", "1d": "1D", "day": "1D"
         }.get(timeframe, "5min")
-        df_res = df_1m.resample(p_rule, origin="start_day", offset="15min").agg({
+        is_daily = p_rule in ("1D", "D", "day")
+        resample_kwargs = {"origin": "start_day"}
+        if not is_daily:
+            resample_kwargs["offset"] = "15min"
+        df_res = df_1m.resample(p_rule, **resample_kwargs).agg({
             "open": "first",
             "high": "max",
             "low": "min",
@@ -647,12 +651,16 @@ class HistoricalDataLoader:
                 # Fallback or merge with multi-day historical 5m candles
                 if (df is None or len(df) < 20) and df_db is not None and not df_db.empty:
                     p_rule = rule_map.get(tf, "15min")
+                    is_daily = p_rule in ("1D", "D", "day")
                     try:
                         df_res = df_db.copy()
                         if not pd.api.types.is_datetime64_any_dtype(df_res["timestamp"]):
                             df_res["timestamp"] = pd.to_datetime(df_res["timestamp"])
                         df_res = df_res.sort_values("timestamp").set_index("timestamp")
-                        resampled = df_res.resample(p_rule, origin="start_day").agg({
+                        resample_kwargs = {"origin": "start_day"}
+                        if not is_daily:
+                            resample_kwargs["offset"] = "15min"
+                        resampled = df_res.resample(p_rule, **resample_kwargs).agg({
                             "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"
                         }).dropna().reset_index()
 
