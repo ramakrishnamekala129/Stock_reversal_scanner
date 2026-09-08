@@ -352,10 +352,11 @@ class HistoricalDataLoader:
 
         if pl is not None:
             try:
-                # 1. High-speed Polars Vectorized Ingestion & Resampling
+                # 1. High-speed Polars Vectorized Ingestion & Resampling (slice to first 6 elements to ignore optional OI)
+                sliced_1m = [c[:6] for c in raw_1m]
                 df_pl = (
                     pl.DataFrame(
-                        raw_1m,
+                        sliced_1m,
                         schema=["timestamp", "open", "high", "low", "close", "volume"],
                         orient="row",
                     )
@@ -436,6 +437,7 @@ class HistoricalDataLoader:
         resample_kwargs = {"origin": "start_day"}
         if not is_daily:
             resample_kwargs["offset"] = "15min"
+        df_1m = pd.DataFrame(records).set_index("timestamp").sort_index()
         df_res = df_1m.resample(p_rule, **resample_kwargs).agg({
             "open": "first",
             "high": "max",
@@ -444,6 +446,7 @@ class HistoricalDataLoader:
             "volume": "sum",
         }).dropna().reset_index()
         return df_res[df_res["timestamp"].dt.time <= cutoff].reset_index(drop=True)
+
 
     def load_symbol_broker_5m(self, symbol: str, instrument_key: str, timeframe: str = "5m") -> Optional[pd.DataFrame]:
         """

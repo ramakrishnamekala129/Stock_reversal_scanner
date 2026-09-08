@@ -100,3 +100,31 @@ def test_gap_filler_save_and_reconciliation(temp_hist_db: HistoricalCandleDataba
     df = temp_hist_db.get_candles_by_symbol("INFY")
     assert len(df) == 2
     assert df.iloc[0]["symbol"] if "symbol" in df else True
+
+
+def test_process_raw_1m_resampling():
+    from market.historical import HistoricalDataLoader
+    from upstox.rest import UpstoxRestClient
+
+    class MockApiClient:
+        class Configuration:
+            access_token = "test_token"
+        configuration = Configuration()
+
+    loader = HistoricalDataLoader(UpstoxRestClient(api_client=MockApiClient()))
+    
+    # Raw 1m candles containing 7 elements (with open interest) as returned by Upstox API
+    raw_1m_7col = [
+        ["2026-09-08T09:15:00+05:30", 100.0, 105.0, 99.0, 102.0, 1000, 5000],
+        ["2026-09-08T09:16:00+05:30", 102.0, 106.0, 101.0, 104.0, 1500, 5100],
+        ["2026-09-08T09:17:00+05:30", 104.0, 107.0, 103.0, 105.0, 1200, 5200],
+        ["2026-09-08T09:18:00+05:30", 105.0, 108.0, 104.0, 106.0, 1800, 5300],
+        ["2026-09-08T09:19:00+05:30", 106.0, 109.0, 105.0, 108.0, 2000, 5400],
+    ]
+
+    for tf in ["3m", "5m", "15m", "1h", "1d"]:
+        res_df = loader._process_raw_1m_to_5m(raw_1m_7col, timeframe=tf)
+        assert res_df is not None, f"Resampling failed for tf={tf}"
+        assert not res_df.empty, f"Resampled df empty for tf={tf}"
+        assert "open" in res_df.columns
+        assert "close" in res_df.columns
