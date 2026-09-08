@@ -109,7 +109,7 @@ class CandleChartFrame(tk.Frame):
         self.tf_combo = ttk.Combobox(
             row1,
             textvariable=self.timeframe_var,
-            values=["3m", "5m", "15m"],
+            values=["3m", "5m", "15m", "1d"],
             state="readonly",
             width=5,
             font=("Segoe UI", 9, "bold"),
@@ -473,19 +473,61 @@ class CandleChartFrame(tk.Frame):
         """Retrieves candle history for symbol, including currently forming live candle."""
         df = None
         tf = self.timeframe_var.get() if hasattr(self, "timeframe_var") else "5m"
-        # 1. Try from live CandleEngine with include_forming=True
+
+        # 1. If 1d Daily Timeframe requested: query SQLite daily historical candles
+        if tf == "1d":
+            try:
+                from database.historical_db import HistoricalCandleDatabase
+                hist_db = HistoricalCandleDatabase()
+                df_daily = hist_db.get_daily_candles(symbol)
+                if df_daily is not None and not df_daily.empty:
+                    df = df_daily.tail(100).copy()
+                    df["is_forming"] = False
+                    return df
+            except Exception as ex:
+                logger.debug(f"Daily candle query error for {symbol}: {ex}")
+
+        # 2. Try from live CandleEngine with include_forming=True
         if self.scanner and hasattr(self.scanner, "candle_engine"):
             try:
                 df = self.scanner.candle_engine.get_candle_history_df(symbol, timeframe=tf, include_forming=True)
             except Exception:
                 df = None
 
-        # 2. Try from SQLite database
+        # 3. Try from SQLite database (candles_5m)
         if (df is None or df.empty) and self.db_repo:
             try:
                 df = self.db_repo.get_candles_by_symbol(symbol, limit=150)
             except Exception:
                 df = None
+
+        # 4. Try from HistoricalCandleDatabase 1-minute historical bars resampled to tf
+        if df is None or df.empty:
+            try:
+                from database.historical_db import HistoricalCandleDatabase
+                hist_db = HistoricalCandleDatabase()
+                df_1m = hist_db.get_candles_by_symbol(symbol, limit=375)
+                if df_1m is not None and not df_1m.empty:
+                    from backtest_intraday_chartink import resample_ohlcv
+                    df_res = resample_ohlcv(df_1m, tf)
+                    if not df_res.empty:
+                        df_res["is_forming"] = False
+                        df = df_res
+            except Exception:
+                pass
+
+        # 5. Fallback to daily candles if intraday is not available
+        if df is None or df.empty:
+            try:
+                from database.historical_db import HistoricalCandleDatabase
+                hist_db = HistoricalCandleDatabase()
+                df_daily = hist_db.get_daily_candles(symbol)
+                if df_daily is not None and not df_daily.empty:
+                    df = df_daily.tail(60).copy()
+                    df["is_forming"] = False
+                    return df
+            except Exception:
+                pass
 
         if df is None or df.empty:
             # Fallback synthetic frame for offline display
@@ -552,12 +594,19 @@ class CandleChartFrame(tk.Frame):
             return
 
         n_candles = len(df)
+        tf = self.timeframe_var.get() if hasattr(self, "timeframe_var") else "5m"
         timestamps = []
         for ts in df["timestamp"]:
             if hasattr(ts, "strftime"):
-                timestamps.append(ts.strftime("%H:%M"))
+                if tf == "1d":
+                    timestamps.append(ts.strftime("%d-%b"))
+                else:
+                    timestamps.append(ts.strftime("%H:%M"))
             else:
-                timestamps.append(str(ts).split("T")[-1][:5] if "T" in str(ts) else str(ts)[-8:-3])
+                if tf == "1d":
+                    timestamps.append(str(ts)[:10])
+                else:
+                    timestamps.append(str(ts).split("T")[-1][:5] if "T" in str(ts) else str(ts)[-8:-3])
 
         opens = df["open"].values
         highs = df["high"].values
