@@ -395,11 +395,11 @@ class FNOIntradayScanner:
                         if df is not None and len(df) >= 5:
                             tasks.append((sym, tf, df, fut_sym, lot_sz, t_cr, l_tier, is_liq))
                             
-                # 3. Parallel Numba-accelerated evaluation (8 workers max to avoid GIL / CPU starvation)
+                # 3. Parallel evaluation across all session candles
                 def _evaluate_worker(task):
                     sym, tf, df, fut_sym, lot_sz, t_cr, l_tier, is_liq = task
                     try:
-                        sig = self.hema_engine.evaluate(
+                        sigs = self.hema_engine.evaluate_all_signals(
                             df,
                             symbol=sym,
                             timeframe=tf,
@@ -409,22 +409,25 @@ class FNOIntradayScanner:
                             liquidity_tier=l_tier,
                             is_most_liquid=is_liq,
                         )
-                        return sig
+                        return sigs
                     except Exception as ex:
                         logger.debug(f"HEMA eval error for {sym} {tf}: {ex}")
-                        return None
+                        return []
 
                 workers = min(4, os.cpu_count() or 2)
                 with ThreadPoolExecutor(max_workers=workers) as executor:
-                    signals = list(executor.map(_evaluate_worker, tasks))
+                    sig_lists = list(executor.map(_evaluate_worker, tasks))
 
-                valid_signals = [s.to_dict() for s in signals if s is not None]
+                # Flatten all signals across the full day session
+                flat_signals = [s for sublist in sig_lists for s in sublist if s is not None]
+                valid_signals = [s.to_dict() for s in flat_signals]
                 
                 # 4. Atomic batch update into DashboardState
                 dashboard_state.add_hema_signals_batch(valid_signals)
                 elapsed = time.time() - t0
-                logger.info(f"HEMA + T3 scan complete: Evaluated {len(tasks)} setups across {len(target_universe)} stocks in {elapsed:.2f}s! Generated {len(valid_signals)} signals.")
+                logger.info(f"HEMA + T3 scan complete: Evaluated {len(tasks)} setups across {len(target_universe)} stocks in {elapsed:.2f}s! Generated {len(valid_signals)} full-day signals.")
                 return elapsed, len(tasks), len(valid_signals)
+
             finally:
                 self._is_hema_scanning = False
 

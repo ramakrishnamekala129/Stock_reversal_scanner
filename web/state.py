@@ -160,16 +160,20 @@ class WebDashboardState:
                 pass
 
         with self._lock:
-            # Update existing if same symbol + timeframe, else prepend
+            # Update existing if same symbol + timeframe + timestamp, else insert at 0
             existing_idx = None
             for idx, item in enumerate(self.hema_signals):
-                if item.get("symbol") == sig_dict.get("symbol") and item.get("timeframe") == sig_dict.get("timeframe"):
+                if (item.get("symbol") == sig_dict.get("symbol")
+                    and item.get("timeframe") == sig_dict.get("timeframe")
+                    and item.get("timestamp") == sig_dict.get("timestamp")):
                     existing_idx = idx
                     break
             if existing_idx is not None:
                 self.hema_signals[existing_idx] = sig_dict
             else:
                 self.hema_signals.insert(0, sig_dict)
+                if len(self.hema_signals) > 3000:
+                    self.hema_signals.pop()
 
         self._broadcast({
             "type": "NEW_HEMA_SIGNAL",
@@ -205,14 +209,22 @@ class WebDashboardState:
             formatted.append(sig_dict)
 
         with self._lock:
-            lookup = {(s.get("symbol"), s.get("timeframe")): idx for idx, s in enumerate(self.hema_signals)}
+            existing_keys = {
+                (s.get("symbol"), s.get("timeframe"), s.get("timestamp")): idx
+                for idx, s in enumerate(self.hema_signals)
+            }
+            new_items = []
             for s in formatted:
-                key = (s.get("symbol"), s.get("timeframe"))
-                if key in lookup:
-                    self.hema_signals[lookup[key]] = s
+                key = (s.get("symbol"), s.get("timeframe"), s.get("timestamp"))
+                if key in existing_keys:
+                    self.hema_signals[existing_keys[key]] = s
                 else:
-                    self.hema_signals.append(s)
-                    lookup[key] = len(self.hema_signals) - 1
+                    new_items.append(s)
+            if new_items:
+                self.hema_signals = new_items + self.hema_signals
+
+            if len(self.hema_signals) > 3000:
+                self.hema_signals = self.hema_signals[:3000]
 
         self._broadcast({
             "type": "BATCH_HEMA_SIGNALS",

@@ -177,3 +177,50 @@ def test_web_state_hema_signal_dispatch():
     assert "hema_signals" in snapshot
     assert len(snapshot["hema_signals"]) == 1
     assert snapshot["hema_signals"][0]["symbol"] == "SBIN"
+
+
+def test_evaluate_all_signals_full_day():
+    engine = HemaT3RegimeEngine()
+    df = generate_synthetic_trend(length=30, trend_type="uptrend")
+    
+    signals = engine.evaluate_all_signals(df, symbol="RELIANCE", timeframe="15m")
+    assert isinstance(signals, list)
+    assert len(signals) >= 1
+    for s in signals:
+        assert s.symbol == "RELIANCE"
+        assert s.timeframe == "15m"
+        assert s.timestamp != ""
+
+
+def test_web_state_full_day_multiple_timestamps():
+    state = WebDashboardState()
+    # Simulate signals from multiple times in the same day for the same symbol
+    sig1 = {
+        "timestamp": "09:30:00",
+        "symbol": "TCS",
+        "timeframe": "15m",
+        "signal_type": "🟢 BUY (BULLISH ENTRY)",
+        "price": 3500.0,
+    }
+    sig2 = {
+        "timestamp": "10:15:00",
+        "symbol": "TCS",
+        "timeframe": "15m",
+        "signal_type": "🟢 BUY TREND (BULLISH HOLD)",
+        "price": 3520.0,
+    }
+    sig3 = {
+        "timestamp": "15:15:00",
+        "symbol": "TCS",
+        "timeframe": "15m",
+        "signal_type": "🟢 BUY TREND (BULLISH HOLD)",
+        "price": 3550.0,
+    }
+    state.add_hema_signals_batch([sig1, sig2, sig3])
+    # All 3 timestamps should be preserved, not collapsed to only 15:15:00!
+    assert len(state.hema_signals) == 3
+    times = [s["timestamp"] for s in state.hema_signals]
+    assert "09:30:00" in times
+    assert "10:15:00" in times
+    assert "15:15:00" in times
+

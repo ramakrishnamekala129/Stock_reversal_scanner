@@ -381,14 +381,12 @@ class HemaT3RegimeEngine:
         Evaluates a complete closed-candle DataFrame for the specified symbol & timeframe.
         Returns the latest HemaT3Signal with comprehensive regime metrics.
         """
-        if df is None or len(df) < 5:
+    def _compute_indicators(self, df: pd.DataFrame) -> Optional[Dict[str, Any]]:
+        """Precomputes all HEMA, T3, ADX, ATR, VWAP, EMA vectors for the full DataFrame."""
+        n_bars = len(df)
+        if n_bars < 5:
             return None
 
-        # Work on a copy to prevent side-effects
-        df = df.copy()
-        n_bars = len(df)
-
-        # Adaptive parameter clamping to support higher timeframes with fewer bars
         eff_hema_len = min(self.hema_length, max(2, n_bars - 1))
         eff_t3_fast_len = min(self.t3_fast_length, max(2, n_bars - 1))
         eff_t3_slow_len = min(self.t3_slow_length, max(3, n_bars - 1))
@@ -399,7 +397,6 @@ class HemaT3RegimeEngine:
         eff_range_lb = min(self.range_lookback, n_bars)
         eff_slope_lb = min(self.ema_slope_lookback, max(1, n_bars - 1))
 
-        # 1. Indicator Calculations
         close = df["close"]
         high = df["high"]
         low = df["low"]
@@ -409,25 +406,55 @@ class HemaT3RegimeEngine:
         hema, sma_hema, diff = calculate_hema(close, eff_hema_len)
         t3_fast = calculate_t3(close, eff_t3_fast_len)
         t3_slow = calculate_t3(close, eff_t3_slow_len)
-
-        # EMA for slope calculation
         ema13 = calculate_ema(close, eff_t3_fast_len)
-
-        # ADX
         adx, plus_di, minus_di = calculate_adx(df, eff_adx_len)
-
-        # ATR & Volatility MA
         atr = calculate_atr(df, eff_atr_len)
         atr_ma = calculate_sma(atr, eff_atr_ma_len)
-
-        # Volume MA
         vol_ma = calculate_sma(vol, eff_vol_ma_len)
-
-        # VWAP
         vwap = calculate_vwap(df)
 
-        # Last closed candle index
-        i = len(df) - 1
+        return {
+            "close": close, "open_p": open_p, "high": high, "low": low, "vol": vol,
+            "hema": hema, "t3_fast": t3_fast, "t3_slow": t3_slow, "ema13": ema13,
+            "adx": adx, "plus_di": plus_di, "minus_di": minus_di,
+            "atr": atr, "atr_ma": atr_ma, "vol_ma": vol_ma, "vwap": vwap,
+            "eff_slope_lb": eff_slope_lb, "eff_range_lb": eff_range_lb,
+        }
+
+    def _evaluate_at_index(
+        self,
+        i: int,
+        df: pd.DataFrame,
+        ind: Dict[str, Any],
+        symbol: str = "",
+        timeframe: str = "5m",
+        fut_symbol: str = "",
+        lot_size: int = 0,
+        turnover_cr: float = 0.0,
+        liquidity_tier: str = "Normal",
+        is_most_liquid: bool = False,
+    ) -> Optional[HemaT3Signal]:
+        """Evaluates HEMA + T3 indicators and regime criteria at a specific candle index i."""
+        if i < 1:
+            return None
+
+        close = ind["close"]
+        open_p = ind["open_p"]
+        high = ind["high"]
+        low = ind["low"]
+        vol = ind["vol"]
+        hema = ind["hema"]
+        t3_fast = ind["t3_fast"]
+        t3_slow = ind["t3_slow"]
+        ema13 = ind["ema13"]
+        adx = ind["adx"]
+        atr = ind["atr"]
+        atr_ma = ind["atr_ma"]
+        vol_ma = ind["vol_ma"]
+        vwap = ind["vwap"]
+        eff_slope_lb = ind["eff_slope_lb"]
+        eff_range_lb = ind["eff_range_lb"]
+
         curr_close = float(close.iloc[i])
         curr_open = float(open_p.iloc[i])
         curr_high = float(high.iloc[i])
@@ -494,7 +521,6 @@ class HemaT3RegimeEngine:
         is_range_narrow = range_percent <= self.range_percent_thresh
         is_vol_low = curr_vol < curr_vol_ma
 
-        # Oscillation check: cross count across EMA13 in last 5 bars
         ema_cross_count = 0
         for k in range(max(1, i - 4), i + 1):
             c_now = close.iloc[k]
@@ -535,7 +561,6 @@ class HemaT3RegimeEngine:
         if len(history) > 10:
             history = history[-10:]
 
-        # Count flips in window
         flips = 0
         if len(history) >= 2:
             window_slice = history[-self.chop_window_bars:]
@@ -670,10 +695,16 @@ class HemaT3RegimeEngine:
             signal = "HOLD"
             is_actionable = False
 
-        # Extract timestamp string
+        # Clean timestamp format (HH:MM:SS)
         ts_val = df["timestamp"].iloc[i] if "timestamp" in df.columns else datetime.now().isoformat()
-        if isinstance(ts_val, pd.Timestamp) or isinstance(ts_val, datetime):
+        if isinstance(ts_val, (pd.Timestamp, datetime)):
             ts_str = ts_val.strftime("%H:%M:%S")
+        elif isinstance(ts_val, str) and "T" in ts_val:
+            try:
+                dt = datetime.fromisoformat(ts_val)
+                ts_str = dt.strftime("%H:%M:%S")
+            except Exception:
+                ts_str = ts_val.split("T")[1].split("+")[0].split(".")[0]
         else:
             ts_str = str(ts_val)
 
@@ -707,3 +738,122 @@ class HemaT3RegimeEngine:
             liquidity_tier=liquidity_tier,
             is_most_liquid=is_most_liquid,
         )
+
+    def evaluate(
+        self,
+        df: pd.DataFrame,
+        symbol: str = "",
+        timeframe: str = "5m",
+        fut_symbol: str = "",
+        lot_size: int = 0,
+        turnover_cr: float = 0.0,
+        liquidity_tier: str = "Normal",
+        is_most_liquid: bool = False,
+    ) -> Optional[HemaT3Signal]:
+        """
+        Evaluates the latest closed candle of the DataFrame.
+        Returns the single most recent HemaT3Signal.
+        """
+        if df is None or len(df) < 5:
+            return None
+
+        df = df.copy()
+        ind = self._compute_indicators(df)
+        if not ind:
+            return None
+
+        return self._evaluate_at_index(
+            len(df) - 1,
+            df,
+            ind,
+            symbol=symbol,
+            timeframe=timeframe,
+            fut_symbol=fut_symbol,
+            lot_size=lot_size,
+            turnover_cr=turnover_cr,
+            liquidity_tier=liquidity_tier,
+            is_most_liquid=is_most_liquid,
+        )
+
+    def evaluate_all_signals(
+        self,
+        df: pd.DataFrame,
+        symbol: str = "",
+        timeframe: str = "5m",
+        fut_symbol: str = "",
+        lot_size: int = 0,
+        turnover_cr: float = 0.0,
+        liquidity_tier: str = "Normal",
+        is_most_liquid: bool = False,
+    ) -> List[HemaT3Signal]:
+        """
+        Evaluates candle-by-candle across today's session and returns all signals
+        generated throughout the day (fresh entry crossovers, warnings, setups,
+        trend starts, and current holding status).
+        """
+        if df is None or len(df) < 5:
+            return []
+
+        df = df.copy()
+        n_bars = len(df)
+        ind = self._compute_indicators(df)
+        if not ind:
+            return []
+
+        # Find candles belonging to today's active session
+        session_indices = []
+        if "timestamp" in df.columns:
+            try:
+                last_ts = pd.to_datetime(df["timestamp"].iloc[-1])
+                last_date = last_ts.date()
+                for idx in range(1, n_bars):
+                    c_dt = pd.to_datetime(df["timestamp"].iloc[idx])
+                    if c_dt.date() == last_date:
+                        session_indices.append(idx)
+            except Exception:
+                session_indices = list(range(max(1, n_bars - 30), n_bars))
+        else:
+            session_indices = list(range(max(1, n_bars - 30), n_bars))
+
+        if not session_indices:
+            session_indices = [n_bars - 1]
+
+        signals: List[HemaT3Signal] = []
+        last_sig_text = None
+        last_regime_text = None
+
+        for idx in session_indices:
+            sig = self._evaluate_at_index(
+                idx,
+                df,
+                ind,
+                symbol=symbol,
+                timeframe=timeframe,
+                fut_symbol=fut_symbol,
+                lot_size=lot_size,
+                turnover_cr=turnover_cr,
+                liquidity_tier=liquidity_tier,
+                is_most_liquid=is_most_liquid,
+            )
+            if sig is None:
+                continue
+
+            is_entry = sig.signal in (
+                "🟢 BUY (BULLISH ENTRY)",
+                "🔴 SELL (BEARISH WARNING)",
+                "🟢 BUY (BULLISH SETUP)",
+            )
+            is_state_change = (sig.signal != last_sig_text) or (sig.regime != last_regime_text)
+            is_last_candle = (idx == n_bars - 1)
+
+            # Record if it's an entry trigger, trend/regime shift, or the latest candle
+            if is_entry or is_state_change or is_last_candle:
+                if sig.signal == "HOLD" and not is_last_candle and not is_state_change:
+                    continue
+                signals.append(sig)
+
+            last_sig_text = sig.signal
+            last_regime_text = sig.regime
+
+        return signals
+
