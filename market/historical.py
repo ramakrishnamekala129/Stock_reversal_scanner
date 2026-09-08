@@ -82,6 +82,7 @@ class HistoricalDataLoader:
         self.db = db or DatabaseRepository()
         self._pd_cache: Dict[str, PreviousDayOHLCV] = {}
         self._raw_1m_cache: Dict[str, Tuple[List[Any], float]] = {}
+        self._db_candle_cache: Dict[str, pd.DataFrame] = {}
 
     def get_cached_previous_day(self, symbol: str) -> Optional[PreviousDayOHLCV]:
         """Returns in-memory cached previous-day OHLCV."""
@@ -527,12 +528,12 @@ class HistoricalDataLoader:
         self,
         universe: Dict[str, Dict[str, Any]],
         timeframes: List[str],
-        max_cache_age: float = 60.0,
+        max_cache_age: float = 300.0,
+        candle_engine: Any = None,
     ) -> Dict[str, Dict[str, pd.DataFrame]]:
         """
-        Fetches raw 1-minute candles for all universe stocks ONCE, and resamples
-        them into all requested timeframes simultaneously in memory in parallel.
-        Eliminates redundant network roundtrips and achieves 10x-50x speedup.
+        Fetches raw candles once & resamples into requested timeframes in memory in parallel.
+        Prioritizes in-memory candle engine and RAM cache to eliminate network latency & SQLite locks.
         """
         now = time.time()
         kolkata_now = datetime.now(pytz.timezone(config.MARKET_TIMEZONE)).time()
@@ -542,7 +543,18 @@ class HistoricalDataLoader:
         needed_symbols = {}
         for sym, item in universe.items():
             cache_entry = self._raw_1m_cache.get(sym)
-            if not cache_entry or (now - cache_entry[1] > effective_cache_age):
+            if not cache_entry:
+                # Check if we already have local candles in RAM or DB before making network requests
+                has_engine = False
+                if candle_engine:
+                    try:
+                        c_df = candle_engine.get_candle_history_df(sym, "5m")
+                        has_engine = (c_df is not None and len(c_df) >= 20)
+                    except Exception:
+                        has_engine = False
+                if not has_engine and sym not in self._db_candle_cache:
+                    needed_symbols[sym] = item
+            elif (now - cache_entry[1] > effective_cache_age):
                 needed_symbols[sym] = item
 
         if needed_symbols and self.rest_client.access_token:
@@ -553,13 +565,13 @@ class HistoricalDataLoader:
                 rate_limiter = AsyncUpstoxRateLimiter(config.UPSTOX_RATE_LIMIT_PER_SEC)
                 async with httpx.AsyncClient(
                     headers=headers,
-                    timeout=10.0,
-                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
+                    timeout=8.0,
+                    limits=httpx.Limits(max_connections=50, max_keepalive_connections=25),
                 ) as client:
                     async def _fetch_one_raw(sym: str, item: Dict[str, Any]):
                         inst_key = item["instrument_key"]
                         url = f"https://api.upstox.com/v2/historical-candle/intraday/{inst_key}/1minute"
-                        for attempt in range(config.API_RETRY_ATTEMPTS):
+                        for attempt in range(2):
                             await rate_limiter.acquire()
                             try:
                                 resp = await client.get(url)
@@ -570,12 +582,11 @@ class HistoricalDataLoader:
                                         self._raw_1m_cache[sym] = (candles, time.time())
                                     return
                                 elif resp.status_code == 429:
-                                    retry_after = float(resp.headers.get("Retry-After", config.API_RETRY_BACKOFF_BASE * (2 ** attempt)))
-                                    await asyncio.sleep(retry_after)
+                                    await asyncio.sleep(1.0)
                                 else:
                                     break
                             except Exception:
-                                await asyncio.sleep(config.API_RETRY_BACKOFF_BASE * (attempt + 1))
+                                break
 
                     tasks = [_fetch_one_raw(sym, item) for sym, item in needed_symbols.items()]
                     await asyncio.gather(*tasks)
@@ -594,7 +605,7 @@ class HistoricalDataLoader:
             except Exception as e:
                 logger.debug(f"Async raw candle fetch fallback: {e}")
 
-        # In-memory multi-timeframe resampling in parallel using Polars/Pandas
+        # In-memory multi-timeframe resampling in parallel
         results: Dict[str, Dict[str, pd.DataFrame]] = {sym: {} for sym in universe.keys()}
         rule_map = {
             "3m": "3min", "5m": "5min", "15m": "15min", "30m": "30min",
@@ -606,19 +617,34 @@ class HistoricalDataLoader:
             cache_entry = self._raw_1m_cache.get(sym)
             raw_candles = cache_entry[0] if cache_entry else None
 
+            # 1. Check in-memory candle engine (fastest: 0.00001s, zero disk I/O)
             df_db = None
-            if self.db:
+            if candle_engine:
                 try:
-                    df_db = self.db.get_candles_by_symbol(sym)
+                    df_eng = candle_engine.get_candle_history_df(sym, timeframe="5m")
+                    if df_eng is not None and not df_eng.empty and len(df_eng) >= 20:
+                        df_db = df_eng
                 except Exception:
                     df_db = None
+
+            # 2. Check in-memory RAM cache from previous query
+            if df_db is None:
+                if sym in self._db_candle_cache:
+                    df_db = self._db_candle_cache[sym]
+                elif self.db:
+                    try:
+                        df_db = self.db.get_candles_by_symbol(sym)
+                        if df_db is not None and not df_db.empty:
+                            self._db_candle_cache[sym] = df_db
+                    except Exception:
+                        df_db = None
 
             for tf in timeframes:
                 df = None
                 if raw_candles:
                     df = self._process_raw_1m_to_5m(raw_candles, timeframe=tf)
 
-                # Fallback or merge with multi-day historical 5m candles from database
+                # Fallback or merge with multi-day historical 5m candles
                 if (df is None or len(df) < 20) and df_db is not None and not df_db.empty:
                     p_rule = rule_map.get(tf, "15min")
                     try:
@@ -644,7 +670,8 @@ class HistoricalDataLoader:
 
             return sym, tf_dict
 
-        workers = min(32, (os.cpu_count() or 4) * 4)
+        # Tune workers to 8 max to keep CPU light and GUI ultra-smooth
+        workers = min(8, os.cpu_count() or 4)
         with ThreadPoolExecutor(max_workers=workers) as executor:
             res_items = executor.map(_resample_stock, universe.keys())
             for sym, tf_dict in res_items:

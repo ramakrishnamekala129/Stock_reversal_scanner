@@ -66,6 +66,8 @@ class FNOIntradayScanner:
         self._pivots: Dict[str, DailyPivots] = {}
         self._universe: Dict[str, dict] = {}
         self._is_running = False
+        self._is_hema_scanning = False
+        self._hema_scan_lock = threading.Lock()
 
     def startup(self, force_refresh: bool = False, symbols: Optional[List[str]] = None, mode: Optional[str] = None):
         """
@@ -326,67 +328,82 @@ class FNOIntradayScanner:
         Evaluates HEMA + T3 Strategy with Anti-Sideways / Market-Regime Filter across multiple timeframes.
         Uses single-pass raw candle fetching, parallel multi-timeframe resampling, and
         Numba-accelerated parallel evaluation with atomic batch state updating (100x faster).
+        Protected by re-entrancy lock to prevent CPU/thread saturation.
         """
-        if timeframes is None:
-            timeframes = ["15m", "30m", "1h", "2h", "4h", "1d"]
-        
-        target_universe = self._universe
-        if symbols:
-            sym_set = set(symbols)
-            target_universe = {k: v for k, v in self._universe.items() if k in sym_set}
-            
-        t0 = time.time()
-        logger.info(f"Starting ultra-fast parallel HEMA + T3 scan across {len(target_universe)} symbols on {timeframes}...")
-        
-        # 1. Fetch raw candles once & resample all timeframes in parallel in memory
-        multi_tf_candles = self.hist_loader.load_multi_timeframe_candles(target_universe, timeframes=timeframes)
-        
-        # 2. Build task list of all (symbol, timeframe, df) tuples
-        tasks = []
-        for sym, tf_map in multi_tf_candles.items():
-            inst_info = target_universe.get(sym, {})
-            fut_inst = getattr(self, "instrument_mgr", None)
-            fut = fut_inst.get_futures_instrument(sym) if fut_inst else None
-            fut_sym = fut.trading_symbol if fut else f"{sym} FUT"
-            lot_sz = fut.lot_size if fut and fut.lot_size else inst_info.get("lot_size", 0)
-            t_cr = inst_info.get("turnover_cr", 0.0)
-            l_tier = inst_info.get("liquidity_tier", "Normal")
-            is_liq = inst_info.get("is_most_liquid", False)
-            
-            for tf, df in tf_map.items():
-                if df is not None and len(df) >= 5:
-                    tasks.append((sym, tf, df, fut_sym, lot_sz, t_cr, l_tier, is_liq))
-                    
-        # 3. Parallel Numba-accelerated evaluation across all available CPU cores
-        def _evaluate_worker(task):
-            sym, tf, df, fut_sym, lot_sz, t_cr, l_tier, is_liq = task
+        if self._is_hema_scanning:
+            logger.debug("HEMA scan already running in background. Skipping overlapping request.")
+            return (0.0, 0, 0)
+
+        with self._hema_scan_lock:
+            self._is_hema_scanning = True
             try:
-                sig = self.hema_engine.evaluate(
-                    df,
-                    symbol=sym,
-                    timeframe=tf,
-                    fut_symbol=fut_sym,
-                    lot_size=lot_sz,
-                    turnover_cr=t_cr,
-                    liquidity_tier=l_tier,
-                    is_most_liquid=is_liq,
+                if timeframes is None:
+                    timeframes = ["15m", "30m", "1h", "2h", "4h", "1d"]
+                
+                target_universe = self._universe
+                if symbols:
+                    sym_set = set(symbols)
+                    target_universe = {k: v for k, v in self._universe.items() if k in sym_set}
+                
+                if not target_universe:
+                    return (0.0, 0, 0)
+                    
+                t0 = time.time()
+                logger.info(f"Starting ultra-fast parallel HEMA + T3 scan across {len(target_universe)} symbols on {timeframes}...")
+                
+                # 1. Fetch raw candles once & resample all timeframes in parallel in memory (using candle_engine to avoid disk queries)
+                multi_tf_candles = self.hist_loader.load_multi_timeframe_candles(
+                    target_universe, timeframes=timeframes, candle_engine=self.candle_engine
                 )
-                return sig
-            except Exception as ex:
-                logger.debug(f"HEMA eval error for {sym} {tf}: {ex}")
-                return None
+                
+                # 2. Build task list of all (symbol, timeframe, df) tuples
+                tasks = []
+                for sym, tf_map in multi_tf_candles.items():
+                    inst_info = target_universe.get(sym, {})
+                    fut_inst = getattr(self, "instrument_mgr", None)
+                    fut = fut_inst.get_futures_instrument(sym) if fut_inst else None
+                    fut_sym = fut.trading_symbol if fut else f"{sym} FUT"
+                    lot_sz = fut.lot_size if fut and fut.lot_size else inst_info.get("lot_size", 0)
+                    t_cr = inst_info.get("turnover_cr", 0.0)
+                    l_tier = inst_info.get("liquidity_tier", "Normal")
+                    is_liq = inst_info.get("is_most_liquid", False)
+                    
+                    for tf, df in tf_map.items():
+                        if df is not None and len(df) >= 5:
+                            tasks.append((sym, tf, df, fut_sym, lot_sz, t_cr, l_tier, is_liq))
+                            
+                # 3. Parallel Numba-accelerated evaluation (8 workers max to avoid GIL / CPU starvation)
+                def _evaluate_worker(task):
+                    sym, tf, df, fut_sym, lot_sz, t_cr, l_tier, is_liq = task
+                    try:
+                        sig = self.hema_engine.evaluate(
+                            df,
+                            symbol=sym,
+                            timeframe=tf,
+                            fut_symbol=fut_sym,
+                            lot_size=lot_sz,
+                            turnover_cr=t_cr,
+                            liquidity_tier=l_tier,
+                            is_most_liquid=is_liq,
+                        )
+                        return sig
+                    except Exception as ex:
+                        logger.debug(f"HEMA eval error for {sym} {tf}: {ex}")
+                        return None
 
-        workers = min(32, (os.cpu_count() or 4) * 4)
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            signals = list(executor.map(_evaluate_worker, tasks))
+                workers = min(8, os.cpu_count() or 4)
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    signals = list(executor.map(_evaluate_worker, tasks))
 
-        valid_signals = [s.to_dict() for s in signals if s is not None]
-        
-        # 4. Atomic batch update into DashboardState
-        dashboard_state.add_hema_signals_batch(valid_signals)
-        elapsed = time.time() - t0
-        logger.info(f"HEMA + T3 scan complete: Evaluated {len(tasks)} setups across {len(target_universe)} stocks in {elapsed:.2f}s! Generated {len(valid_signals)} signals.")
-        return elapsed, len(tasks), len(valid_signals)
+                valid_signals = [s.to_dict() for s in signals if s is not None]
+                
+                # 4. Atomic batch update into DashboardState
+                dashboard_state.add_hema_signals_batch(valid_signals)
+                elapsed = time.time() - t0
+                logger.info(f"HEMA + T3 scan complete: Evaluated {len(tasks)} setups across {len(target_universe)} stocks in {elapsed:.2f}s! Generated {len(valid_signals)} signals.")
+                return elapsed, len(tasks), len(valid_signals)
+            finally:
+                self._is_hema_scanning = False
 
     def run_live(self):
         """

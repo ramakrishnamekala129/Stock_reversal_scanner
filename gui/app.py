@@ -207,18 +207,30 @@ class ScannerTkinterGUI:
         self._poll_data()
         self._update_clock()
 
-        # Automatically trigger HEMA multi-timeframe scan in background at startup so Tab 4 is ready like Tab 1
-        self.root.after(800, self._trigger_hema_scan)
+        # Background recurring auto-scan every 120s (only when scanner is active)
         self._schedule_auto_hema_scan()
+
+    def _debounce(self, key: str, delay_ms: int, callback):
+        """Cancels any pending callback for the given key and schedules a new one."""
+        if not hasattr(self, "_debounce_timers"):
+            self._debounce_timers = {}
+        timer = self._debounce_timers.get(key)
+        if timer:
+            try:
+                self.root.after_cancel(timer)
+            except Exception:
+                pass
+        self._debounce_timers[key] = self.root.after(delay_ms, callback)
 
     def _schedule_auto_hema_scan(self):
         """Periodically scans HEMA + T3 across universe in background without requiring manual clicks."""
         try:
             if hasattr(self, "scanner") and self.scanner and getattr(self.scanner, "_is_running", False):
-                self._trigger_hema_scan()
+                if not getattr(self.scanner, "_is_hema_scanning", False):
+                    self._trigger_hema_scan(is_auto=True)
         except Exception:
             pass
-        self.root.after(60000, self._schedule_auto_hema_scan)
+        self.root.after(120000, self._schedule_auto_hema_scan)
 
     def _setup_styles(self):
         """Configures modern dark ttk styles for notebook, treeviews, and inputs."""
@@ -564,7 +576,7 @@ class ScannerTkinterGUI:
         tk.Label(row2, text="🔍 Search:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         search_entry = tk.Entry(row2, textvariable=self.signal_search_var, bg=CARD_BG, fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief="flat", font=("Segoe UI", 9), width=20)
         search_entry.pack(side=tk.LEFT, padx=(0, 12), ipady=3)
-        self.signal_search_var.trace_add("write", lambda *args: self._render_signals())
+        self.signal_search_var.trace_add("write", lambda *args: self._debounce("sig_search", 250, self._render_signals))
 
         # Export CSV Button (Packed to Right)
         export_btn = tk.Button(
@@ -719,7 +731,7 @@ class ScannerTkinterGUI:
         tk.Label(toolbar, text="🔍 Search:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         m_search_entry = tk.Entry(toolbar, textvariable=self.market_search_var, bg=CARD_BG, fg=TEXT_MAIN, insertbackground=TEXT_MAIN, relief="flat", font=("Segoe UI", 9), width=20)
         m_search_entry.pack(side=tk.LEFT, padx=(0, 12), ipady=3)
-        self.market_search_var.trace_add("write", lambda *args: self._render_market())
+        self.market_search_var.trace_add("write", lambda *args: self._debounce("mkt_search", 250, self._render_market))
 
         # Export CSV Button
         export_btn = tk.Button(
@@ -1014,8 +1026,8 @@ class ScannerTkinterGUI:
         except Exception as e:
             logger.debug(f"Error in Tkinter poll loop: {e}")
 
-        # Schedule next poll in 400ms (smooth, responsive, zero CPU lag)
-        self.root.after(400, self._poll_data)
+        # Schedule next poll in 500ms (smooth, responsive, zero CPU lag)
+        self.root.after(500, self._poll_data)
 
     def _render_signals(self):
         """Renders signals in Treeview according to active filters and sort order."""
@@ -1027,6 +1039,8 @@ class ScannerTkinterGUI:
         pat_filter = self.signal_pattern_var.get()
         search_query = self.signal_search_var.get().strip().upper()
         sort_mode = self.signal_sort_var.get()
+
+        market_lookup = {str(m.get("symbol", "")): m for m in self.cached_market} if hasattr(self, "cached_market") and self.cached_market else {}
 
         filtered = []
         for s in self.cached_signals:
@@ -1048,7 +1062,7 @@ class ScannerTkinterGUI:
                 continue
 
             # Apply Pattern Filter
-            if pat_filter != "ALL" and pattern != pat_filter:
+            if pat_filter != "ALL" and pat_filter not in pattern:
                 continue
 
             # Apply Trigger Status Filter
@@ -1091,12 +1105,11 @@ class ScannerTkinterGUI:
             # Determine CPR Width and Narrow Status
             cpr_width = float(s.get("cpr_width_pct", 0.0))
             is_narrow_cpr = bool(s.get("is_narrow_cpr", False)) or (0 < cpr_width <= 0.21) or any("Narrow CPR" in str(c) for c in conds) or "Narrow CPR" in zone
-            if not is_narrow_cpr and not cpr_width and hasattr(self, "cached_market"):
-                for m in self.cached_market:
-                    if m.get("symbol") == symbol:
-                        cpr_width = float(m.get("cpr_width_pct", 0.0))
-                        is_narrow_cpr = (cpr_width <= 0.21) or bool(m.get("is_narrow_cpr"))
-                        break
+            if not is_narrow_cpr and not cpr_width and market_lookup:
+                m_entry = market_lookup.get(symbol)
+                if m_entry:
+                    cpr_width = float(m_entry.get("cpr_width_pct", 0.0))
+                    is_narrow_cpr = (cpr_width <= 0.21) or bool(m_entry.get("is_narrow_cpr"))
 
             is_narrow_trap = bool(s.get("is_narrow_trap_zone", False)) or any("Narrow Bull Trap" in str(c) or "Narrow Bear Trap" in str(c) for c in conds) or ("Narrow" in zone and "Trap" in zone)
 
@@ -1717,10 +1730,9 @@ class ScannerTkinterGUI:
         row2 = tk.Frame(toolbar, bg=BG_DARK, pady=2)
         row2.pack(fill=tk.X)
 
-        tk.Label(row2, text="Search:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         search_entry = ttk.Entry(row2, textvariable=self.hema_search_var, width=15)
         search_entry.pack(side=tk.LEFT, padx=(0, 10))
-        search_entry.bind("<KeyRelease>", lambda e: self._render_hema_signals())
+        search_entry.bind("<KeyRelease>", lambda e: self._debounce("hema_search", 250, self._render_hema_signals))
 
         tk.Label(row2, text="Sort By:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         sort_combo = ttk.Combobox(
@@ -1852,14 +1864,25 @@ class ScannerTkinterGUI:
             sym = str(vals[1]).strip()
             self.open_chart_for_symbol(sym)
 
-    def _trigger_hema_scan(self):
+    def _trigger_hema_scan(self, is_auto: bool = False):
         """Triggers ultra-fast parallel Numba scan across universe for selected or all timeframes."""
         if not self.scanner:
-            messagebox.showinfo("HEMA Scan", "Scanner backend is not running or available.")
+            if not is_auto:
+                self.hema_count_lbl.config(text="⚠️ Scanner backend initializing...")
             return
+        if getattr(self.scanner, "_is_hema_scanning", False):
+            if not is_auto:
+                self.hema_count_lbl.config(text="⏳ Scan already in progress...")
+            return
+        if not getattr(self.scanner, "_is_running", False):
+            if not is_auto:
+                self.hema_count_lbl.config(text="⏳ Scanner starting up, please wait...")
+            return
+
         selected_tf = self.hema_tf_var.get()
         tfs = ["15m", "30m", "1h", "2h", "4h", "1d"] if selected_tf == "ALL" else [selected_tf]
         self.hema_count_lbl.config(text=f"🔄 Parallel Scanning {len(tfs)} TF(s)...")
+
         def _do_scan():
             try:
                 res = self.scanner.scan_hema_universe(timeframes=tfs)
@@ -1871,13 +1894,11 @@ class ScannerTkinterGUI:
                 self.hema_dirty = True
             except Exception as ex:
                 logger.error(f"Error executing HEMA scan: {ex}")
-        threading.Thread(target=_do_scan, daemon=True).start()
+
+        threading.Thread(target=_do_scan, daemon=True, name="HemaScanWorker").start()
 
     def _render_hema_signals(self):
-        """Renders filtered and sorted HEMA + T3 signals in Tab 4 Treeview."""
-        for item in self.hema_tree.get_children():
-            self.hema_tree.delete(item)
-
+        """Renders filtered and sorted HEMA + T3 signals in Tab 4 Treeview with differential updates."""
         tf_filter = self.hema_tf_var.get()
         sig_filter = self.hema_signal_var.get()
         reg_filter = self.hema_regime_var.get()
@@ -1943,6 +1964,33 @@ class ScannerTkinterGUI:
         unique_syms = {s.get("symbol") for s in filtered if s.get("symbol")}
         self.hema_count_lbl.config(text=f"🎯 Showing: {len(filtered)} Signals ({len(unique_syms)} Stocks)")
 
+        existing_children = list(self.hema_tree.get_children())
+        target_ids = [f"{s.get('symbol')}_{s.get('timeframe')}_{s.get('timestamp')}" for s in filtered]
+
+        if not target_ids:
+            for item in existing_children:
+                self.hema_tree.delete(item)
+            if not self.cached_hema_signals:
+                self.hema_tree.insert("", tk.END, values=(
+                    "--:--:--", "AUTO-SCANNING", "--", "STREAMING", "Multi-timeframe scanner active (15m, 30m, 1h, 2h, 4h, 1d)...",
+                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "Signals stream automatically like Tab 1. Click 'Scan' anytime to force instant re-scan."
+                ), tags=("sideways",))
+            else:
+                self.hema_tree.insert("", tk.END, values=(
+                    "--:--:--", "--", "--", "NO MATCH", "No HEMA+T3 signals matching selected timeframe or filters.",
+                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "Try changing Timeframe dropdown to 'ALL' or resetting filters."
+                ))
+            return
+
+        if not hasattr(self, "_hema_row_cache"):
+            self._hema_row_cache = {}
+
+        needs_full_rebuild = (existing_children != target_ids)
+        if needs_full_rebuild:
+            self._hema_row_cache.clear()
+            for item in existing_children:
+                self.hema_tree.delete(item)
+
         for idx, s in enumerate(filtered):
             sig_type = str(s.get("signal_type", ""))
             regime = str(s.get("regime", ""))
@@ -1963,42 +2011,36 @@ class ScannerTkinterGUI:
             reasons_list = s.get("conditions_met", [])
             reasons_str = " • ".join(reasons_list) if reasons_list else "--"
 
-            self.hema_tree.insert(
-                "",
-                tk.END,
-                values=(
-                    str(s.get("timestamp", "--")),
-                    str(s.get("symbol", "--")),
-                    str(s.get("timeframe", "--")).upper(),
-                    sig_type,
-                    regime,
-                    f"{float(s.get('price', 0.0)):.2f}",
-                    f"{int(s.get('trend_score', 0))}/10",
-                    f"{int(s.get('sideways_score', 0))}/7",
-                    f"{float(s.get('hema', 0.0)):.2f}",
-                    f"{float(s.get('t3_fast', 0.0)):.2f}",
-                    f"{float(s.get('t3_slow', 0.0)):.2f}",
-                    f"{float(s.get('adx', 0.0)):.1f}",
-                    f"{float(s.get('atr_ratio', 0.0)):.2f}x",
-                    f"{float(s.get('ema_slope_pct', 0.0)):+.3f}%",
-                    f"{float(s.get('consolidation_compression_pct', 0.0)):.2f}%",
-                    f"{float(s.get('volume_ratio', 0.0)):.1f}x",
-                    reasons_str,
-                ),
-                tags=tuple(tags),
+            row_vals = (
+                str(s.get("timestamp", "--")),
+                str(s.get("symbol", "--")),
+                str(s.get("timeframe", "--")).upper(),
+                sig_type,
+                regime,
+                f"{float(s.get('price', 0.0)):.2f}",
+                f"{int(s.get('trend_score', 0))}/10",
+                f"{int(s.get('sideways_score', 0))}/7",
+                f"{float(s.get('hema', 0.0)):.2f}",
+                f"{float(s.get('t3_fast', 0.0)):.2f}",
+                f"{float(s.get('t3_slow', 0.0)):.2f}",
+                f"{float(s.get('adx', 0.0)):.1f}",
+                f"{float(s.get('atr_ratio', 0.0)):.2f}x",
+                f"{float(s.get('ema_slope_pct', 0.0)):+.3f}%",
+                f"{float(s.get('consolidation_compression_pct', 0.0)):.2f}%",
+                f"{float(s.get('volume_ratio', 0.0)):.1f}x",
+                reasons_str,
             )
+            tag_tuple = tuple(tags)
+            row_id = target_ids[idx]
 
-        if len(self.hema_tree.get_children()) == 0:
-            if not self.cached_hema_signals:
-                self.hema_tree.insert("", tk.END, values=(
-                    "--:--:--", "AUTO-SCANNING", "--", "STREAMING", "Multi-timeframe scanner active (15m, 30m, 1h, 2h, 4h, 1d)...",
-                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "Signals stream automatically like Tab 1. Click 'Scan' anytime to force instant re-scan."
-                ), tags=("sideways",))
+            if needs_full_rebuild:
+                self.hema_tree.insert("", tk.END, iid=row_id, values=row_vals, tags=tag_tuple)
+                self._hema_row_cache[row_id] = (row_vals, tag_tuple)
             else:
-                self.hema_tree.insert("", tk.END, values=(
-                    "--:--:--", "--", "--", "NO MATCH", "No HEMA+T3 signals matching selected timeframe or filters.",
-                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "Try changing Timeframe dropdown to 'ALL' or resetting filters."
-                ))
+                cached = self._hema_row_cache.get(row_id)
+                if cached is None or cached[0] != row_vals or cached[1] != tag_tuple:
+                    self.hema_tree.item(row_id, values=row_vals, tags=tag_tuple)
+                    self._hema_row_cache[row_id] = (row_vals, tag_tuple)
 
     def _export_hema_csv(self):
         """Exports currently loaded HEMA + T3 signals into a CSV file."""
