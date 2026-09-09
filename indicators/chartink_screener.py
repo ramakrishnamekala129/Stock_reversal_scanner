@@ -120,8 +120,7 @@ class ChartinkIntradayEngine:
             return None
 
         df = df_daily.copy()
-        if not pd.api.types.is_datetime64_any_dtype(df["timestamp"]):
-            df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(None)
         df = df.sort_values("timestamp").reset_index(drop=True)
 
         if target_date is not None:
@@ -144,6 +143,8 @@ class ChartinkIntradayEngine:
         # Merge today's live session if provided
         if today_override:
             t_dt = pd.to_datetime(today_override.get("timestamp", datetime.now()))
+            if hasattr(t_dt, "tz") and t_dt.tz is not None:
+                t_dt = t_dt.tz_localize(None)
             if t_dt.date() != active_date:
                 return None
             # If today already exists, update last row, else append
@@ -162,6 +163,7 @@ class ChartinkIntradayEngine:
                     "volume": int(today_override.get("volume", 0)),
                 }
                 df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+            df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(None)
 
         n_bars = len(df)
         if n_bars < 2:
@@ -207,13 +209,15 @@ class ChartinkIntradayEngine:
         sub1_turnover_pass = calculated_turnover >= 100_000_000.0
 
         # Calculate previous month high
-        cur_month = today["timestamp"].month
-        cur_year = today["timestamp"].year
+        ts_today = pd.to_datetime(today["timestamp"])
+        cur_month = ts_today.month
+        cur_year = ts_today.year
         # Mask for previous calendar month
         prev_month = cur_month - 1 if cur_month > 1 else 12
         prev_year = cur_year if cur_month > 1 else cur_year - 1
 
-        pm_df = df[(df["timestamp"].dt.month == prev_month) & (df["timestamp"].dt.year == prev_year)]
+        ts_series = pd.to_datetime(df["timestamp"])
+        pm_df = df[(ts_series.dt.month == prev_month) & (ts_series.dt.year == prev_year)]
         if not pm_df.empty:
             prev_month_high = float(pm_df["high"].max())
             monthly_breakout = (c_close >= prev_month_high)
@@ -226,8 +230,8 @@ class ChartinkIntradayEngine:
 
         if sub1_turnover_pass and monthly_breakout:
             matched_sub_strategies.append("Monthly Breakout (Sub 1)")
-            confluences.append(f"Monthly Breakout (Close ₹{c_close:.2f} >= Prev Month High ₹{prev_month_high:.2f})")
-            confluences.append(f"Institutional Turnover: ₹{turnover_in_cr:.1f} Cr >= ₹10 Cr")
+            confluences.append(f"Monthly Breakout (Close Rs.{c_close:.2f} >= Prev Month High Rs.{prev_month_high:.2f})")
+            confluences.append(f"Institutional Turnover: Rs.{turnover_in_cr:.1f} Cr >= Rs.10 Cr")
 
         # ═══════════════════════════════════════════════════════════════════
         # 3. Sub-Strategy 2: 20-Week Multi-Month Breakout & 200 SMA
@@ -235,7 +239,9 @@ class ChartinkIntradayEngine:
         # - Daily Close > Daily SMA(Close, 200)
         # ═══════════════════════════════════════════════════════════════════
         try:
-            df_weekly = df.set_index("timestamp").resample("W-FRI").agg({
+            df_for_weekly = df.copy()
+            df_for_weekly["timestamp"] = pd.to_datetime(df_for_weekly["timestamp"])
+            df_weekly = df_for_weekly.set_index("timestamp").resample("W-FRI").agg({
                 "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"
             }).dropna().reset_index()
 
@@ -258,8 +264,8 @@ class ChartinkIntradayEngine:
 
         if weekly_breakout and above_200_sma:
             matched_sub_strategies.append("20W High + 200 SMA (Sub 2)")
-            confluences.append(f"20-Week High Breakout (₹{c_close:.2f} > ₹{max_20w_close:.2f})")
-            confluences.append(f"Above 200 SMA (₹{c_close:.2f} > ₹{sma_200:.2f})")
+            confluences.append(f"20-Week High Breakout (Rs.{c_close:.2f} > Rs.{max_20w_close:.2f})")
+            confluences.append(f"Above 200 SMA (Rs.{c_close:.2f} > Rs.{sma_200:.2f})")
 
         # ═══════════════════════════════════════════════════════════════════
         # 4. Sub-Strategy 3: Intraday Momentum, Multi-SMA & Volume Surge

@@ -505,6 +505,13 @@ class FNOIntradayScanner:
                 market_open_time = dt_time(9, 15)
                 is_market_hours = (now_ist.time() >= market_open_time) and (now_ist.weekday() < 5)
 
+                today_db_candles_map = {}
+                if hasattr(self, "db") and self.db:
+                    try:
+                        today_db_candles_map = self.db.get_candles_by_date(str(today_date))
+                    except Exception:
+                        today_db_candles_map = {}
+
                 t0 = time.time()
                 tasks = []
                 for sym, inst_info in target_universe.items():
@@ -554,6 +561,19 @@ class FNOIntradayScanner:
                                         "volume": int(lp.get("volume", 0)),
                                     }
 
+                            # 3. Fallback to today's official 5M broker candles from SQLite DB
+                            if today_override is None and today_db_candles_map:
+                                df_db_today = today_db_candles_map.get(sym)
+                                if df_db_today is not None and not df_db_today.empty:
+                                    today_override = {
+                                        "timestamp": datetime.now(),
+                                        "open": float(df_db_today.iloc[0]["open"]),
+                                        "high": float(df_db_today["high"].max()),
+                                        "low": float(df_db_today["low"].min()),
+                                        "close": float(df_db_today.iloc[-1]["close"]),
+                                        "volume": int(df_db_today["volume"].sum()),
+                                    }
+
                         sig = self.chartink_engine.evaluate_stock(
                             symbol=sym,
                             df_daily=df,
@@ -567,7 +587,7 @@ class FNOIntradayScanner:
                         )
                         return sig
                     except Exception as ex:
-                        logger.debug(f"Chartink eval error for {sym}: {ex}")
+                        logger.warning(f"Chartink eval error for {sym}: {ex}")
                         return None
 
                 workers = min(8, os.cpu_count() or 4)
