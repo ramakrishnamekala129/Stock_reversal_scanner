@@ -109,6 +109,7 @@ class ChartinkIntradayEngine:
         turnover_cr: float = 0.0,
         liquidity_tier: str = "Normal",
         is_most_liquid: bool = False,
+        target_date: Optional[date] = None,
     ) -> Optional[ChartinkSignal]:
         """
         Evaluates a stock against the Chartink Intraday Screener formula.
@@ -123,9 +124,28 @@ class ChartinkIntradayEngine:
             df["timestamp"] = pd.to_datetime(df["timestamp"])
         df = df.sort_values("timestamp").reset_index(drop=True)
 
+        if target_date is not None:
+            active_date = target_date
+        else:
+            try:
+                import config
+                import pytz
+                active_date = datetime.now(pytz.timezone(config.MARKET_TIMEZONE)).date()
+            except Exception:
+                active_date = date.today()
+
+        # If no live today_override is given, verify that df_daily actually has today's bar
+        if today_override is None:
+            last_date = df["timestamp"].iloc[-1].date()
+            if last_date != active_date:
+                # df ends on yesterday or past trading day; do not evaluate past day as today!
+                return None
+
         # Merge today's live session if provided
         if today_override:
             t_dt = pd.to_datetime(today_override.get("timestamp", datetime.now()))
+            if t_dt.date() != active_date:
+                return None
             # If today already exists, update last row, else append
             if df["timestamp"].iloc[-1].date() == t_dt.date():
                 df.loc[len(df) - 1, "timestamp"] = t_dt

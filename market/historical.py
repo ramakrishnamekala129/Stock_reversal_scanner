@@ -111,81 +111,112 @@ class HistoricalDataLoader:
 
         if not force_refresh:
             cached_data = db_repo.load_previous_day_ohlcv(mode=mode_tag, date_str=today_str)
-            if cached_data:
+            if cached_data and len(cached_data) >= len(universe) * 0.8:
                 for sym, d in cached_data.items():
                     self._pd_cache[sym] = PreviousDayOHLCV(**d)
                 logger.info(f"Loaded {len(self._pd_cache)} previous-day OHLCV records ({mode_tag}) from SQLite DB cache.")
                 return self._pd_cache
 
-        logger.info(f"Fetching previous trading-day OHLCV ({mode_tag}) for {len(universe)} symbols via asyncio (Rate Limit: {config.UPSTOX_RATE_LIMIT_PER_SEC} req/s)...")
-        token = self.rest_client.access_token
-        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         results: Dict[str, PreviousDayOHLCV] = {}
 
-        async def _fetch_all_daily():
-            rate_limiter = AsyncUpstoxRateLimiter(config.UPSTOX_RATE_LIMIT_PER_SEC)
-            from_date_str = (date.today() - timedelta(days=35)).isoformat()
-            async with httpx.AsyncClient(
-                headers=headers,
-                timeout=12.0,
-                limits=httpx.Limits(max_connections=50, max_keepalive_connections=25),
-            ) as client:
-                async def _fetch_one(sym: str, item: Dict[str, Any]):
-                    inst_key = item["instrument_key"]
-                    encoded_key = urllib.parse.quote(inst_key)
-                    url = f"https://api.upstox.com/v2/historical-candle/{encoded_key}/day/{today_str}/{from_date_str}"
-                    for attempt in range(config.API_RETRY_ATTEMPTS):
-                        await rate_limiter.acquire()
-                        try:
-                            resp = await client.get(url)
-                            if resp.status_code == 200:
-                                data = resp.json()
-                                daily_candles = data.get("data", {}).get("candles", [])
-                                for candle in daily_candles:
-                                    candle_date = candle[0].split("T")[0]
-                                    if candle_date < today_str:
-                                        return (sym, PreviousDayOHLCV(
-                                            symbol=sym,
-                                            instrument_key=inst_key,
-                                            date=candle_date,
-                                            open=float(candle[1]),
-                                            high=float(candle[2]),
-                                            low=float(candle[3]),
-                                            close=float(candle[4]),
-                                            volume=int(candle[5]),
-                                        ))
-                                return (sym, None)
-                            elif resp.status_code == 429:
-                                retry_after = float(resp.headers.get("Retry-After", config.API_RETRY_BACKOFF_BASE * (2 ** attempt)))
-                                logger.warning(f"Upstox 429 Rate limit on {sym}, backing off for {retry_after:.1f}s...")
-                                await asyncio.sleep(retry_after)
-                            else:
-                                break
-                        except Exception as e:
-                            logger.debug(f"Attempt {attempt+1} daily fetch error for {sym}: {e}")
-                            await asyncio.sleep(config.API_RETRY_BACKOFF_BASE * (attempt + 1))
-                    return (sym, None)
-
-                tasks = [_fetch_one(sym, item) for sym, item in universe.items()]
-                res_list = await asyncio.gather(*tasks)
-                for sym, pd_obj in res_list:
-                    if pd_obj:
-                        results[sym] = pd_obj
-
+        # 1. Fast Seed from historical daily candles DB if available
         try:
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
+            from database.historical_db import HistoricalCandleDatabase
+            hist_db = HistoricalCandleDatabase()
+            daily_map = hist_db.get_all_daily_candles_map()
+            for sym, item in universe.items():
+                if sym not in results and sym in daily_map:
+                    df = daily_map[sym]
+                    if df is not None and not df.empty:
+                        df_past = df[df["timestamp"].astype(str) < today_str]
+                        if not df_past.empty:
+                            last_row = df_past.iloc[-1]
+                            c_date = str(last_row["timestamp"]).split("T")[0].split(" ")[0]
+                            results[sym] = PreviousDayOHLCV(
+                                symbol=sym,
+                                instrument_key=item.get("instrument_key", ""),
+                                date=c_date,
+                                open=float(last_row["open"]),
+                                high=float(last_row["high"]),
+                                low=float(last_row["low"]),
+                                close=float(last_row["close"]),
+                                volume=int(last_row["volume"]),
+                            )
+            if len(results) >= len(universe) * 0.8:
+                logger.info(f"Seeded {len(results)}/{len(universe)} previous-day OHLCV records ({mode_tag}) from SQLite daily candles.")
+        except Exception as ex:
+            logger.debug(f"Could not seed previous day from daily DB: {ex}")
 
-            if loop and loop.is_running():
-                # In running event loop, create task or run in thread
-                with ThreadPoolExecutor(max_workers=1) as pool:
-                    pool.submit(asyncio.run, _fetch_all_daily()).result()
-            else:
-                asyncio.run(_fetch_all_daily())
-        except Exception as e:
-            logger.warning(f"Async daily fetch fallback error: {e}. Running threaded fallback...")
+        # 2. If any symbols still missing, fetch via REST API
+        missing_universe = {sym: item for sym, item in universe.items() if sym not in results}
+        if missing_universe:
+            logger.info(f"Fetching remaining {len(missing_universe)} previous trading-day OHLCV ({mode_tag}) via asyncio...")
+            token = self.rest_client.access_token
+            headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+            async def _fetch_all_daily():
+                rate_limiter = AsyncUpstoxRateLimiter(config.UPSTOX_RATE_LIMIT_PER_SEC)
+                from_date_str = (date.today() - timedelta(days=35)).isoformat()
+                async with httpx.AsyncClient(
+                    headers=headers,
+                    timeout=12.0,
+                    limits=httpx.Limits(max_connections=50, max_keepalive_connections=25),
+                ) as client:
+                    async def _fetch_one(sym: str, item: Dict[str, Any]):
+                        inst_key = item["instrument_key"]
+                        encoded_key = urllib.parse.quote(inst_key)
+                        url = f"https://api.upstox.com/v2/historical-candle/{encoded_key}/day/{today_str}/{from_date_str}"
+                        for attempt in range(config.API_RETRY_ATTEMPTS):
+                            await rate_limiter.acquire()
+                            try:
+                                resp = await client.get(url)
+                                if resp.status_code == 200:
+                                    data = resp.json()
+                                    daily_candles = data.get("data", {}).get("candles", [])
+                                    for candle in daily_candles:
+                                        candle_date = candle[0].split("T")[0]
+                                        if candle_date < today_str:
+                                            return (sym, PreviousDayOHLCV(
+                                                symbol=sym,
+                                                instrument_key=inst_key,
+                                                date=candle_date,
+                                                open=float(candle[1]),
+                                                high=float(candle[2]),
+                                                low=float(candle[3]),
+                                                close=float(candle[4]),
+                                                volume=int(candle[5]),
+                                            ))
+                                    return (sym, None)
+                                elif resp.status_code == 429:
+                                    retry_after = float(resp.headers.get("Retry-After", config.API_RETRY_BACKOFF_BASE * (2 ** attempt)))
+                                    logger.warning(f"Upstox 429 Rate limit on {sym}, backing off for {retry_after:.1f}s...")
+                                    await asyncio.sleep(retry_after)
+                                else:
+                                    break
+                            except Exception as e:
+                                logger.debug(f"Attempt {attempt+1} daily fetch error for {sym}: {e}")
+                                await asyncio.sleep(config.API_RETRY_BACKOFF_BASE * (attempt + 1))
+                        return (sym, None)
+
+                    tasks = [_fetch_one(sym, item) for sym, item in missing_universe.items()]
+                    res_list = await asyncio.gather(*tasks)
+                    for sym, pd_obj in res_list:
+                        if pd_obj:
+                            results[sym] = pd_obj
+
+            try:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop and loop.is_running():
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        pool.submit(asyncio.run, _fetch_all_daily()).result()
+                else:
+                    asyncio.run(_fetch_all_daily())
+            except Exception as e:
+                logger.warning(f"Async daily fetch fallback error: {e}. Running threaded fallback...")
             # Fallback to ThreadPoolExecutor
             def _fetch_single_sync(symbol: str, item: Dict[str, Any]) -> Optional[PreviousDayOHLCV]:
                 inst_key = item["instrument_key"]

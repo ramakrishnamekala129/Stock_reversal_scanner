@@ -10,11 +10,12 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime, time as dt_time
 import json
 from pathlib import Path
 from typing import Dict, List, Optional
 import pandas as pd
+import pytz
 
 import config
 from database.repository import DatabaseRepository
@@ -204,9 +205,9 @@ class FNOIntradayScanner:
                 try:
                     logger.info("Background worker started: verifying historical database completeness...")
                     filled = self.hist_loader.ensure_historical_candles_complete(self._universe)
-                    total_filled = sum(filled.values())
+                    total_filled = filled.get("filled_candles", 0) if isinstance(filled, dict) else 0
                     if total_filled > 0:
-                        logger.info(f"Background gap reconciliation complete: Backfilled {total_filled} candles across {len(filled)} symbols.")
+                        logger.info(f"Background gap reconciliation complete: Backfilled {total_filled} candles.")
                     else:
                         logger.info("Background gap reconciliation complete: All historical candles are up-to-date.")
                 except Exception as ex:
@@ -499,6 +500,11 @@ class FNOIntradayScanner:
                 if not target_universe:
                     return (0.0, 0, 0)
 
+                now_ist = datetime.now(pytz.timezone(config.MARKET_TIMEZONE))
+                today_date = now_ist.date()
+                market_open_time = dt_time(9, 15)
+                is_market_hours = (now_ist.time() >= market_open_time) and (now_ist.weekday() < 5)
+
                 t0 = time.time()
                 tasks = []
                 for sym, inst_info in target_universe.items():
@@ -521,13 +527,33 @@ class FNOIntradayScanner:
                     sym, df, fut_sym, lot_sz, t_cr, l_tier, is_liq = task
                     try:
                         today_override = None
-                        lp = dashboard_state.live_prices.get(sym)
-                        if lp and lp.get("ltp", 0) > 0:
-                            today_override = {
-                                "timestamp": datetime.now(),
-                                "close": float(lp["ltp"]),
-                                "volume": int(lp.get("volume", 0)),
-                            }
+                        # Only construct live today candle if market is in session or today's candles exist
+                        if is_market_hours:
+                            # 1. Check if candle_engine has today's live candles
+                            if hasattr(self, "candle_engine") and self.candle_engine:
+                                df_5m = self.candle_engine.get_candle_history_df(sym, include_forming=True)
+                                if df_5m is not None and not df_5m.empty:
+                                    df_today = df_5m[pd.to_datetime(df_5m["timestamp"]).dt.date == today_date]
+                                    if not df_today.empty:
+                                        today_override = {
+                                            "timestamp": datetime.now(),
+                                            "open": float(df_today.iloc[0]["open"]),
+                                            "high": float(df_today["high"].max()),
+                                            "low": float(df_today["low"].min()),
+                                            "close": float(df_today.iloc[-1]["close"]),
+                                            "volume": int(df_today["volume"].sum()),
+                                        }
+
+                            # 2. Fallback to live_prices if live streaming quote received today
+                            if today_override is None:
+                                lp = dashboard_state.live_prices.get(sym)
+                                if lp and lp.get("is_live", False) and lp.get("ltp", 0) > 0:
+                                    today_override = {
+                                        "timestamp": datetime.now(),
+                                        "close": float(lp["ltp"]),
+                                        "volume": int(lp.get("volume", 0)),
+                                    }
+
                         sig = self.chartink_engine.evaluate_stock(
                             symbol=sym,
                             df_daily=df,
@@ -537,6 +563,7 @@ class FNOIntradayScanner:
                             turnover_cr=t_cr,
                             liquidity_tier=l_tier,
                             is_most_liquid=is_liq,
+                            target_date=today_date,
                         )
                         return sig
                     except Exception as ex:
@@ -550,7 +577,8 @@ class FNOIntradayScanner:
                 valid_signals = [s.to_dict() for s in raw_signals if s is not None]
                 dashboard_state.add_chartink_signals_batch(valid_signals)
                 elapsed = time.time() - t0
-                logger.info(f"Chartink scan complete: Evaluated {len(tasks)} stocks in {elapsed:.2f}s! Found {len(valid_signals)} breakout candidates.")
+                if valid_signals:
+                    logger.info(f"Chartink scan complete: Evaluated {len(tasks)} stocks in {elapsed:.2f}s! Found {len(valid_signals)} breakout candidates.")
                 return elapsed, len(tasks), len(valid_signals)
             finally:
                 self._is_chartink_scanning = False

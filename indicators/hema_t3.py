@@ -5,7 +5,7 @@ Supports multi-timeframe analysis (15m, 30m, 1h, 2h, 4h, 1d).
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 import logging
 import math
 from typing import Any, Dict, List, Optional, Tuple
@@ -785,6 +785,7 @@ class HemaT3RegimeEngine:
         turnover_cr: float = 0.0,
         liquidity_tier: str = "Normal",
         is_most_liquid: bool = False,
+        target_date: Optional[date] = None,
     ) -> List[HemaT3Signal]:
         """
         Evaluates candle-by-candle across today's session and returns all signals
@@ -800,23 +801,29 @@ class HemaT3RegimeEngine:
         if not ind:
             return []
 
-        # Find candles belonging to today's active session
+        # Find candles belonging strictly to target session (defaults to today's date)
         session_indices = []
+        if target_date is not None:
+            active_date = target_date
+        else:
+            try:
+                active_date = datetime.now(pytz.timezone(config.MARKET_TIMEZONE)).date()
+            except Exception:
+                active_date = date.today()
+
         if "timestamp" in df.columns:
             try:
-                last_ts = pd.to_datetime(df["timestamp"].iloc[-1])
-                last_date = last_ts.date()
                 for idx in range(1, n_bars):
                     c_dt = pd.to_datetime(df["timestamp"].iloc[idx])
-                    if c_dt.date() == last_date:
+                    if c_dt.date() == active_date:
                         session_indices.append(idx)
             except Exception:
-                session_indices = list(range(max(1, n_bars - 30), n_bars))
-        else:
-            session_indices = list(range(max(1, n_bars - 30), n_bars))
+                session_indices = []
 
+        # If no candles exist for today's session (e.g. pre-market or weekend),
+        # return empty rather than evaluating yesterday's historical candles.
         if not session_indices:
-            session_indices = [n_bars - 1]
+            return []
 
         signals: List[HemaT3Signal] = []
         last_sig_text = None

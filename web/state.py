@@ -57,6 +57,7 @@ class WebDashboardState:
                     "change_pct": 0.0,
                     "volume": p_dict.get("pdv", 0),
                     "time": now_ist,
+                    "is_live": False,
                 }
             self.stats["symbols_scanned"] = len(self.pivots)
             self.price_version += 1
@@ -83,6 +84,7 @@ class WebDashboardState:
                 "change_pct": round(change_pct, 2),
                 "volume": volume,
                 "time": time_str,
+                "is_live": True,
             }
             self.live_prices[symbol] = update_payload
             self.stats["last_updated"] = time_str
@@ -297,12 +299,12 @@ class WebDashboardState:
 
         with self._lock:
             existing_keys = {
-                (s.get("symbol"), s.get("strategy_tag"), s.get("timestamp")): idx
+                (s.get("symbol"), s.get("strategy_tag")): idx
                 for idx, s in enumerate(self.chartink_signals)
             }
             new_items = []
             for s in formatted:
-                key = (s.get("symbol"), s.get("strategy_tag"), s.get("timestamp"))
+                key = (s.get("symbol"), s.get("strategy_tag"))
                 if key in existing_keys:
                     self.chartink_signals[existing_keys[key]] = s
                 else:
