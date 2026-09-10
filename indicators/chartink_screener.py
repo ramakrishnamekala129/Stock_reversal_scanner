@@ -54,11 +54,16 @@ class ChartinkSignal:
     lot_size: int = 0
     liquidity_tier: str = "Normal"
     is_most_liquid: bool = False
+    first_detected_time: str = ""
+    first_detected_price: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
+        display_ts = self.first_detected_time or self.timestamp
         return {
             "symbol": self.symbol,
-            "timestamp": self.timestamp,
+            "timestamp": display_ts,
+            "first_detected_time": display_ts,
+            "first_detected_price": round(self.first_detected_price or self.price, 2),
             "price": round(self.price, 2),
             "matched_strategies": self.matched_strategies,
             "strategy_tag": " • ".join(self.matched_strategies),
@@ -353,4 +358,90 @@ class ChartinkIntradayEngine:
             lot_size=lot_size,
             liquidity_tier=liquidity_tier,
             is_most_liquid=is_most_liquid,
+            first_detected_time=ts_str,
+            first_detected_price=c_close,
         )
+
+    def find_first_detection(
+        self,
+        symbol: str,
+        df_daily: pd.DataFrame,
+        df_today_candles: pd.DataFrame,
+        fut_symbol: str = "",
+        lot_size: int = 0,
+        turnover_cr: float = 0.0,
+        liquidity_tier: str = "Normal",
+        is_most_liquid: bool = False,
+        target_date: Optional[date] = None,
+    ) -> Optional[ChartinkSignal]:
+        """
+        Evaluates today's intraday candles (1m or 5m) chronologically to find the
+        EXACT first candle where Chartink breakout conditions were triggered.
+        Guarantees that the detected timestamp is the actual historical breakout candle time,
+        completely solving repainting.
+        """
+        if df_today_candles is None or df_today_candles.empty:
+            return None
+
+        # 1. Quick check: does the full day's aggregate candle trigger the formula?
+        c_open = float(df_today_candles.iloc[0]["open"])
+        c_high = float(df_today_candles["high"].max())
+        c_low = float(df_today_candles["low"].min())
+        c_close = float(df_today_candles.iloc[-1]["close"])
+        c_vol = int(df_today_candles["volume"].sum())
+        last_ts = df_today_candles.iloc[-1]["timestamp"]
+
+        full_day_override = {
+            "timestamp": last_ts,
+            "open": c_open,
+            "high": c_high,
+            "low": c_low,
+            "close": c_close,
+            "volume": c_vol,
+        }
+        final_sig = self.evaluate_stock(
+            symbol=symbol,
+            df_daily=df_daily,
+            today_override=full_day_override,
+            fut_symbol=fut_symbol,
+            lot_size=lot_size,
+            turnover_cr=turnover_cr,
+            liquidity_tier=liquidity_tier,
+            is_most_liquid=is_most_liquid,
+            target_date=target_date,
+        )
+        if not final_sig:
+            return None
+
+        # 2. It triggered today! Now find the earliest candle that triggered
+        first_time_str = None
+        first_px = None
+        for i in range(1, len(df_today_candles) + 1):
+            sub = df_today_candles.iloc[:i]
+            bar_ts = sub.iloc[-1]["timestamp"]
+            sub_override = {
+                "timestamp": bar_ts,
+                "open": float(sub.iloc[0]["open"]),
+                "high": float(sub["high"].max()),
+                "low": float(sub["low"].min()),
+                "close": float(sub.iloc[-1]["close"]),
+                "volume": int(sub["volume"].sum()),
+            }
+            cand_sig = self.evaluate_stock(
+                symbol=symbol,
+                df_daily=df_daily,
+                today_override=sub_override,
+                target_date=target_date,
+            )
+            if cand_sig:
+                dt_obj = pd.to_datetime(bar_ts)
+                first_time_str = dt_obj.strftime("%H:%M:%S")
+                first_px = float(sub.iloc[-1]["close"])
+                break
+
+        if first_time_str:
+            final_sig.timestamp = first_time_str
+            final_sig.first_detected_time = first_time_str
+            final_sig.first_detected_price = first_px or c_close
+
+        return final_sig

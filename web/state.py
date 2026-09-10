@@ -257,11 +257,19 @@ class WebDashboardState:
             existing_idx = None
             for idx, item in enumerate(self.chartink_signals):
                 if (item.get("symbol") == sig_dict.get("symbol")
-                    and item.get("strategy_tag") == sig_dict.get("strategy_tag")
-                    and item.get("timestamp") == sig_dict.get("timestamp")):
+                    and item.get("strategy_tag") == sig_dict.get("strategy_tag")):
                     existing_idx = idx
                     break
             if existing_idx is not None:
+                # PRESERVE first_detected_time and original timestamp (NEVER REPAINT!)
+                existing_s = self.chartink_signals[existing_idx]
+                preserved_time = existing_s.get("first_detected_time") or existing_s.get("timestamp")
+                preserved_price = existing_s.get("first_detected_price") or existing_s.get("first_price") or existing_s.get("price")
+                if preserved_time and preserved_time != "--":
+                    sig_dict["first_detected_time"] = preserved_time
+                    sig_dict["timestamp"] = preserved_time
+                if preserved_price:
+                    sig_dict["first_detected_price"] = preserved_price
                 self.chartink_signals[existing_idx] = sig_dict
             else:
                 self.chartink_signals.insert(0, sig_dict)
@@ -306,6 +314,15 @@ class WebDashboardState:
             for s in formatted:
                 key = (s.get("symbol"), s.get("strategy_tag"))
                 if key in existing_keys:
+                    # PRESERVE first_detected_time and original timestamp (NEVER REPAINT!)
+                    existing_s = self.chartink_signals[existing_keys[key]]
+                    preserved_time = existing_s.get("first_detected_time") or existing_s.get("timestamp")
+                    preserved_price = existing_s.get("first_detected_price") or existing_s.get("first_price") or existing_s.get("price")
+                    if preserved_time and preserved_time != "--":
+                        s["first_detected_time"] = preserved_time
+                        s["timestamp"] = preserved_time
+                    if preserved_price:
+                        s["first_detected_price"] = preserved_price
                     self.chartink_signals[existing_keys[key]] = s
                 else:
                     new_items.append(s)

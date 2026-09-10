@@ -216,6 +216,22 @@ class FNOIntradayScanner:
             gap_thread = threading.Thread(target=_bg_gap_reconcile, name="HistGapReconcilerThread", daemon=True)
             gap_thread.start()
 
+        # 6c. Restore today's existing Chartink breakout signals from SQLite DB
+        if self.db:
+            try:
+                today_str = datetime.now(pytz.timezone(config.MARKET_TIMEZONE)).strftime("%Y-%m-%d")
+                saved_chartink = self.db.load_chartink_signals(today_str)
+                if not saved_chartink:
+                    cur = self.db._get_connection().cursor()
+                    cur.execute("SELECT date FROM chartink_signals ORDER BY date DESC LIMIT 1")
+                    latest_d_row = cur.fetchone()
+                    if latest_d_row and latest_d_row[0]:
+                        saved_chartink = self.db.load_chartink_signals(latest_d_row[0])
+                if saved_chartink:
+                    dashboard_state.add_chartink_signals_batch(saved_chartink)
+                    logger.info(f"Restored {len(saved_chartink)} historical Chartink breakout signals from DB for {saved_chartink[0].get('date', today_str)}.")
+            except Exception as e:
+                logger.debug(f"Could not load chartink signals from DB: {e}")
 
         # 7. Display Startup Banner
         ConsoleFormatter.print_startup_banner(
@@ -509,7 +525,19 @@ class FNOIntradayScanner:
                 if hasattr(self, "db") and self.db:
                     try:
                         today_db_candles_map = self.db.get_candles_by_date(str(today_date))
-                    except Exception:
+                        # If before 09:15 AM or no candles exist for today yet, load the latest trading session
+                        if not today_db_candles_map:
+                            cur = self.db._get_connection().cursor()
+                            cur.execute("SELECT timestamp FROM candles_5m ORDER BY timestamp DESC LIMIT 1")
+                            latest_ts_row = cur.fetchone()
+                            if latest_ts_row and latest_ts_row[0]:
+                                fallback_date = str(latest_ts_row[0]).split("T")[0].split(" ")[0]
+                                today_db_candles_map = self.db.get_candles_by_date(fallback_date)
+                                if today_db_candles_map:
+                                    today_date = datetime.strptime(fallback_date, "%Y-%m-%d").date()
+                                    is_market_hours = True
+                    except Exception as e:
+                        logger.debug(f"Error querying today_db_candles_map: {e}")
                         today_db_candles_map = {}
 
                 t0 = time.time()
@@ -533,8 +561,7 @@ class FNOIntradayScanner:
                 def _chartink_worker(task):
                     sym, df, fut_sym, lot_sz, t_cr, l_tier, is_liq = task
                     try:
-                        today_override = None
-                        # Only construct live today candle if market is in session or today's candles exist
+                        df_today_candles = None
                         if is_market_hours:
                             # 1. Check if candle_engine has today's live candles
                             if hasattr(self, "candle_engine") and self.candle_engine:
@@ -542,17 +569,31 @@ class FNOIntradayScanner:
                                 if df_5m is not None and not df_5m.empty:
                                     df_today = df_5m[pd.to_datetime(df_5m["timestamp"]).dt.date == today_date]
                                     if not df_today.empty:
-                                        today_override = {
-                                            "timestamp": datetime.now(),
-                                            "open": float(df_today.iloc[0]["open"]),
-                                            "high": float(df_today["high"].max()),
-                                            "low": float(df_today["low"].min()),
-                                            "close": float(df_today.iloc[-1]["close"]),
-                                            "volume": int(df_today["volume"].sum()),
-                                        }
+                                        df_today_candles = df_today
 
-                            # 2. Fallback to live_prices if live streaming quote received today
-                            if today_override is None:
+                            # 2. Fallback to today's 5M candles from SQLite DB
+                            if df_today_candles is None and today_db_candles_map:
+                                df_db_today = today_db_candles_map.get(sym)
+                                if df_db_today is not None and not df_db_today.empty:
+                                    df_today_candles = df_db_today
+
+                        # If intraday candle history exists, determine EXACT first detection time
+                        if df_today_candles is not None and not df_today_candles.empty:
+                            sig = self.chartink_engine.find_first_detection(
+                                symbol=sym,
+                                df_daily=df,
+                                df_today_candles=df_today_candles,
+                                fut_symbol=fut_sym,
+                                lot_size=lot_sz,
+                                turnover_cr=t_cr,
+                                liquidity_tier=l_tier,
+                                is_most_liquid=is_liq,
+                                target_date=today_date,
+                            )
+                        else:
+                            # Fallback to single live streaming quote
+                            today_override = None
+                            if is_market_hours:
                                 lp = dashboard_state.live_prices.get(sym)
                                 if lp and lp.get("is_live", False) and lp.get("ltp", 0) > 0:
                                     today_override = {
@@ -561,30 +602,17 @@ class FNOIntradayScanner:
                                         "volume": int(lp.get("volume", 0)),
                                     }
 
-                            # 3. Fallback to today's official 5M broker candles from SQLite DB
-                            if today_override is None and today_db_candles_map:
-                                df_db_today = today_db_candles_map.get(sym)
-                                if df_db_today is not None and not df_db_today.empty:
-                                    today_override = {
-                                        "timestamp": datetime.now(),
-                                        "open": float(df_db_today.iloc[0]["open"]),
-                                        "high": float(df_db_today["high"].max()),
-                                        "low": float(df_db_today["low"].min()),
-                                        "close": float(df_db_today.iloc[-1]["close"]),
-                                        "volume": int(df_db_today["volume"].sum()),
-                                    }
-
-                        sig = self.chartink_engine.evaluate_stock(
-                            symbol=sym,
-                            df_daily=df,
-                            today_override=today_override,
-                            fut_symbol=fut_sym,
-                            lot_size=lot_sz,
-                            turnover_cr=t_cr,
-                            liquidity_tier=l_tier,
-                            is_most_liquid=is_liq,
-                            target_date=today_date,
-                        )
+                            sig = self.chartink_engine.evaluate_stock(
+                                symbol=sym,
+                                df_daily=df,
+                                today_override=today_override,
+                                fut_symbol=fut_sym,
+                                lot_size=lot_sz,
+                                turnover_cr=t_cr,
+                                liquidity_tier=l_tier,
+                                is_most_liquid=is_liq,
+                                target_date=today_date,
+                            )
                         return sig
                     except Exception as ex:
                         logger.warning(f"Chartink eval error for {sym}: {ex}")
@@ -596,6 +624,11 @@ class FNOIntradayScanner:
 
                 valid_signals = [s.to_dict() for s in raw_signals if s is not None]
                 dashboard_state.add_chartink_signals_batch(valid_signals)
+                if valid_signals and hasattr(self, "db") and self.db:
+                    try:
+                        self.db.save_chartink_signals_batch(valid_signals, str(today_date))
+                    except Exception as ex:
+                        logger.debug(f"Error persisting chartink signals to DB: {ex}")
                 elapsed = time.time() - t0
                 if valid_signals:
                     logger.info(f"Chartink scan complete: Evaluated {len(tasks)} stocks in {elapsed:.2f}s! Found {len(valid_signals)} breakout candidates.")

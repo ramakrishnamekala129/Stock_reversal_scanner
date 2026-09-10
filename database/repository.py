@@ -151,21 +151,31 @@ class DatabaseRepository:
                     UNIQUE(symbol, timestamp, pattern)
                 )
             """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_sym ON scanner_signals(symbol)")
-
-            # Safe migrations for existing SQLite database
-            for col_def in [
-                ("candle_high", "REAL"),
-                ("candle_low", "REAL"),
-                ("trigger_status", "TEXT DEFAULT 'PENDING'"),
-                ("trigger_time", "TEXT"),
-                ("trigger_price", "REAL"),
-                ("timeframe", "TEXT DEFAULT '5m'"),
-            ]:
-                try:
-                    conn.execute(f"ALTER TABLE scanner_signals ADD COLUMN {col_def[0]} {col_def[1]}")
-                except Exception:
-                    pass
+            # 5. chartink_signals table (persistent, non-repainting storage)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS chartink_signals (
+                    date TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    strategy_tag TEXT NOT NULL,
+                    first_detected_time TEXT NOT NULL,
+                    first_detected_price REAL NOT NULL,
+                    current_price REAL NOT NULL,
+                    primary_strategy TEXT,
+                    turnover_cr REAL,
+                    rsi_14 REAL,
+                    ma_crossed_str TEXT,
+                    vol_surge_ratio REAL,
+                    reasons_str TEXT,
+                    median_pivot_diff_pct REAL,
+                    fut_symbol TEXT,
+                    lot_size INTEGER,
+                    liquidity_tier TEXT,
+                    is_most_liquid INTEGER,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (date, symbol, strategy_tag)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_chartink_date ON chartink_signals(date)")
 
     def save_candle(self, candle_dict: Dict[str, Any]):
         """Persists or updates a 5-minute candle."""
@@ -485,4 +495,103 @@ class DatabaseRepository:
             return [json.loads(r["raw_json"]) for r in rows]
         except Exception as e:
             logger.debug(f"Error loading instruments from DB: {e}")
+            return []
+
+    def save_chartink_signals_batch(self, signals: List[Dict[str, Any]], date_str: str) -> int:
+        """
+        Persists Chartink breakout signals into SQLite DB.
+        Crucial: ON CONFLICT(date, symbol, strategy_tag) DO UPDATE preserves first_detected_time
+        and first_detected_price permanently so signals NEVER repaint!
+        """
+        if not signals:
+            return 0
+        conn = self._get_connection()
+        query = """
+            INSERT INTO chartink_signals (
+                date, symbol, strategy_tag, first_detected_time, first_detected_price,
+                current_price, primary_strategy, turnover_cr, rsi_14, ma_crossed_str,
+                vol_surge_ratio, reasons_str, median_pivot_diff_pct, fut_symbol,
+                lot_size, liquidity_tier, is_most_liquid
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(date, symbol, strategy_tag) DO UPDATE SET
+                current_price = excluded.current_price,
+                turnover_cr = excluded.turnover_cr,
+                rsi_14 = excluded.rsi_14,
+                ma_crossed_str = excluded.ma_crossed_str,
+                vol_surge_ratio = excluded.vol_surge_ratio,
+                reasons_str = excluded.reasons_str,
+                median_pivot_diff_pct = excluded.median_pivot_diff_pct
+        """
+        rows = []
+        for s in signals:
+            f_time = s.get("first_detected_time") or s.get("timestamp") or ""
+            f_px = float(s.get("first_detected_price") or s.get("price") or 0.0)
+            rows.append((
+                str(date_str),
+                str(s.get("symbol", "")),
+                str(s.get("strategy_tag", "")),
+                str(f_time),
+                f_px,
+                float(s.get("price", 0.0)),
+                str(s.get("primary_strategy", "")),
+                float(s.get("turnover_cr", 0.0)),
+                float(s.get("rsi_14", 0.0)),
+                str(s.get("ma_crossed_str", "--")),
+                float(s.get("vol_surge_ratio", 1.0)),
+                str(s.get("reasons_str", "--")),
+                float(s.get("median_pivot_diff_pct", 0.0)),
+                str(s.get("fut_symbol", "")),
+                int(s.get("lot_size", 0)),
+                str(s.get("liquidity_tier", "Normal")),
+                1 if s.get("is_most_liquid") else 0,
+            ))
+        try:
+            with conn:
+                conn.executemany(query, rows)
+            return len(rows)
+        except Exception as e:
+            logger.error(f"Failed to batch save chartink signals to DB: {e}")
+            return 0
+
+    def load_chartink_signals(self, date_str: str) -> List[Dict[str, Any]]:
+        """Loads all Chartink breakout signals for a specific date, ordered by first_detected_time ASC."""
+        conn = self._get_connection()
+        query = """
+            SELECT date, symbol, strategy_tag, first_detected_time, first_detected_price,
+                   current_price, primary_strategy, turnover_cr, rsi_14, ma_crossed_str,
+                   vol_surge_ratio, reasons_str, median_pivot_diff_pct, fut_symbol,
+                   lot_size, liquidity_tier, is_most_liquid
+            FROM chartink_signals
+            WHERE date = ?
+            ORDER BY first_detected_time ASC
+        """
+        try:
+            cur = conn.cursor()
+            cur.execute(query, (str(date_str),))
+            rows = cur.fetchall()
+            results = []
+            for r in rows:
+                results.append({
+                    "date": r["date"],
+                    "symbol": r["symbol"],
+                    "timestamp": r["first_detected_time"],
+                    "first_detected_time": r["first_detected_time"],
+                    "first_detected_price": r["first_detected_price"],
+                    "price": r["current_price"],
+                    "strategy_tag": r["strategy_tag"],
+                    "primary_strategy": r["primary_strategy"],
+                    "turnover_cr": r["turnover_cr"],
+                    "rsi_14": r["rsi_14"],
+                    "ma_crossed_str": r["ma_crossed_str"],
+                    "vol_surge_ratio": r["vol_surge_ratio"],
+                    "reasons_str": r["reasons_str"],
+                    "median_pivot_diff_pct": r["median_pivot_diff_pct"],
+                    "fut_symbol": r["fut_symbol"],
+                    "lot_size": r["lot_size"],
+                    "liquidity_tier": r["liquidity_tier"],
+                    "is_most_liquid": bool(r["is_most_liquid"]),
+                })
+            return results
+        except Exception as e:
+            logger.debug(f"Error loading chartink signals from DB: {e}")
             return []
