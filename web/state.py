@@ -236,7 +236,10 @@ class WebDashboardState:
 
     def add_chartink_signal(self, signal: Any):
         """Appends or updates a Chartink intraday breakout signal and broadcasts to WebSockets."""
+        today_str = datetime.now(IST_TZ).strftime("%Y-%m-%d")
         sig_dict = signal.to_dict() if hasattr(signal, "to_dict") else dict(signal)
+        if not sig_dict.get("date"):
+            sig_dict["date"] = today_str
         ts_val = sig_dict.get("timestamp")
         if isinstance(ts_val, datetime):
             if ts_val.tzinfo is None:
@@ -254,6 +257,8 @@ class WebDashboardState:
                 pass
 
         with self._lock:
+            # Strictly maintain only today's signals
+            self.chartink_signals = [s for s in self.chartink_signals if s.get("date") == today_str]
             existing_idx = None
             for idx, item in enumerate(self.chartink_signals):
                 if (item.get("symbol") == sig_dict.get("symbol")
@@ -281,13 +286,14 @@ class WebDashboardState:
             "data": sig_dict,
         })
 
-    def add_chartink_signals_batch(self, signals: List[Any]):
-        """Batch-updates Chartink intraday breakout signals under atomic lock."""
-        if not signals:
-            return
+    def add_chartink_signals_batch(self, signals: List[Any], target_date: Optional[str] = None):
+        """Batch-updates Chartink intraday breakout signals under atomic lock, strictly maintaining today's session."""
+        today_str = target_date or datetime.now(IST_TZ).strftime("%Y-%m-%d")
         formatted = []
         for signal in signals:
             sig_dict = signal.to_dict() if hasattr(signal, "to_dict") else dict(signal)
+            if not sig_dict.get("date"):
+                sig_dict["date"] = today_str
             ts_val = sig_dict.get("timestamp")
             if isinstance(ts_val, datetime):
                 if ts_val.tzinfo is None:
@@ -306,6 +312,8 @@ class WebDashboardState:
             formatted.append(sig_dict)
 
         with self._lock:
+            # Strictly filter to only keep signals belonging to today_str
+            self.chartink_signals = [s for s in self.chartink_signals if s.get("date") == today_str]
             existing_keys = {
                 (s.get("symbol"), s.get("strategy_tag")): idx
                 for idx, s in enumerate(self.chartink_signals)
@@ -334,7 +342,7 @@ class WebDashboardState:
 
         self._broadcast({
             "type": "BATCH_CHARTINK_SIGNALS",
-            "count": len(formatted),
+            "count": len(self.chartink_signals),
         })
 
     def update_signal_trigger(self, symbol: str, timestamp: str, pattern: str, new_status: str, trigger_time: str = ""):
@@ -473,11 +481,12 @@ class WebDashboardState:
                 self._cached_market_data = market_data
                 self._cached_market_version = self.price_version
 
+            today_str = datetime.now(IST_TZ).strftime("%Y-%m-%d")
             return {
                 "market": self._cached_market_data,
                 "signals": list(self.signals),
                 "hema_signals": list(self.hema_signals),
-                "chartink_signals": list(self.chartink_signals),
+                "chartink_signals": [s for s in self.chartink_signals if s.get("date") == today_str],
                 "stats": dict(self.stats),
                 "price_version": self.price_version,
             }

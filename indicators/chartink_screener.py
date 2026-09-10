@@ -56,11 +56,13 @@ class ChartinkSignal:
     is_most_liquid: bool = False
     first_detected_time: str = ""
     first_detected_price: float = 0.0
+    date: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         display_ts = self.first_detected_time or self.timestamp
         return {
             "symbol": self.symbol,
+            "date": self.date,
             "timestamp": display_ts,
             "first_detected_time": display_ts,
             "first_detected_price": round(self.first_detected_price or self.price, 2),
@@ -342,6 +344,11 @@ class ChartinkIntradayEngine:
         else:
             ts_str = datetime.now().strftime("%H:%M:%S")
 
+        calc_date_str = str(target_date) if target_date else (
+            t_val.strftime("%Y-%m-%d") if isinstance(t_val, (pd.Timestamp, datetime))
+            else datetime.now().strftime("%Y-%m-%d")
+        )
+
         return ChartinkSignal(
             symbol=symbol,
             timestamp=ts_str,
@@ -360,6 +367,7 @@ class ChartinkIntradayEngine:
             is_most_liquid=is_most_liquid,
             first_detected_time=ts_str,
             first_detected_price=c_close,
+            date=calc_date_str,
         )
 
     def find_first_detection(
@@ -443,5 +451,7 @@ class ChartinkIntradayEngine:
             final_sig.timestamp = first_time_str
             final_sig.first_detected_time = first_time_str
             final_sig.first_detected_price = first_px or c_close
+
+        final_sig.date = str(target_date) if target_date else datetime.now().strftime("%Y-%m-%d")
 
         return final_sig

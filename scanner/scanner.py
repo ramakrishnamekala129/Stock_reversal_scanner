@@ -216,20 +216,14 @@ class FNOIntradayScanner:
             gap_thread = threading.Thread(target=_bg_gap_reconcile, name="HistGapReconcilerThread", daemon=True)
             gap_thread.start()
 
-        # 6c. Restore today's existing Chartink breakout signals from SQLite DB
+        # 6c. Restore today's existing Chartink breakout signals from SQLite DB (Strictly Today Only)
         if self.db:
             try:
                 today_str = datetime.now(pytz.timezone(config.MARKET_TIMEZONE)).strftime("%Y-%m-%d")
                 saved_chartink = self.db.load_chartink_signals(today_str)
-                if not saved_chartink:
-                    cur = self.db._get_connection().cursor()
-                    cur.execute("SELECT date FROM chartink_signals ORDER BY date DESC LIMIT 1")
-                    latest_d_row = cur.fetchone()
-                    if latest_d_row and latest_d_row[0]:
-                        saved_chartink = self.db.load_chartink_signals(latest_d_row[0])
                 if saved_chartink:
                     dashboard_state.add_chartink_signals_batch(saved_chartink)
-                    logger.info(f"Restored {len(saved_chartink)} historical Chartink breakout signals from DB for {saved_chartink[0].get('date', today_str)}.")
+                    logger.info(f"Restored {len(saved_chartink)} historical Chartink breakout signals from DB for today ({today_str}).")
             except Exception as e:
                 logger.debug(f"Could not load chartink signals from DB: {e}")
 
@@ -525,17 +519,6 @@ class FNOIntradayScanner:
                 if hasattr(self, "db") and self.db:
                     try:
                         today_db_candles_map = self.db.get_candles_by_date(str(today_date))
-                        # If before 09:15 AM or no candles exist for today yet, load the latest trading session
-                        if not today_db_candles_map:
-                            cur = self.db._get_connection().cursor()
-                            cur.execute("SELECT timestamp FROM candles_5m ORDER BY timestamp DESC LIMIT 1")
-                            latest_ts_row = cur.fetchone()
-                            if latest_ts_row and latest_ts_row[0]:
-                                fallback_date = str(latest_ts_row[0]).split("T")[0].split(" ")[0]
-                                today_db_candles_map = self.db.get_candles_by_date(fallback_date)
-                                if today_db_candles_map:
-                                    today_date = datetime.strptime(fallback_date, "%Y-%m-%d").date()
-                                    is_market_hours = True
                     except Exception as e:
                         logger.debug(f"Error querying today_db_candles_map: {e}")
                         today_db_candles_map = {}
@@ -623,7 +606,7 @@ class FNOIntradayScanner:
                     raw_signals = list(executor.map(_chartink_worker, tasks))
 
                 valid_signals = [s.to_dict() for s in raw_signals if s is not None]
-                dashboard_state.add_chartink_signals_batch(valid_signals)
+                dashboard_state.add_chartink_signals_batch(valid_signals, target_date=str(today_date))
                 if valid_signals and hasattr(self, "db") and self.db:
                     try:
                         self.db.save_chartink_signals_batch(valid_signals, str(today_date))
