@@ -155,47 +155,50 @@ class HistoricalDataLoader:
             headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
             async def _fetch_all_daily():
-                rate_limiter = AsyncUpstoxRateLimiter(config.UPSTOX_RATE_LIMIT_PER_SEC)
+                rate_limiter = AsyncUpstoxRateLimiter(min(config.UPSTOX_RATE_LIMIT_PER_SEC, 15.0), 15.0)
+                sem = asyncio.Semaphore(15)
                 from_date_str = (date.today() - timedelta(days=35)).isoformat()
                 async with httpx.AsyncClient(
                     headers=headers,
                     timeout=12.0,
-                    limits=httpx.Limits(max_connections=50, max_keepalive_connections=25),
+                    limits=httpx.Limits(max_connections=30, max_keepalive_connections=15),
                 ) as client:
                     async def _fetch_one(sym: str, item: Dict[str, Any]):
                         inst_key = item["instrument_key"]
                         encoded_key = urllib.parse.quote(inst_key)
                         url = f"https://api.upstox.com/v2/historical-candle/{encoded_key}/day/{today_str}/{from_date_str}"
                         for attempt in range(config.API_RETRY_ATTEMPTS):
-                            await rate_limiter.acquire()
-                            try:
-                                resp = await client.get(url)
-                                if resp.status_code == 200:
-                                    data = resp.json()
-                                    daily_candles = data.get("data", {}).get("candles", [])
-                                    for candle in daily_candles:
-                                        candle_date = candle[0].split("T")[0]
-                                        if candle_date < today_str:
-                                            return (sym, PreviousDayOHLCV(
-                                                symbol=sym,
-                                                instrument_key=inst_key,
-                                                date=candle_date,
-                                                open=float(candle[1]),
-                                                high=float(candle[2]),
-                                                low=float(candle[3]),
-                                                close=float(candle[4]),
-                                                volume=int(candle[5]),
-                                            ))
-                                    return (sym, None)
-                                elif resp.status_code == 429:
-                                    retry_after = float(resp.headers.get("Retry-After", config.API_RETRY_BACKOFF_BASE * (2 ** attempt)))
-                                    logger.warning(f"Upstox 429 Rate limit on {sym}, backing off for {retry_after:.1f}s...")
-                                    await asyncio.sleep(retry_after)
-                                else:
-                                    break
-                            except Exception as e:
-                                logger.debug(f"Attempt {attempt+1} daily fetch error for {sym}: {e}")
-                                await asyncio.sleep(config.API_RETRY_BACKOFF_BASE * (attempt + 1))
+                            async with sem:
+                                await rate_limiter.acquire()
+                                try:
+                                    resp = await client.get(url)
+                                    if resp.status_code == 200:
+                                        data = resp.json()
+                                        daily_candles = data.get("data", {}).get("candles", [])
+                                        for candle in daily_candles:
+                                            candle_date = candle[0].split("T")[0]
+                                            if candle_date < today_str:
+                                                return (sym, PreviousDayOHLCV(
+                                                    symbol=sym,
+                                                    instrument_key=inst_key,
+                                                    date=candle_date,
+                                                    open=float(candle[1]),
+                                                    high=float(candle[2]),
+                                                    low=float(candle[3]),
+                                                    close=float(candle[4]),
+                                                    volume=int(candle[5]),
+                                                ))
+                                        return (sym, None)
+                                    elif resp.status_code == 429:
+                                        raw_retry = float(resp.headers.get("Retry-After", config.API_RETRY_BACKOFF_BASE * (2 ** attempt)))
+                                        retry_after = min(max(raw_retry, 1.0), 3.0)  # Safe cap to max 3s, NEVER hang for 600s!
+                                        logger.warning(f"Upstox 429 Rate limit on {sym} (header: {raw_retry:.0f}s), pacing for {retry_after:.1f}s...")
+                                        await asyncio.sleep(retry_after)
+                                    else:
+                                        break
+                                except Exception as e:
+                                    logger.debug(f"Attempt {attempt+1} daily fetch error for {sym}: {e}")
+                                    await asyncio.sleep(config.API_RETRY_BACKOFF_BASE * (attempt + 1))
                         return (sym, None)
 
                     tasks = [_fetch_one(sym, item) for sym, item in missing_universe.items()]
@@ -495,47 +498,67 @@ class HistoricalDataLoader:
     ) -> Dict[str, pd.DataFrame]:
         """
         Fetches the latest official broker-side candles (3m, 5m, 15m) for all universe stocks in parallel using asyncio.
-        Enforces Upstox 25 req/sec rate limit with automatic exponential backoff.
+        Enforces Upstox rate limit with safe 429 backoff and in-memory 1m caching.
         """
-        token = self.rest_client.access_token
-        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        now_ts = time.time()
         results: Dict[str, pd.DataFrame] = {}
 
+        # 1. First check if fresh 1m candles are already in memory (< 45s old)
+        needed_universe = {}
+        for sym, item in universe.items():
+            cached_entry = self._raw_1m_cache.get(sym)
+            if cached_entry and (now_ts - cached_entry[1] < 45.0):
+                df = self._process_raw_1m_to_5m(cached_entry[0], timeframe=timeframe)
+                if df is not None and not df.empty:
+                    results[sym] = df
+                    continue
+            needed_universe[sym] = item
+
+        if not needed_universe:
+            logger.debug(f"Instantly resampled {len(results)}/{len(universe)} symbols for {timeframe} from fresh in-memory 1m candle cache.")
+            return results
+
+        token = self.rest_client.access_token
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
         async def _fetch_all_async():
-            rate_limiter = AsyncUpstoxRateLimiter(config.UPSTOX_RATE_LIMIT_PER_SEC)
+            rate_limiter = AsyncUpstoxRateLimiter(min(config.UPSTOX_RATE_LIMIT_PER_SEC, 15.0), 15.0)
+            sem = asyncio.Semaphore(15)
             async with httpx.AsyncClient(
                 headers=headers,
                 timeout=10.0,
-                limits=httpx.Limits(max_connections=100, max_keepalive_connections=50),
+                limits=httpx.Limits(max_connections=30, max_keepalive_connections=15),
             ) as client:
                 async def _fetch_one(sym: str, item: Dict[str, Any]):
                     inst_key = item["instrument_key"]
                     url = f"https://api.upstox.com/v2/historical-candle/intraday/{inst_key}/1minute"
                     for attempt in range(config.API_RETRY_ATTEMPTS):
-                        await rate_limiter.acquire()
-                        try:
-                            resp = await client.get(url)
-                            if resp.status_code == 200:
-                                data = resp.json()
-                                candles = data.get("data", {}).get("candles", [])
-                                if candles:
-                                    self._raw_1m_cache[sym] = (candles, time.time())
-                                df = self._process_raw_1m_to_5m(candles, timeframe=timeframe)
-                                if df is not None and not df.empty:
-                                    return (sym, df)
-                                return (sym, None)
-                            elif resp.status_code == 429:
-                                retry_after = float(resp.headers.get("Retry-After", config.API_RETRY_BACKOFF_BASE * (2 ** attempt)))
-                                logger.warning(f"Upstox 429 on {sym}, backing off for {retry_after:.1f}s...")
-                                await asyncio.sleep(retry_after)
-                            else:
-                                break
-                        except Exception as e:
-                            logger.debug(f"Attempt {attempt+1} async fetch failed for {sym}: {e}")
-                            await asyncio.sleep(config.API_RETRY_BACKOFF_BASE * (attempt + 1))
+                        async with sem:
+                            await rate_limiter.acquire()
+                            try:
+                                resp = await client.get(url)
+                                if resp.status_code == 200:
+                                    data = resp.json()
+                                    candles = data.get("data", {}).get("candles", [])
+                                    if candles:
+                                        self._raw_1m_cache[sym] = (candles, time.time())
+                                    df = self._process_raw_1m_to_5m(candles, timeframe=timeframe)
+                                    if df is not None and not df.empty:
+                                        return (sym, df)
+                                    return (sym, None)
+                                elif resp.status_code == 429:
+                                    raw_retry = float(resp.headers.get("Retry-After", config.API_RETRY_BACKOFF_BASE * (2 ** attempt)))
+                                    retry_after = min(max(raw_retry, 1.0), 3.0)  # Safe cap to max 3s, NEVER hang for 600s!
+                                    logger.warning(f"Upstox 429 on {sym} (header: {raw_retry:.0f}s), pacing for {retry_after:.1f}s...")
+                                    await asyncio.sleep(retry_after)
+                                else:
+                                    break
+                            except Exception as e:
+                                logger.debug(f"Attempt {attempt+1} async fetch failed for {sym}: {e}")
+                                await asyncio.sleep(config.API_RETRY_BACKOFF_BASE * (attempt + 1))
                     return (sym, None)
 
-                tasks = [_fetch_one(sym, item) for sym, item in universe.items()]
+                tasks = [_fetch_one(sym, item) for sym, item in needed_universe.items()]
                 res_list = await asyncio.gather(*tasks)
                 for sym, df in res_list:
                     if df is not None:
@@ -787,4 +810,86 @@ class HistoricalDataLoader:
         except Exception as e:
             logger.error(f"Error in ensure_historical_candles_complete: {e}", exc_info=True)
             return {}
+
+    def ensure_daily_candles_for_universe(
+        self,
+        universe: Dict[str, Dict[str, Any]],
+        force_refresh: bool = False,
+    ) -> int:
+        """
+        Ensures all symbols in universe have multi-month daily candles in HistoricalCandleDatabase.
+        Downloads missing symbols asynchronously with safe concurrency and rate limiting.
+        Returns number of newly cached symbols.
+        """
+        cached_map = self.hist_db.get_all_daily_candles_map()
+        missing = {s: info for s, info in universe.items() if s not in cached_map or len(cached_map[s]) < 15}
+        if not missing and not force_refresh:
+            return 0
+
+        target_symbols = universe if force_refresh else missing
+        token = self.rest_client.access_token
+        if not token:
+            logger.warning("No Upstox token available to download daily candles.")
+            return 0
+
+        logger.info(f"Downloading daily candles for {len(target_symbols)} symbols...")
+        today_str = date.today().isoformat()
+        from_date_str = "2024-01-01"
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+        results_raw: Dict[str, List[Any]] = {}
+
+        async def _fetch_all_daily_bulk():
+            sem = asyncio.Semaphore(12)
+            rate_limiter = AsyncUpstoxRateLimiter(min(config.UPSTOX_RATE_LIMIT_PER_SEC, 12.0), 12.0)
+            async with httpx.AsyncClient(headers=headers, timeout=12.0, limits=httpx.Limits(max_connections=20, max_keepalive_connections=10)) as client:
+                async def _fetch_sym(sym: str, item: Dict[str, Any]):
+                    key = item.get("instrument_key", "")
+                    if not key:
+                        return
+                    encoded = urllib.parse.quote(key)
+                    url = f"https://api.upstox.com/v2/historical-candle/{encoded}/day/{today_str}/{from_date_str}"
+                    for attempt in range(3):
+                        async with sem:
+                            await rate_limiter.acquire()
+                            try:
+                                resp = await client.get(url)
+                                if resp.status_code == 200:
+                                    data = resp.json().get("data", {}).get("candles", [])
+                                    if data:
+                                        results_raw[sym] = data
+                                    return
+                                elif resp.status_code == 429:
+                                    raw_retry = float(resp.headers.get("Retry-After", 2.0))
+                                    backoff = min(max(raw_retry, 1.0), 3.0)
+                                    logger.warning(f"429 rate limit on {sym}, pacing {backoff:.1f}s...")
+                                    await asyncio.sleep(backoff)
+                                else:
+                                    break
+                            except Exception as ex:
+                                logger.debug(f"Daily fetch error for {sym}: {ex}")
+                                await asyncio.sleep(0.5)
+
+                tasks = [_fetch_sym(s, itm) for s, itm in target_symbols.items()]
+                await asyncio.gather(*tasks)
+
+        try:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    pool.submit(asyncio.run, _fetch_all_daily_bulk()).result()
+            else:
+                asyncio.run(_fetch_all_daily_bulk())
+        except Exception as e:
+            logger.warning(f"Async bulk daily candles fetch error: {e}")
+
+        if results_raw:
+            self.hist_db.save_all_daily_candles_bulk(results_raw)
+            logger.info(f"Successfully cached daily candles for {len(results_raw)} symbols into SQLite DB.")
+            return len(results_raw)
+        return 0
+
 

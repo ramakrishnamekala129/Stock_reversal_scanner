@@ -82,12 +82,19 @@ class FNOIntradayScanner:
 
     def _load_daily_candles_cache(self):
         """Loads daily candles cache from SQLite database for ultra-fast, sub-second Chartink screening."""
-        if self._daily_cache_loaded and self._daily_dfs_cache:
-            return
         try:
-            t0 = time.time()
             from database.historical_db import HistoricalCandleDatabase
             hist_db = HistoricalCandleDatabase()
+
+            # If cache already loaded, verify it covers active universe
+            if self._daily_cache_loaded and self._daily_dfs_cache:
+                if not hasattr(self, "_universe") or not self._universe:
+                    return
+                missing_in_mem = [s for s in self._universe if s not in self._daily_dfs_cache]
+                if not missing_in_mem:
+                    return
+
+            t0 = time.time()
             dfs = hist_db.get_all_daily_candles_map()
 
             # If SQLite DB is empty, auto-seed from JSON cache if present
@@ -98,6 +105,14 @@ class FNOIntradayScanner:
                     with open(cache_path, "r", encoding="utf-8") as f:
                         data = json.load(f)
                     hist_db.save_all_daily_candles_bulk(data)
+                    dfs = hist_db.get_all_daily_candles_map()
+
+            # Check if active universe has symbols missing from SQLite DB
+            if hasattr(self, "_universe") and self._universe and hasattr(self, "hist_loader") and self.hist_loader:
+                missing = [s for s in self._universe if s not in dfs or len(dfs[s]) < 15]
+                if missing:
+                    logger.info(f"Ensuring daily candles for {len(missing)} stocks in universe '{self.universe_name}'...")
+                    self.hist_loader.ensure_daily_candles_for_universe(self._universe)
                     dfs = hist_db.get_all_daily_candles_map()
 
             if dfs:
