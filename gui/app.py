@@ -335,7 +335,38 @@ class ScannerTkinterGUI:
         ctrl_box = tk.Frame(header_frame, bg=BG_DARK)
         ctrl_box.pack(side=tk.RIGHT)
 
-        # Mode Indicator / Switcher: Futures (Default) vs Spot Equity
+        # Universe Selector: F&O (210 Option Stocks), Nifty 250, Nifty 500
+        tk.Label(
+            ctrl_box,
+            text="Universe:",
+            font=("Segoe UI", 9, "bold"),
+            fg=TEXT_MUTED,
+            bg=BG_DARK,
+        ).pack(side=tk.LEFT, padx=(0, 4))
+
+        init_univ = getattr(self.scanner, "universe_name", "FNO") if self.scanner else "FNO"
+        univ_display_map = {
+            "FNO": "🔥 F&O Option Stocks (210)",
+            "NIFTY250": "🏛️ Nifty 250 (LargeMidcap)",
+            "NIFTY500": "🌐 Nifty 500 (Broad Market)",
+        }
+        self.universe_var = tk.StringVar(value=univ_display_map.get(init_univ.upper(), "🔥 F&O Option Stocks (210)"))
+        self.universe_combo = ttk.Combobox(
+            ctrl_box,
+            textvariable=self.universe_var,
+            values=[
+                "🔥 F&O Option Stocks (210)",
+                "🏛️ Nifty 250 (LargeMidcap)",
+                "🌐 Nifty 500 (Broad Market)",
+            ],
+            state="readonly",
+            width=25,
+            font=("Segoe UI", 9, "bold"),
+        )
+        self.universe_combo.pack(side=tk.LEFT, padx=(0, 10))
+        self.universe_combo.bind("<<ComboboxSelected>>", self._on_universe_changed)
+
+        # Mode Indicator / Switcher: Futures vs Options vs Spot Equity
         tk.Label(
             ctrl_box,
             text="Mode:",
@@ -345,11 +376,20 @@ class ScannerTkinterGUI:
         ).pack(side=tk.LEFT, padx=(0, 4))
 
         init_mode = getattr(self.scanner, "market_mode", config.DEFAULT_MARKET_MODE) if self.scanner else config.DEFAULT_MARKET_MODE
-        self.market_mode_var = tk.StringVar(value=f"⚡ {init_mode.upper()} (Nearest FUT)" if init_mode.upper() == "FUTURES" else "📈 SPOT (Cash EQ)")
+        mode_display_map = {
+            "FUTURES": "⚡ FUTURES (Nearest FUT)",
+            "OPTIONS": "🎯 OPTIONS (ATM CE/PE)",
+            "SPOT": "📈 SPOT (Cash EQ)",
+        }
+        self.market_mode_var = tk.StringVar(value=mode_display_map.get(init_mode.upper(), "⚡ FUTURES (Nearest FUT)"))
         self.mode_combo = ttk.Combobox(
             ctrl_box,
             textvariable=self.market_mode_var,
-            values=["⚡ FUTURES (Nearest FUT)", "📈 SPOT (Cash EQ)"],
+            values=[
+                "⚡ FUTURES (Nearest FUT)",
+                "🎯 OPTIONS (ATM CE/PE)",
+                "📈 SPOT (Cash EQ)",
+            ],
             state="readonly",
             width=23,
             font=("Segoe UI", 9, "bold"),
@@ -1693,9 +1733,17 @@ class ScannerTkinterGUI:
             messagebox.showerror("Export Failed", f"Could not export CSV: {e}")
 
     def _on_market_mode_changed(self, event=None):
-        """Switches active scanner mode between Nearest Future contracts and Spot Equity."""
+        """Switches active scanner mode between Nearest Future contracts, ATM Options, and Spot Equity."""
         selected_val = self.market_mode_var.get()
-        new_mode = "SPOT" if "SPOT" in selected_val else "FUTURES"
+        if "OPTIONS" in selected_val:
+            new_mode = "OPTIONS"
+            mode_title = "ATM Options (Call / Put Contracts)"
+        elif "SPOT" in selected_val:
+            new_mode = "SPOT"
+            mode_title = "Spot Equity (Cash EQ)"
+        else:
+            new_mode = "FUTURES"
+            mode_title = "Nearest Futures Contract (FUT)"
         
         if not self.scanner:
             return
@@ -1703,28 +1751,79 @@ class ScannerTkinterGUI:
         if self.scanner.market_mode == new_mode:
             return
 
-        mode_title = "Nearest Futures Contract (FUT)" if new_mode == "FUTURES" else "Spot Equity (Cash EQ)"
         confirm = messagebox.askyesno(
             "Switch Market Mode",
-            f"Switch scanner universe and OHLCV levels to {mode_title}?\n\n"
-            f"The scanner will refresh pivot calculations and subscribe to the {new_mode} instruments.",
+            f"Switch scanner mode to {mode_title}?\n\n"
+            f"The scanner will refresh calculations and subscribe to {new_mode} mode.",
         )
         if not confirm:
-            # Revert combo selection
             cur = self.scanner.market_mode
-            self.market_mode_var.set(f"⚡ {cur.upper()} (Nearest FUT)" if cur == "FUTURES" else "📈 SPOT (Cash EQ)")
+            display_map = {
+                "FUTURES": "⚡ FUTURES (Nearest FUT)",
+                "OPTIONS": "🎯 OPTIONS (ATM CE/PE)",
+                "SPOT": "📈 SPOT (Cash EQ)",
+            }
+            self.market_mode_var.set(display_map.get(cur, "⚡ FUTURES (Nearest FUT)"))
             return
 
-        # Perform mode switch in background thread
         def _do_switch():
             try:
                 self.scanner.startup(force_refresh=False, mode=new_mode)
                 self.chart_dirty = True
                 self.market_dirty = True
+                self.chartink_dirty = True
+                self.hema_dirty = True
                 if hasattr(self, "chart_frame") and self.chart_frame:
                     self.chart_frame.redraw_chart()
             except Exception as ex:
                 logger.error(f"Error switching market mode to {new_mode}: {ex}")
+
+        threading.Thread(target=_do_switch, daemon=True).start()
+
+    def _on_universe_changed(self, event=None):
+        """Switches active stock universe between F&O (210), Nifty 250, and Nifty 500."""
+        selected_val = self.universe_var.get()
+        if "500" in selected_val:
+            new_univ = "NIFTY500"
+            univ_title = "NIFTY 500 (Broad Market 500 Stocks)"
+        elif "250" in selected_val:
+            new_univ = "NIFTY250"
+            univ_title = "NIFTY 250 (LargeMidcap 250 Stocks)"
+        else:
+            new_univ = "FNO"
+            univ_title = "F&O Universe (210 Optionable Stocks)"
+
+        if not self.scanner:
+            return
+        if getattr(self.scanner, "universe_name", "FNO") == new_univ:
+            return
+
+        confirm = messagebox.askyesno(
+            "Switch Stock Universe",
+            f"Switch stock universe to {univ_title}?\n\n"
+            f"The scanner will load the {new_univ} universe, compute pivot levels, and stream real-time quotes.",
+        )
+        if not confirm:
+            cur = getattr(self.scanner, "universe_name", "FNO")
+            display_map = {
+                "FNO": "🔥 F&O Option Stocks (210)",
+                "NIFTY250": "🏛️ Nifty 250 (LargeMidcap)",
+                "NIFTY500": "🌐 Nifty 500 (Broad Market)",
+            }
+            self.universe_var.set(display_map.get(cur, "🔥 F&O Option Stocks (210)"))
+            return
+
+        def _do_switch():
+            try:
+                self.scanner.startup(force_refresh=False, universe=new_univ)
+                self.chart_dirty = True
+                self.market_dirty = True
+                self.chartink_dirty = True
+                self.hema_dirty = True
+                if hasattr(self, "chart_frame") and self.chart_frame:
+                    self.chart_frame.redraw_chart()
+            except Exception as ex:
+                logger.error(f"Error switching universe to {new_univ}: {ex}")
 
         threading.Thread(target=_do_switch, daemon=True).start()
 
@@ -1877,11 +1976,12 @@ class ScannerTkinterGUI:
             ("time", "Time", 75, "center"),
             ("symbol", "Symbol", 90, "w"),
             ("tf", "TF", 55, "center"),
-            ("signal", "Signal Action", 150, "center"),
-            ("regime", "Market Regime", 160, "center"),
+            ("signal", "Signal Action", 145, "center"),
+            ("regime", "Market Regime", 155, "center"),
             ("price", "Price (₹)", 85, "e"),
-            ("trend_score", "Trend (0-10)", 85, "center"),
-            ("sideways_score", "Sideways (0-7)", 95, "center"),
+            ("option_strike", "ATM Strike", 125, "center"),
+            ("trend_score", "Trend (0-10)", 80, "center"),
+            ("sideways_score", "Sideways (0-7)", 90, "center"),
             ("hema", "HEMA(9)", 80, "e"),
             ("t3_fast", "T3 Fast(13)", 80, "e"),
             ("t3_slow", "T3 Slow(16)", 80, "e"),
@@ -1890,7 +1990,7 @@ class ScannerTkinterGUI:
             ("slope", "Slope %", 70, "center"),
             ("comp", "Consol %", 75, "center"),
             ("vol", "Vol Surge", 75, "center"),
-            ("reasons", "Confluence Factors & Anti-Sideways Check", 320, "w"),
+            ("reasons", "Confluence Factors & Anti-Sideways Check", 310, "w"),
         ]
 
         self.hema_tree = ttk.Treeview(
@@ -1902,7 +2002,7 @@ class ScannerTkinterGUI:
 
         for col_id, col_name, width, align in h_cols:
             self.hema_tree.heading(col_id, text=col_name, anchor=align)
-            self.hema_tree.column(col_id, width=width, anchor=align, stretch=(col_id in ("reasons", "regime", "signal")))
+            self.hema_tree.column(col_id, width=width, anchor=align, stretch=(col_id in ("reasons", "regime", "signal", "option_strike")))
 
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.hema_tree.yview)
         hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.hema_tree.xview)
@@ -2050,12 +2150,12 @@ class ScannerTkinterGUI:
             if not self.cached_hema_signals:
                 self.hema_tree.insert("", tk.END, values=(
                     "--:--:--", "AUTO-SCANNING", "--", "STREAMING", "Multi-timeframe scanner active (15m, 30m, 1h, 2h, 4h, 1d)...",
-                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "Signals stream automatically like Tab 1. Click 'Scan' anytime to force instant re-scan."
+                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "Signals stream automatically. Click 'Scan' anytime to force instant re-scan."
                 ), tags=("sideways",))
             else:
                 self.hema_tree.insert("", tk.END, values=(
                     "--:--:--", "--", "--", "NO MATCH", "No HEMA+T3 signals matching selected timeframe or filters.",
-                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "Try changing Timeframe dropdown to 'ALL' or resetting filters."
+                    "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "Try changing Timeframe dropdown to 'ALL' or resetting filters."
                 ))
             return
 
@@ -2088,6 +2188,12 @@ class ScannerTkinterGUI:
             reasons_list = s.get("conditions_met", [])
             reasons_str = " • ".join(reasons_list) if reasons_list else "--"
 
+            opt_str = str(s.get("option_strike", ""))
+            if not opt_str or opt_str == "--":
+                opt_str = "Cash EQ Only"
+            elif s.get("option_lot_size"):
+                opt_str += f" (Lot: {s['option_lot_size']})"
+
             row_vals = (
                 str(s.get("timestamp", "--")),
                 str(s.get("symbol", "--")),
@@ -2095,6 +2201,7 @@ class ScannerTkinterGUI:
                 sig_type,
                 regime,
                 f"{float(s.get('price', 0.0)):.2f}",
+                opt_str,
                 f"{int(s.get('trend_score', 0))}/10",
                 f"{int(s.get('sideways_score', 0))}/7",
                 f"{float(s.get('hema', 0.0)):.2f}",
@@ -2136,7 +2243,7 @@ class ScannerTkinterGUI:
                 writer = csv.writer(f)
                 writer.writerow([
                     "Time", "Symbol", "Timeframe", "Signal Action", "Market Regime", "Price",
-                    "Trend Score", "Sideways Score", "HEMA(9)", "T3 Fast(13)", "T3 Slow(16)",
+                    "ATM Strike", "Trend Score", "Sideways Score", "HEMA(9)", "T3 Fast(13)", "T3 Slow(16)",
                     "ADX(14)", "ATR/MA Ratio", "EMA Slope %", "Consolidation %", "Volume Ratio", "Confluence Factors"
                 ])
                 for s in self.cached_hema_signals:
@@ -2147,6 +2254,7 @@ class ScannerTkinterGUI:
                         s.get("signal_type"),
                         s.get("regime"),
                         s.get("price"),
+                        s.get("option_strike") or "Cash EQ Only",
                         s.get("trend_score"),
                         s.get("sideways_score"),
                         s.get("hema"),
@@ -2281,13 +2389,14 @@ class ScannerTkinterGUI:
             ("time", "Time", 75, "center"),
             ("symbol", "Symbol", 90, "w"),
             ("price", "Price (₹)", 85, "e"),
-            ("strategy", "Matched Sub-Strategy", 220, "w"),
-            ("pivot_diff", "Pivot Clearance %", 110, "center"),
+            ("option_strike", "ATM Option (CE)", 135, "center"),
+            ("strategy", "Matched Sub-Strategy", 200, "w"),
+            ("pivot_diff", "Pivot Clearance %", 105, "center"),
             ("turnover", "Turnover (Cr)", 95, "e"),
             ("rsi", "RSI(14)", 70, "center"),
-            ("ma_crossed", "MA Crossed", 100, "center"),
+            ("ma_crossed", "MA Crossed", 95, "center"),
             ("vol_surge", "Vol Surge", 80, "center"),
-            ("reasons", "Chartink Confluence & Breakout Factors", 360, "w"),
+            ("reasons", "Chartink Confluence & Breakout Factors", 330, "w"),
         ]
 
         self.chartink_tree = ttk.Treeview(
@@ -2299,7 +2408,7 @@ class ScannerTkinterGUI:
 
         for col_id, col_name, width, align in c_cols:
             self.chartink_tree.heading(col_id, text=col_name, anchor=align)
-            self.chartink_tree.column(col_id, width=width, anchor=align, stretch=(col_id in ("strategy", "reasons")))
+            self.chartink_tree.column(col_id, width=width, anchor=align, stretch=(col_id in ("strategy", "reasons", "option_strike")))
 
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.chartink_tree.yview)
         hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.chartink_tree.xview)
@@ -2416,13 +2525,14 @@ class ScannerTkinterGUI:
                 self.chartink_tree.delete(*existing_children)
             if not self.cached_chartink_signals:
                 now_str = datetime.now().strftime("%H:%M:%S")
+                univ_name = getattr(self.scanner, 'universe_name', 'F&O') if self.scanner else 'F&O'
                 self.chartink_tree.insert("", tk.END, values=(
-                    now_str, "REAL-TIME ACTIVE", "--", "Continuous Background Scanner Monitoring (Sub 1, Sub 2, Sub 3)...",
-                    "--", "--", "--", "--", "--", "🟢 Auto-evaluating 210 F&O universe stocks every 10 seconds in background."
+                    now_str, "REAL-TIME ACTIVE", "--", "--", "Continuous Background Scanner Monitoring (Sub 1, Sub 2, Sub 3)...",
+                    "--", "--", "--", "--", "--", f"🟢 Auto-evaluating {univ_name} universe stocks every 10 seconds in background."
                 ), tags=("sub1",))
             else:
                 self.chartink_tree.insert("", tk.END, values=(
-                    "--:--:--", "--", "--", "NO MATCH",
+                    "--:--:--", "--", "--", "--", "NO MATCH",
                     "--", "--", "--", "--", "--", "No breakout candidates matching active strategy filter."
                 ))
             return
@@ -2449,10 +2559,17 @@ class ScannerTkinterGUI:
             if idx % 2 == 1:
                 tags.append("alt_row")
 
+            opt_str = str(s.get("option_strike", ""))
+            if not opt_str or opt_str == "--":
+                opt_str = "Cash EQ Only"
+            elif s.get("option_lot_size"):
+                opt_str += f" (Lot: {s['option_lot_size']})"
+
             row_vals = (
                 str(s.get("timestamp", "--")),
                 str(s.get("symbol", "--")),
                 f"{float(s.get('price', 0.0)):.2f}",
+                opt_str,
                 strat,
                 f"+{float(s.get('median_pivot_diff_pct', 0.0)):.2f}%",
                 f"₹{float(s.get('turnover_cr', 0.0)):.1f} Cr",
@@ -2489,7 +2606,7 @@ class ScannerTkinterGUI:
             with open(path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow([
-                    "Time", "Symbol", "Price", "Strategy", "Pivot Clearance %",
+                    "Time", "Symbol", "Price", "ATM Option (CE)", "Strategy", "Pivot Clearance %",
                     "Turnover (Cr)", "RSI(14)", "MA Crossed", "Vol Surge Ratio", "Confluences"
                 ])
                 for s in self.cached_chartink_signals:
@@ -2497,6 +2614,7 @@ class ScannerTkinterGUI:
                         s.get("timestamp"),
                         s.get("symbol"),
                         s.get("price"),
+                        s.get("option_strike") or "Cash EQ Only",
                         s.get("strategy_tag"),
                         s.get("median_pivot_diff_pct"),
                         s.get("turnover_cr"),

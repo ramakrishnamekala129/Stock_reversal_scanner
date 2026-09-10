@@ -49,9 +49,11 @@ class FNOIntradayScanner:
         enable_excel: bool = config.ENABLE_EXCEL_EXPORT,
         enable_web: bool = config.ENABLE_WEB_DASHBOARD,
         market_mode: str = config.DEFAULT_MARKET_MODE,
+        universe_name: str = "FNO",
     ):
         self.auth = auth or UpstoxAuth()
         self.market_mode = market_mode.upper() if market_mode else "FUTURES"
+        self.universe_name = universe_name.upper() if universe_name else "FNO"
         self.rest_client = UpstoxRestClient(self.auth.get_api_client() if self.auth.has_access_token else None)
         self.instrument_mgr = InstrumentManager(self.rest_client)
         self.hist_loader = HistoricalDataLoader(self.rest_client)
@@ -105,28 +107,40 @@ class FNOIntradayScanner:
         except Exception as e:
             logger.warning(f"Error loading daily candles cache from DB: {e}")
 
-    def startup(self, force_refresh: bool = False, symbols: Optional[List[str]] = None, mode: Optional[str] = None):
+    def startup(
+        self,
+        force_refresh: bool = False,
+        symbols: Optional[List[str]] = None,
+        mode: Optional[str] = None,
+        universe: Optional[str] = None,
+    ):
         """
         Executes complete application startup sequence.
         """
         if mode:
             self.market_mode = mode.upper()
-        logger.info(f"Starting Upstox 5M F&O Intraday Scanner [Mode: {self.market_mode}]...")
+        if universe:
+            self.universe_name = universe.upper()
+        logger.info(f"Starting Upstox Scanner [Universe: {self.universe_name}, Mode: {self.market_mode}]...")
 
         # 1. Authenticate / Check credentials
         is_authenticated = self.auth.validate_token()
         rest_status = "CONNECTED" if is_authenticated else "AVAILABLE (PUBLIC ENDPOINTS)"
         analytics_status = "AVAILABLE" if self.auth.has_analytics_token else "NOT CONFIGURED"
 
-        # 2. Load NSE F&O Universe (Futures or Spot)
-        self._universe = self.instrument_mgr.load_fno_universe(force_refresh=force_refresh, mode=self.market_mode)
+        # 2. Load Universe (FNO, NIFTY250, or NIFTY500)
+        self._universe = self.instrument_mgr.load_universe(
+            universe_name=self.universe_name,
+            mode=self.market_mode,
+            force_refresh=force_refresh,
+        )
         if symbols:
             symbols_set = set(symbols)
             self._universe = {k: v for k, v in self._universe.items() if k in symbols_set}
 
         fno_count = len(self._universe)
         if fno_count == 0:
-            logger.error("No F&O instruments discovered! Exiting startup.")
+            logger.error(f"No instruments discovered for universe {self.universe_name}! Exiting startup.")
             return False
 
         self.session_mgr.stats.symbols_scanned = fno_count
@@ -156,6 +170,11 @@ class FNOIntradayScanner:
 
         # Initialize Web Dashboard State & Optional Excel
         dashboard_state.initialize_pivots(self._pivots)
+        dashboard_state.update_stats(
+            active_universe=self.universe_name,
+            market_mode=self.market_mode,
+            symbols_scanned=fno_count,
+        )
         # 4. Fetch today's historical 5M candles (from 1m history) and initialize multi-timeframe engine
         historical_5m = self.hist_loader.load_initial_5m_candles(self._universe, force_refresh=force_refresh)
         key_map = {sym: item["instrument_key"] for sym, item in self._universe.items()}
@@ -458,6 +477,16 @@ class FNOIntradayScanner:
                             liquidity_tier=l_tier,
                             is_most_liquid=is_liq,
                         )
+                        for s in sigs:
+                            opt_type = "CE" if "BULLISH" in str(s.signal).upper() or "BUY" in str(s.signal).upper() else "PE"
+                            opt = self.instrument_mgr.get_atm_option(sym, s.price, opt_type)
+                            if opt:
+                                s.option_strike = f"{opt['strike_price']:g} {opt_type}"
+                                s.option_symbol = opt["trading_symbol"]
+                                s.option_lot_size = opt["lot_size"]
+                                s.option_expiry = opt["expiry_date"]
+                            else:
+                                s.option_strike = "Cash EQ Only"
                         return sigs
                     except Exception as ex:
                         logger.debug(f"HEMA eval error for {sym} {tf}: {ex}")
@@ -596,6 +625,15 @@ class FNOIntradayScanner:
                                 is_most_liquid=is_liq,
                                 target_date=today_date,
                             )
+                        if sig:
+                            opt = self.instrument_mgr.get_atm_option(sym, sig.price, "CE")
+                            if opt:
+                                sig.option_strike = f"{opt['strike_price']:g} CE"
+                                sig.option_symbol = opt["trading_symbol"]
+                                sig.option_lot_size = opt["lot_size"]
+                                sig.option_expiry = opt["expiry_date"]
+                            else:
+                                sig.option_strike = "Cash EQ Only"
                         return sig
                     except Exception as ex:
                         logger.warning(f"Chartink eval error for {sym}: {ex}")

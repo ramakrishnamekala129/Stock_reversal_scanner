@@ -33,6 +33,8 @@ class WebDashboardState:
             "patterns_detected": 0,
             "bullish_signals": 0,
             "bearish_signals": 0,
+            "active_universe": "FNO",
+            "market_mode": "FUTURES",
             "ws_status": "INITIALIZING...",
             "last_updated": "--",
         }

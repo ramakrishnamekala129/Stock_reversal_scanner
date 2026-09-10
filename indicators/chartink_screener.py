@@ -57,6 +57,10 @@ class ChartinkSignal:
     first_detected_time: str = ""
     first_detected_price: float = 0.0
     date: str = ""
+    option_strike: str = ""
+    option_symbol: str = ""
+    option_lot_size: int = 0
+    option_expiry: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         display_ts = self.first_detected_time or self.timestamp
@@ -82,6 +86,10 @@ class ChartinkSignal:
             "lot_size": self.lot_size,
             "liquidity_tier": self.liquidity_tier,
             "is_most_liquid": self.is_most_liquid,
+            "option_strike": self.option_strike,
+            "option_symbol": self.option_symbol,
+            "option_lot_size": self.option_lot_size,
+            "option_expiry": self.option_expiry,
         }
 
 

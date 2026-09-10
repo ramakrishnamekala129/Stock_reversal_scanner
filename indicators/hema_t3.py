@@ -265,6 +265,10 @@ class HemaT3Signal:
     turnover_cr: float = 0.0
     liquidity_tier: str = "Normal"
     is_most_liquid: bool = False
+    option_strike: str = ""
+    option_symbol: str = ""
+    option_lot_size: int = 0
+    option_expiry: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -303,6 +307,10 @@ class HemaT3Signal:
             "turnover_cr": self.turnover_cr,
             "liquidity_tier": self.liquidity_tier,
             "is_most_liquid": self.is_most_liquid,
+            "option_strike": self.option_strike,
+            "option_symbol": self.option_symbol,
+            "option_lot_size": self.option_lot_size,
+            "option_expiry": self.option_expiry,
         }
 
 
