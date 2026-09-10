@@ -41,8 +41,8 @@ MARKET_OPEN = "09:15"
 MARKET_CLOSE = "15:30"
 TIMEFRAME = os.getenv("TIMEFRAME", "5minute")
 CANDLE_DURATION_MINUTES = 5 if "5" in TIMEFRAME else (3 if "3" in TIMEFRAME else (15 if "15" in TIMEFRAME else 5))
-# Market Mode: 'FUTURES' (default: nearest active monthly contract) or 'SPOT' (cash equity)
-DEFAULT_MARKET_MODE = "FUTURES"
+# Market Mode: 'SPOT' (cash equity)
+DEFAULT_MARKET_MODE = "SPOT"
 
 # Primary Reversal Scanner Timeframes
 # Derive from TIMEFRAME unless explicitly overridden by SCANNER_TIMEFRAMES env
