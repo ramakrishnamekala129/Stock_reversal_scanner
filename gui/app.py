@@ -344,20 +344,20 @@ class ScannerTkinterGUI:
             bg=BG_DARK,
         ).pack(side=tk.LEFT, padx=(0, 4))
 
-        init_univ = getattr(self.scanner, "universe_name", "FNO") if self.scanner else "FNO"
+        init_univ = getattr(self.scanner, "universe_name", getattr(config, "DEFAULT_UNIVERSE", "NIFTY500")) if self.scanner else getattr(config, "DEFAULT_UNIVERSE", "NIFTY500")
         univ_display_map = {
-            "FNO": "🔥 F&O Option Stocks (210)",
-            "NIFTY250": "🏛️ Nifty 250 (LargeMidcap)",
             "NIFTY500": "🌐 Nifty 500 (Broad Market)",
+            "NIFTY250": "🏛️ Nifty 250 (LargeMidcap)",
+            "FNO": "🔥 F&O Option Stocks (210)",
         }
-        self.universe_var = tk.StringVar(value=univ_display_map.get(init_univ.upper(), "🔥 F&O Option Stocks (210)"))
+        self.universe_var = tk.StringVar(value=univ_display_map.get(init_univ.upper(), "🌐 Nifty 500 (Broad Market)"))
         self.universe_combo = ttk.Combobox(
             ctrl_box,
             textvariable=self.universe_var,
             values=[
-                "🔥 F&O Option Stocks (210)",
-                "🏛️ Nifty 250 (LargeMidcap)",
                 "🌐 Nifty 500 (Broad Market)",
+                "🏛️ Nifty 250 (LargeMidcap)",
+                "🔥 F&O Option Stocks (210)",
             ],
             state="readonly",
             width=25,
@@ -1781,13 +1781,13 @@ class ScannerTkinterGUI:
             f"The scanner will load the {new_univ} universe, compute pivot levels, and stream real-time quotes.",
         )
         if not confirm:
-            cur = getattr(self.scanner, "universe_name", "FNO")
+            cur = getattr(self.scanner, "universe_name", getattr(config, "DEFAULT_UNIVERSE", "NIFTY500"))
             display_map = {
-                "FNO": "🔥 F&O Option Stocks (210)",
-                "NIFTY250": "🏛️ Nifty 250 (LargeMidcap)",
                 "NIFTY500": "🌐 Nifty 500 (Broad Market)",
+                "NIFTY250": "🏛️ Nifty 250 (LargeMidcap)",
+                "FNO": "🔥 F&O Option Stocks (210)",
             }
-            self.universe_var.set(display_map.get(cur, "🔥 F&O Option Stocks (210)"))
+            self.universe_var.set(display_map.get(cur, "🌐 Nifty 500 (Broad Market)"))
             return
 
         def _do_switch():

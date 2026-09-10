@@ -77,6 +77,12 @@ def parse_args():
         choices=["futures", "spot", "FUTURES", "SPOT"],
         help="Market scanning mode: 'futures' (default nearest active contract) or 'spot' (cash equity).",
     )
+    parser.add_argument(
+        "--universe",
+        default=getattr(config, "DEFAULT_UNIVERSE", "NIFTY500"),
+        choices=["fno", "nifty250", "nifty500", "FNO", "NIFTY250", "NIFTY500"],
+        help="Stock universe: 'nifty500' (default broad market 500), 'nifty250', or 'fno'.",
+    )
     return parser.parse_args()
 
 
@@ -88,6 +94,7 @@ def main():
     logging.getLogger().setLevel(numeric_level)
 
     market_mode = args.mode.upper() if args.mode else config.DEFAULT_MARKET_MODE
+    universe_name = args.universe.upper() if getattr(args, "universe", None) else getattr(config, "DEFAULT_UNIVERSE", "NIFTY500")
 
     if args.web:
         config.ENABLE_WEB_DASHBOARD = True
@@ -97,7 +104,7 @@ def main():
         config.ENABLE_WEB_DASHBOARD = False
 
     auth = UpstoxAuth()
-    scanner = FNOIntradayScanner(auth=auth, market_mode=market_mode)
+    scanner = FNOIntradayScanner(auth=auth, market_mode=market_mode, universe_name=universe_name)
 
     # Launch Desktop GUI immediately if enabled (Zero-Wait Instant Window)
     if config.ENABLE_TKINTER_GUI:
@@ -112,7 +119,7 @@ def main():
             def _background_startup():
                 try:
                     dashboard_state.stats["ws_status"] = "INITIALIZING..."
-                    success = scanner.startup(force_refresh=args.refresh_cache, symbols=args.symbols, mode=market_mode)
+                    success = scanner.startup(force_refresh=args.refresh_cache, symbols=args.symbols, mode=market_mode, universe=universe_name)
                     if success:
                         if args.dry_run:
                             dashboard_state.stats["ws_status"] = "DRY_RUN"
@@ -152,7 +159,7 @@ def main():
             logger.error(f"Failed to start Tkinter GUI: {e}")
 
     # Headless / Web Mode
-    success = scanner.startup(force_refresh=args.refresh_cache, symbols=args.symbols)
+    success = scanner.startup(force_refresh=args.refresh_cache, symbols=args.symbols, mode=market_mode, universe=universe_name)
     if not success:
         logger.error("Failed to start scanner.")
         sys.exit(1)

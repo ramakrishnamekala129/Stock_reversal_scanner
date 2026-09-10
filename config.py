@@ -43,6 +43,8 @@ TIMEFRAME = os.getenv("TIMEFRAME", "5minute")
 CANDLE_DURATION_MINUTES = 5 if "5" in TIMEFRAME else (3 if "3" in TIMEFRAME else (15 if "15" in TIMEFRAME else 5))
 # Market Mode: 'SPOT' (cash equity)
 DEFAULT_MARKET_MODE = "SPOT"
+# Default Stock Universe: 'NIFTY500' (Broad Market 500 stocks)
+DEFAULT_UNIVERSE = "NIFTY500"
 
 # Primary Reversal Scanner Timeframes
 # Derive from TIMEFRAME unless explicitly overridden by SCANNER_TIMEFRAMES env

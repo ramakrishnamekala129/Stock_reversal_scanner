@@ -49,11 +49,11 @@ class FNOIntradayScanner:
         enable_excel: bool = config.ENABLE_EXCEL_EXPORT,
         enable_web: bool = config.ENABLE_WEB_DASHBOARD,
         market_mode: str = config.DEFAULT_MARKET_MODE,
-        universe_name: str = "FNO",
+        universe_name: str = getattr(config, "DEFAULT_UNIVERSE", "NIFTY500"),
     ):
         self.auth = auth or UpstoxAuth()
-        self.market_mode = market_mode.upper() if market_mode else "FUTURES"
-        self.universe_name = universe_name.upper() if universe_name else "FNO"
+        self.market_mode = market_mode.upper() if market_mode else config.DEFAULT_MARKET_MODE
+        self.universe_name = universe_name.upper() if universe_name else getattr(config, "DEFAULT_UNIVERSE", "NIFTY500")
         self.rest_client = UpstoxRestClient(self.auth.get_api_client() if self.auth.has_access_token else None)
         self.instrument_mgr = InstrumentManager(self.rest_client)
         self.hist_loader = HistoricalDataLoader(self.rest_client)
