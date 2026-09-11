@@ -51,6 +51,7 @@ DEFAULT_STOP_LOSS_PCT = float(os.getenv("DEFAULT_STOP_LOSS_PCT", "1.0"))  # Init
 ENABLE_TRAILING_STOP = os.getenv("ENABLE_TRAILING_STOP", "true").lower() in ("true", "1", "yes")  # Trailing Stop: Enabled
 TRAILING_ACTIVATION_PCT = float(os.getenv("TRAILING_ACTIVATION_PCT", "1.0"))  # Activate trailing at +1.0%
 TRAILING_OFFSET_PCT = float(os.getenv("TRAILING_OFFSET_PCT", "0.4"))          # Trail by 0.4% from peak
+DEFAULT_EOD_EXIT_TIME = os.getenv("DEFAULT_EOD_EXIT_TIME", "14:30")            # Intraday EOD Time Exit / Square-Off: 14:30
 
 # Primary Reversal Scanner Timeframes
 # Derive from TIMEFRAME unless explicitly overridden by SCANNER_TIMEFRAMES env

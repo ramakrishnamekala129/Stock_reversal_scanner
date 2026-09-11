@@ -55,6 +55,7 @@ class MarketSessionManager:
         self.tz = pytz.timezone(config.MARKET_TIMEZONE)
         self.open_time = time.fromisoformat(config.MARKET_OPEN)
         self.close_time = time.fromisoformat(config.MARKET_CLOSE)
+        self.eod_exit_time = time.fromisoformat(config.DEFAULT_EOD_EXIT_TIME)
         self.stats = SessionStats()
 
     def get_current_ist_time(self) -> datetime:
@@ -89,6 +90,18 @@ class MarketSessionManager:
                 dt = dt.astimezone(self.tz)
 
         return dt.time() > self.close_time or dt.weekday() >= 5
+
+    def is_eod_exit_time(self, dt: datetime = None) -> bool:
+        """Checks if current time has reached or passed intraday square-off time (14:30)."""
+        if dt is None:
+            dt = self.get_current_ist_time()
+        else:
+            if dt.tzinfo is None:
+                dt = self.tz.localize(dt)
+            else:
+                dt = dt.astimezone(self.tz)
+
+        return dt.time() >= self.eod_exit_time
 
     def reset_daily_state(self):
         """Resets scanner counters and statistics for a new trading day."""

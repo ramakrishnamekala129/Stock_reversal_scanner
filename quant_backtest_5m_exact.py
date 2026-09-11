@@ -166,7 +166,7 @@ def generate_dashboard(
 
     title_text = (
         "EXACT 5-MINUTE BREAKOUT CANDLE STRATEGY: INSTITUTIONAL QUANT EVALUATION\n"
-        "Nifty 500 Broad Market Cash Equity | Exact Earliest 5M Trigger Bar | Quant Filter Comparison"
+        "Nifty 500 Cash Equity | Exact 5M Trigger | TP 2.0% + Trailing SL | SL 1.0% | EOD Exit 14:30 IST"
     )
     fig.suptitle(title_text, fontsize=16, fontweight="bold", color="#38bdf8", y=0.99)
 
@@ -259,13 +259,21 @@ def generate_dashboard(
     bars_sl = win_trades[win_trades["m1_exit_reason"] == "SL"]["m1_holding_bars"]
     bars_eod = win_trades[win_trades["m1_exit_reason"] == "EOD"]["m1_holding_bars"]
 
-    ax6.hist(bars_tp, bins=15, color="#10b981", alpha=0.7, label=f"Target Hit (+1.5%) - Mean: {bars_tp.mean():.1f} bars (~{bars_tp.mean()*5:.0f}m)")
-    ax6.hist(bars_sl, bins=15, color="#ef4444", alpha=0.6, label=f"Stop Hit (-0.8%) - Mean: {bars_sl.mean():.1f} bars (~{bars_sl.mean()*5:.0f}m)")
+    bars_trail = win_trades[win_trades["m1_exit_reason"] == "TRAIL_SL"]["m1_holding_bars"]
+
+    if len(bars_tp) > 0:
+        ax6.hist(bars_tp, bins=12, color="#10b981", alpha=0.75, label=f"Target Hit (+2.0%) - Mean: {bars_tp.mean():.1f} bars (~{bars_tp.mean()*5:.0f}m)")
+    if len(bars_trail) > 0:
+        ax6.hist(bars_trail, bins=12, color="#38bdf8", alpha=0.65, label=f"Trailing SL Lock - Mean: {bars_trail.mean():.1f} bars (~{bars_trail.mean()*5:.0f}m)")
+    if len(bars_sl) > 0:
+        ax6.hist(bars_sl, bins=12, color="#ef4444", alpha=0.6, label=f"Stop Hit (-1.0%) - Mean: {bars_sl.mean():.1f} bars (~{bars_sl.mean()*5:.0f}m)")
+    if len(bars_eod) > 0:
+        ax6.hist(bars_eod, bins=12, color="#a855f7", alpha=0.5, label=f"14:30 EOD Exit - Mean: {bars_eod.mean():.1f} bars (~{bars_eod.mean()*5:.0f}m)")
     ax6.set_title("Trade Execution Velocity (Bars to Exit on Exact 5M Entry)", fontsize=12, fontweight="bold", color="#f3f4f6")
     ax6.set_xlabel("Holding Duration (5-Minute Bars)", color="#9ca3af")
     ax6.set_ylabel("Trade Count", color="#9ca3af")
     ax6.grid(True, alpha=0.2, ls="--")
-    ax6.legend(loc="upper right", framealpha=0.3, fontsize=8)
+    ax6.legend(loc="upper right", framealpha=0.3, fontsize=7.5)
 
     # 7. Win Rate & Profit Factor Comparison
     ax7 = axes[3, 0]

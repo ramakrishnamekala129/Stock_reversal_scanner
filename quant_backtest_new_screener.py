@@ -239,9 +239,9 @@ def simulate_all_models(
 ) -> Dict[str, dict]:
     """
     Simulates execution across 4 distinct institutional trade models:
-    - Model 1: Fixed 1.5% TP / 0.8% SL (1.875:1 R:R, 15:15 EOD)
-    - Model 2: Trailing Stop Loss (+1.0% activation, trail 0.6%, 15:15 EOD)
-    - Model 3: Candle-Low SL (Capped at 2.5%, Target 2.0%, 15:15 EOD)
+    - Model 1: Profit Target 2.0% + Trailing SL (SL 1.0%, trail 0.4%, 14:30 EOD)
+    - Model 2: Trailing Stop Loss (+1.0% activation, trail 0.6%, 14:30 EOD)
+    - Model 3: Candle-Low SL (Capped at 2.5%, Target 2.0%, 14:30 EOD)
     - Model 4: Multi-Day Swing (Target 3.0%, SL 1.5%, held up to 3 days)
     """
     trigger_bar = bars_5m.iloc[trigger_idx]
@@ -298,7 +298,7 @@ def simulate_all_models(
             exit_t1 = b["timestamp"]
             break
 
-        if b_time >= dtime(15, 15):
+        if b_time >= dtime(14, 30):
             exit_p1 = float(b["close"]) * 0.9995
             exit_r1 = "EOD"
             exit_t1 = b["timestamp"]
@@ -347,7 +347,7 @@ def simulate_all_models(
             exit_t2 = b["timestamp"]
             break
 
-        if b_time >= dtime(15, 15):
+        if b_time >= dtime(14, 30):
             exit_p2 = float(b["close"]) * 0.9995
             exit_r2 = "EOD"
             exit_t2 = b["timestamp"]
@@ -386,7 +386,7 @@ def simulate_all_models(
             exit_r3 = "TP"
             exit_t3 = b["timestamp"]
             break
-        if b_time >= dtime(15, 15):
+        if b_time >= dtime(14, 30):
             exit_p3 = float(b["close"]) * 0.9995
             exit_r3 = "EOD"
             exit_t3 = b["timestamp"]
