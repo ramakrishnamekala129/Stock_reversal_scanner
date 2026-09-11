@@ -54,23 +54,45 @@ for sym, group in df_trades.groupby("symbol"):
             continue
 
         entry_px = float(df_5m.iloc[trig_idx]["close"]) * 1.0005
-        tp = entry_px * 1.015
-        sl = entry_px * (1.0 - 0.010)  # STOP LOSS 1.0%
+        tp = entry_px * 1.020  # PROFIT TARGET 2.0%
+        sl = entry_px * 0.990  # INITIAL STOP LOSS 1.0%
+        peak_p = entry_px
+        trail_active = False
 
         exit_p = None
         exit_r = "EOD"
         exit_bars = 0
         for i in range(trig_idx + 1, len(df_5m)):
             b = df_5m.iloc[i]
+            b_h = float(b["high"])
+            b_l = float(b["low"])
             exit_bars += 1
-            if float(b["low"]) <= sl:
-                exit_p = sl * 0.9995
-                exit_r = "SL"
-                break
-            if float(b["high"]) >= tp:
+
+            if b_h > peak_p:
+                peak_p = b_h
+
+            # Hit Target 2.0%
+            if b_h >= tp:
                 exit_p = tp * 0.9995
                 exit_r = "TP"
                 break
+
+            # Activate trailing at +1.0%
+            if not trail_active and (peak_p >= entry_px * 1.010):
+                trail_active = True
+                sl = entry_px * 1.002  # Lock breakeven +0.2%
+
+            if trail_active:
+                t_sl = peak_p * (1.0 - 0.004)
+                if t_sl > sl:
+                    sl = t_sl
+
+            # Stop or trailing stop
+            if b_l <= sl:
+                exit_p = sl * 0.9995
+                exit_r = "TRAIL_SL" if trail_active else "SL"
+                break
+
             if b["timestamp"].time() >= dtime(15, 15):
                 exit_p = float(b["close"]) * 0.9995
                 exit_r = "EOD"

@@ -253,29 +253,51 @@ def simulate_all_models(
     n_rem = len(remaining_bars)
 
     # ─────────────────────────────────────────────────────────────
-    # Model 1: Fixed 1.5% TP / 1.0% SL (1.5:1 R:R)
+    # Model 1: Profit Target 2.0% + Trailing SL (SL 1.0%, trail 0.4%)
     # ─────────────────────────────────────────────────────────────
-    tp_1 = entry_price * 1.015
+    tp_1 = entry_price * 1.020
     sl_1 = entry_price * (1.0 - 0.010)
     exit_p1 = None
     exit_r1 = "EOD"
     exit_t1 = None
     holding_1 = 0
+    peak_p1 = entry_price
+    trail_active1 = False
 
     for i in range(n_rem):
         b = remaining_bars.iloc[i]
         b_time = b["timestamp"].time()
+        b_h = float(b["high"])
+        b_l = float(b["low"])
         holding_1 += 1
-        if float(b["low"]) <= sl_1:
-            exit_p1 = sl_1 * 0.9995
-            exit_r1 = "SL"
-            exit_t1 = b["timestamp"]
-            break
-        if float(b["high"]) >= tp_1:
+
+        if b_h > peak_p1:
+            peak_p1 = b_h
+
+        # Hit Profit Target 2.0%
+        if b_h >= tp_1:
             exit_p1 = tp_1 * 0.9995
             exit_r1 = "TP"
             exit_t1 = b["timestamp"]
             break
+
+        # Activate Trailing SL at +1.0%
+        if not trail_active1 and (peak_p1 >= entry_price * 1.010):
+            trail_active1 = True
+            sl_1 = entry_price * 1.002  # Lock breakeven +0.2%
+
+        if trail_active1:
+            trail_sl = peak_p1 * (1.0 - 0.004)
+            if trail_sl > sl_1:
+                sl_1 = trail_sl
+
+        # Stop Loss or Trailing Stop Loss hit
+        if b_l <= sl_1:
+            exit_p1 = sl_1 * 0.9995
+            exit_r1 = "TRAIL_SL" if trail_active1 else "SL"
+            exit_t1 = b["timestamp"]
+            break
+
         if b_time >= dtime(15, 15):
             exit_p1 = float(b["close"]) * 0.9995
             exit_r1 = "EOD"
@@ -729,7 +751,7 @@ def generate_quant_dashboard(
     # 1. Equity Curves Comparison (All 4 Models)
     ax1 = axes[0, 0]
     ax1.set_facecolor("#111827")
-    ax1.plot(df_trades["m1_pnl"].cumsum(), label="Model 1: Target 1.5%, SL 1.0%", color="#10b981", lw=2.0)
+    ax1.plot(df_trades["m1_pnl"].cumsum(), label="Model 1: Target 2.0% + Trailing SL", color="#10b981", lw=2.0)
     ax1.plot(df_trades["m2_pnl"].cumsum(), label="Model 2: Trailing SL (+1.0%/0.6%)", color="#38bdf8", lw=1.8)
     ax1.plot(df_trades["m3_pnl"].cumsum(), label="Model 3: Candle-Low SL (2.0% TP)", color="#f59e0b", lw=1.8)
     ax1.plot(df_trades["m4_pnl"].cumsum(), label="Model 4: Multi-Day Swing (3.0% TP)", color="#a855f7", lw=1.8)
@@ -882,7 +904,7 @@ def main(force_rerun: bool = False):
     m4_metrics = compute_institutional_metrics(df_trades["m4_pnl"], dates_col)
 
     df_summary = pd.DataFrame([
-        {"Model": "Model 1: Target 1.5%, SL 1.0% (1.5:1 R:R)", **m1_metrics},
+        {"Model": "Model 1: Target 2.0% + Trailing SL (SL 1.0%, trail 0.4%)", **m1_metrics},
         {"Model": "Model 2: Trailing SL (+1.0%/0.6% trail)", **m2_metrics},
         {"Model": "Model 3: Candle-Low SL (2.0% Target)", **m3_metrics},
         {"Model": "Model 4: Multi-Day Swing (3.0% TP, 1.5% SL)", **m4_metrics},

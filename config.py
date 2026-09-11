@@ -46,8 +46,11 @@ DEFAULT_MARKET_MODE = "SPOT"
 # Default Stock Universe: 'NIFTY500' (Broad Market 500 stocks)
 DEFAULT_UNIVERSE = "NIFTY500"
 # Intraday Breakout Execution Target & Stop Loss Settings
-DEFAULT_TARGET_PCT = float(os.getenv("DEFAULT_TARGET_PCT", "1.5"))      # Target: +1.5%
-DEFAULT_STOP_LOSS_PCT = float(os.getenv("DEFAULT_STOP_LOSS_PCT", "1.0"))  # Stop Loss: -1.0%
+DEFAULT_TARGET_PCT = float(os.getenv("DEFAULT_TARGET_PCT", "2.0"))        # Profit Target: +2.0%
+DEFAULT_STOP_LOSS_PCT = float(os.getenv("DEFAULT_STOP_LOSS_PCT", "1.0"))  # Initial Stop Loss: -1.0%
+ENABLE_TRAILING_STOP = os.getenv("ENABLE_TRAILING_STOP", "true").lower() in ("true", "1", "yes")  # Trailing Stop: Enabled
+TRAILING_ACTIVATION_PCT = float(os.getenv("TRAILING_ACTIVATION_PCT", "1.0"))  # Activate trailing at +1.0%
+TRAILING_OFFSET_PCT = float(os.getenv("TRAILING_OFFSET_PCT", "0.4"))          # Trail by 0.4% from peak
 
 # Primary Reversal Scanner Timeframes
 # Derive from TIMEFRAME unless explicitly overridden by SCANNER_TIMEFRAMES env
