@@ -401,7 +401,7 @@ def run_intraday_backtest():
 
     # Define Simulation Models
     models_config = [
-        {"name": "Model 1: Target 1.5%, SL 0.8%", "tp": 0.015, "sl": 0.008, "candle_sl": False, "trail": False},
+        {"name": "Model 1: Target 1.5%, SL 1.0%", "tp": 0.015, "sl": 0.010, "candle_sl": False, "trail": False},
         {"name": "Model 2: Target 2.0%, SL 1.0%", "tp": 0.020, "sl": 0.010, "candle_sl": False, "trail": False},
         {"name": "Model 3: Trailing Momentum (SL 1.0%, trail > 1.0%)", "tp": 0.0, "sl": 0.010, "candle_sl": False, "trail": True},
         {"name": "Model 4: Target 2.0%, Entry Candle Low SL", "tp": 0.020, "sl": 0.015, "candle_sl": True, "trail": False},

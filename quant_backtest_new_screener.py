@@ -253,10 +253,10 @@ def simulate_all_models(
     n_rem = len(remaining_bars)
 
     # ─────────────────────────────────────────────────────────────
-    # Model 1: Fixed 1.5% TP / 0.8% SL
+    # Model 1: Fixed 1.5% TP / 1.0% SL (1.5:1 R:R)
     # ─────────────────────────────────────────────────────────────
     tp_1 = entry_price * 1.015
-    sl_1 = entry_price * (1.0 - 0.008)
+    sl_1 = entry_price * (1.0 - 0.010)
     exit_p1 = None
     exit_r1 = "EOD"
     exit_t1 = None
@@ -729,7 +729,7 @@ def generate_quant_dashboard(
     # 1. Equity Curves Comparison (All 4 Models)
     ax1 = axes[0, 0]
     ax1.set_facecolor("#111827")
-    ax1.plot(df_trades["m1_pnl"].cumsum(), label="Model 1: Target 1.5%, SL 0.8%", color="#10b981", lw=2.0)
+    ax1.plot(df_trades["m1_pnl"].cumsum(), label="Model 1: Target 1.5%, SL 1.0%", color="#10b981", lw=2.0)
     ax1.plot(df_trades["m2_pnl"].cumsum(), label="Model 2: Trailing SL (+1.0%/0.6%)", color="#38bdf8", lw=1.8)
     ax1.plot(df_trades["m3_pnl"].cumsum(), label="Model 3: Candle-Low SL (2.0% TP)", color="#f59e0b", lw=1.8)
     ax1.plot(df_trades["m4_pnl"].cumsum(), label="Model 4: Multi-Day Swing (3.0% TP)", color="#a855f7", lw=1.8)
@@ -882,7 +882,7 @@ def main(force_rerun: bool = False):
     m4_metrics = compute_institutional_metrics(df_trades["m4_pnl"], dates_col)
 
     df_summary = pd.DataFrame([
-        {"Model": "Model 1: Target 1.5%, SL 0.8% (1.875:1 R:R)", **m1_metrics},
+        {"Model": "Model 1: Target 1.5%, SL 1.0% (1.5:1 R:R)", **m1_metrics},
         {"Model": "Model 2: Trailing SL (+1.0%/0.6% trail)", **m2_metrics},
         {"Model": "Model 3: Candle-Low SL (2.0% Target)", **m3_metrics},
         {"Model": "Model 4: Multi-Day Swing (3.0% TP, 1.5% SL)", **m4_metrics},

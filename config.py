@@ -45,6 +45,9 @@ CANDLE_DURATION_MINUTES = 5 if "5" in TIMEFRAME else (3 if "3" in TIMEFRAME else
 DEFAULT_MARKET_MODE = "SPOT"
 # Default Stock Universe: 'NIFTY500' (Broad Market 500 stocks)
 DEFAULT_UNIVERSE = "NIFTY500"
+# Intraday Breakout Execution Target & Stop Loss Settings
+DEFAULT_TARGET_PCT = float(os.getenv("DEFAULT_TARGET_PCT", "1.5"))      # Target: +1.5%
+DEFAULT_STOP_LOSS_PCT = float(os.getenv("DEFAULT_STOP_LOSS_PCT", "1.0"))  # Stop Loss: -1.0%
 
 # Primary Reversal Scanner Timeframes
 # Derive from TIMEFRAME unless explicitly overridden by SCANNER_TIMEFRAMES env
