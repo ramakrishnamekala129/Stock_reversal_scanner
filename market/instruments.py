@@ -111,7 +111,13 @@ class InstrumentManager:
             self._index_master_instruments(raw_instruments)
 
         # Determine target symbol list based on selected universe
-        if self._current_universe == "NIFTY500":
+        if self._current_universe in ("CASH", "ALL_CASH", "NSE_CASH", "CASH_SEGMENT"):
+            self._current_universe = "CASH"
+            target_symbols = sorted(list(self._all_spot_equities.keys()))
+            if not target_symbols:
+                logger.warning("All cash equities empty, falling back to Nifty 500 universe.")
+                target_symbols = self.universe_loader.get_nifty_500_symbols(force_refresh=force_refresh) or list(self._fno_symbols)
+        elif self._current_universe == "NIFTY500":
             target_symbols = self.universe_loader.get_nifty_500_symbols(force_refresh=force_refresh)
             if not target_symbols:
                 logger.warning("Nifty 500 symbols empty, falling back to F&O universe.")
@@ -322,6 +328,10 @@ class InstrumentManager:
     def get_spot_instrument(self, symbol: str) -> Optional[FNOInstrument]:
         """Returns cash spot equity instrument for underlying symbol."""
         return self._all_spot_equities.get(symbol) or self._spot_universe.get(symbol)
+
+    def get_all_spot_equities(self) -> Dict[str, FNOInstrument]:
+        """Returns dictionary of all indexed NSE cash equity spot instruments."""
+        return self._all_spot_equities
 
     def get_instrument_keys(self) -> List[str]:
         """Returns list of active instrument keys for current mode."""

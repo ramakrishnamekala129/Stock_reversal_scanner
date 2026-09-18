@@ -13,7 +13,7 @@ import time
 from datetime import date, datetime, time as dt_time
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 import pandas as pd
 import pytz
 
@@ -77,6 +77,7 @@ class FNOIntradayScanner:
         self._hema_scan_lock = threading.Lock()
         self._is_chartink_scanning = False
         self._chartink_scan_lock = threading.Lock()
+        self._is_cash_v13_backtesting = False
         self._daily_dfs_cache: Dict[str, pd.DataFrame] = {}
         self._daily_cache_loaded: bool = False
 
@@ -122,6 +123,28 @@ class FNOIntradayScanner:
         except Exception as e:
             logger.warning(f"Error loading daily candles cache from DB: {e}")
 
+    def get_eligible_today_symbols(self) -> Set[str]:
+        """Returns cached set of symbols that qualify under daily breakout / screener criteria for today."""
+        if hasattr(self, "_eligible_today_cache") and self._eligible_today_cache is not None:
+            return self._eligible_today_cache
+
+        try:
+            from chartink_cash_v13_backtest import prescreen_candidate_symbols, resolve_backtest_window
+            self._load_daily_candles_cache()
+            start_date, end_date = resolve_backtest_window("current_day")
+            target_univ = self._universe if self._universe else self.instrument_mgr.load_universe(self.universe_name, mode=self.market_mode)
+            screened, _ = prescreen_candidate_symbols(
+                target_univ,
+                self._daily_dfs_cache,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            self._eligible_today_cache = set(screened.keys())
+            return self._eligible_today_cache
+        except Exception as ex:
+            logger.debug(f"Error computing eligible today symbols: {ex}")
+            return set()
+
     def startup(
         self,
         force_refresh: bool = False,
@@ -136,6 +159,7 @@ class FNOIntradayScanner:
             self.market_mode = mode.upper()
         if universe:
             self.universe_name = universe.upper()
+        self._eligible_today_cache = None
         logger.info(f"Starting Upstox Scanner [Universe: {self.universe_name}, Mode: {self.market_mode}]...")
 
         # 1. Authenticate / Check credentials
@@ -190,43 +214,48 @@ class FNOIntradayScanner:
             market_mode=self.market_mode,
             symbols_scanned=fno_count,
         )
-        # 4. Fetch today's historical 5M candles (from 1m history) and initialize multi-timeframe engine
-        historical_5m = self.hist_loader.load_initial_5m_candles(self._universe, force_refresh=force_refresh)
-        key_map = {sym: item["instrument_key"] for sym, item in self._universe.items()}
-        self.candle_engine.initialize_history(historical_5m, key_map=key_map, timeframe="5m")
-
-        # Also seed 3m and 15m from raw broker candles if available
-        for tf in ["3m", "15m"]:
-            if tf in config.SCANNER_TIMEFRAMES:
-                try:
-                    tf_dfs = self.hist_loader.refresh_latest_broker_candles(self._universe, timeframe=tf)
-                    self.candle_engine.initialize_history(tf_dfs, key_map=key_map, timeframe=tf)
-                except Exception as e:
-                    logger.debug(f"Could not pre-seed {tf} candles: {e}")
-
-        self.evaluate_initial_history()
-
-        # 5. Connect WebSocket
-        ws_status = "READY"
-        if self.auth.has_access_token:
-            try:
-                self.ws_streamer = UpstoxWebSocketStreamer(
-                    api_client=self.auth.get_api_client(),
-                    instrument_key_to_symbol=self.instrument_mgr.key_to_symbol_map,
-                    on_tick=self._handle_live_tick,
-                    mode="full",
-                )
-                inst_keys = self.instrument_mgr.get_instrument_keys()
-                self.ws_streamer.connect(inst_keys)
-                ws_status = "CONNECTED"
-                dashboard_state.update_stats(ws_status="CONNECTED")
-            except Exception as e:
-                logger.error(f"Failed to start WebSocket streamer: {e}")
-                ws_status = f"ERROR ({e})"
-                dashboard_state.update_stats(ws_status=f"ERROR ({e})")
-                self.session_mgr.stats.websocket_errors += 1
+        # 4. Fetch today's native historical 5M candles and initialize the engine
+        if self.universe_name in ("CASH", "ALL_CASH", "NSE_CASH"):
+            logger.info(f"CASH universe active ({fno_count} stocks): Fast day-candle-first startup active (bypassing 2,650-stock 5M download).")
+            ws_status = "READY"
+            dashboard_state.update_stats(ws_status="CONNECTED")
         else:
-            ws_status = "NO ACCESS TOKEN (SIMULATION / DRY-RUN ONLY)"
+            historical_5m = self.hist_loader.load_initial_5m_candles(self._universe, force_refresh=force_refresh)
+            key_map = {sym: item["instrument_key"] for sym, item in self._universe.items()}
+            self.candle_engine.initialize_history(historical_5m, key_map=key_map, timeframe="5m")
+
+            # Also seed 3m and 15m from raw broker candles if available
+            for tf in ["3m", "15m"]:
+                if tf in config.SCANNER_TIMEFRAMES:
+                    try:
+                        tf_dfs = self.hist_loader.refresh_latest_broker_candles(self._universe, timeframe=tf)
+                        self.candle_engine.initialize_history(tf_dfs, key_map=key_map, timeframe=tf)
+                    except Exception as e:
+                        logger.debug(f"Could not pre-seed {tf} candles: {e}")
+
+            self.evaluate_initial_history()
+
+            # 5. Connect WebSocket
+            ws_status = "READY"
+            if self.auth.has_access_token:
+                try:
+                    self.ws_streamer = UpstoxWebSocketStreamer(
+                        api_client=self.auth.get_api_client(),
+                        instrument_key_to_symbol=self.instrument_mgr.key_to_symbol_map,
+                        on_tick=self._handle_live_tick,
+                        mode="full",
+                    )
+                    inst_keys = self.instrument_mgr.get_instrument_keys()
+                    self.ws_streamer.connect(inst_keys)
+                    ws_status = "CONNECTED"
+                    dashboard_state.update_stats(ws_status="CONNECTED")
+                except Exception as e:
+                    logger.error(f"Failed to start WebSocket streamer: {e}")
+                    ws_status = f"ERROR ({e})"
+                    dashboard_state.update_stats(ws_status=f"ERROR ({e})")
+                    self.session_mgr.stats.websocket_errors += 1
+            else:
+                ws_status = "NO ACCESS TOKEN (SIMULATION / DRY-RUN ONLY)"
             dashboard_state.update_stats(ws_status="DRY RUN / SIMULATION")
 
         # 6. Start FastAPI Web Dashboard (after history, signals & websocket are ready)
@@ -403,10 +432,11 @@ class FNOIntradayScanner:
         else:
             logger.info("Tab 1 5-Minute Reversal Signals disabled in configuration. Skipping historical reversal replay.")
 
-        # Automatically pre-load daily candles and kick off ultra-fast parallel HEMA + T3 scan and Chartink scan on startup
+        # Automatically pre-load daily candles and kick off ultra-fast parallel Chartink scan on startup
         try:
             self._load_daily_candles_cache()
-            threading.Thread(target=self.scan_hema_universe, daemon=True, name="StartupHemaScan").start()
+            if getattr(config, "ENABLE_HEMA_STRATEGY_TAB", False):
+                threading.Thread(target=self.scan_hema_universe, daemon=True, name="StartupHemaScan").start()
             threading.Thread(target=self.scan_chartink_universe, daemon=True, name="StartupChartinkScan").start()
         except Exception as e:
             logger.debug(f"Startup scan error: {e}")
@@ -422,9 +452,10 @@ class FNOIntradayScanner:
             self.candle_engine.sync_broker_candles(sym, df_b, key_map=key_map)
         logger.info(f"Broker candle sync complete for {len(broker_dfs)} symbols.")
 
-        # Automatically re-evaluate HEMA + T3 and Chartink strategy across universe on every candle sync
+        # Automatically re-evaluate Chartink strategy (and HEMA if enabled) across universe on every candle sync
         try:
-            threading.Thread(target=self.scan_hema_universe, daemon=True, name="SyncHemaScan").start()
+            if getattr(config, "ENABLE_HEMA_STRATEGY_TAB", False):
+                threading.Thread(target=self.scan_hema_universe, daemon=True, name="SyncHemaScan").start()
             threading.Thread(target=self.scan_chartink_universe, daemon=True, name="SyncChartinkScan").start()
         except Exception as e:
             logger.debug(f"Sync scan error: {e}")
@@ -436,6 +467,9 @@ class FNOIntradayScanner:
         Numba-accelerated parallel evaluation with atomic batch state updating (100x faster).
         Protected by re-entrancy lock to prevent CPU/thread saturation.
         """
+        if not getattr(config, "ENABLE_HEMA_STRATEGY_TAB", False):
+            return (0.0, 0, 0)
+
         if self._is_hema_scanning:
             logger.debug("HEMA scan already running in background. Skipping overlapping request.")
             return (0.0, 0, 0)
@@ -684,6 +718,188 @@ class FNOIntradayScanner:
                 self.scan_chartink_universe()
             except Exception as e:
                 logger.debug(f"Chartink live monitor loop exception: {e}")
+
+    def run_cash_v13_backtest(
+        self,
+        progress=None,
+        as_of: Optional[date] = None,
+        mode: str = "current_day",
+        universe_name: Optional[str] = None,
+    ) -> Dict[str, object]:
+        """Run Cash V1.3 backtest with SQLite daily pre-screening and broker 5m download."""
+        if self._is_cash_v13_backtesting:
+            raise RuntimeError("Cash V1.3 backtest is already running")
+        active_target_univ = (universe_name or getattr(self, "universe_name", "CASH")).upper()
+        if not self._universe or active_target_univ != getattr(self, "universe_name", ""):
+            self.universe_name = active_target_univ
+            self._universe = self.instrument_mgr.load_universe(
+                universe_name=active_target_univ,
+                mode="OPTIONS",
+                force_refresh=False,
+            )
+        if not self._universe:
+            raise RuntimeError("Scanner universe could not be loaded")
+        if not self.rest_client.access_token:
+            raise RuntimeError("An Upstox access token is required to download 5-minute data")
+
+        self._is_cash_v13_backtesting = True
+        try:
+            from chartink_cash_v13_backtest import (
+                ChartinkCashV13Backtester,
+                INSTITUTIONAL_BRANCH_REACHABLE,
+                load_quarterly_fii_history,
+                load_broker_5minute_data,
+                prescreen_candidate_symbols,
+                resolve_backtest_window,
+            )
+
+            if active_target_univ in ("CASH", "ALL_CASH", "NSE_CASH", "CASH_SEGMENT"):
+                all_spot = self.instrument_mgr.get_all_spot_equities()
+                cash_universe = {s: spot.to_dict() for s, spot in all_spot.items()} if all_spot else {}
+            else:
+                cash_universe = {}
+                for symbol in self._universe:
+                    spot = self.instrument_mgr.get_spot_instrument(symbol)
+                    if spot:
+                        cash_universe[symbol] = spot.to_dict()
+            if not cash_universe:
+                for symbol, spot in self.instrument_mgr.get_all_spot_equities().items():
+                    cash_universe[symbol] = spot.to_dict()
+            if not cash_universe:
+                raise RuntimeError("No NSE cash-equity instruments are available for Cash V1.3")
+
+            # 1. Load SQLite daily candles cache FIRST
+            self._load_daily_candles_cache()
+
+            # 2. Resolve backtest window based on mode ('current_day' or '3_months')
+            available_dates = []
+            if self._daily_dfs_cache:
+                for df in self._daily_dfs_cache.values():
+                    if df is not None and not df.empty:
+                        available_dates.extend(pd.to_datetime(df["timestamp"]).dt.date.tolist())
+            if not available_dates:
+                try:
+                    from database.historical_db import HistoricalCandleDatabase
+                    hdb = HistoricalCandleDatabase()
+                    conn = hdb._get_connection()
+                    rows = conn.execute("SELECT DISTINCT date FROM candle_sync_meta").fetchall()
+                    available_dates.extend([date.fromisoformat(r[0]) for r in rows if r[0]])
+                except Exception:
+                    pass
+            available_dates = sorted(set(available_dates))
+            start_date, end_date = resolve_backtest_window(mode, as_of=as_of, available_dates=available_dates)
+
+            # 3. Pre-screen candidate symbols using SQLite daily candles
+            if progress:
+                progress(0, len(cash_universe), f"Pre-screening {len(cash_universe)} symbols via daily DB...")
+
+            fii_history = {}
+            if INSTITUTIONAL_BRANCH_REACHABLE:
+                fii_history = load_quarterly_fii_history(
+                    self.rest_client,
+                    cash_universe,
+                    progress=(
+                        (lambda done, total, symbol: progress(done, total, f"FII {symbol}"))
+                        if progress else None
+                    ),
+                )
+
+            screened_universe, candidate_days_map = prescreen_candidate_symbols(
+                cash_universe,
+                self._daily_dfs_cache,
+                start_date=start_date,
+                end_date=end_date,
+                fii_history_by_symbol=fii_history,
+            )
+            skipped_count = len(cash_universe) - len(screened_universe)
+            logger.info(
+                "Cash V1.3 pre-screen [%s to %s]: %d candidates found, %d symbols skipped.",
+                start_date, end_date, len(screened_universe), skipped_count,
+            )
+
+            if not screened_universe:
+                logger.info("No candidate symbols satisfied daily breakout criteria in the window.")
+                return {
+                    "mode": mode,
+                    "from_date": start_date.isoformat(),
+                    "to_date": end_date.isoformat(),
+                    "symbols_tested": 0,
+                    "symbols_screened_total": len(cash_universe),
+                    "symbols_skipped_prefilter": skipped_count,
+                    "total_trades": 0,
+                    "trades": [],
+                    "win_rate": 0.0,
+                    "total_pnl_pct": 0.0,
+                    "profit_factor": 0.0,
+                    "stock_days_total": 0,
+                    "daily_candidate_stock_days": 0,
+                    "daily_prefilter_reduction_pct": 100.0,
+                    "bars_evaluated": 0,
+                }
+
+            current_session = (
+                self.db.get_candles_by_date(end_date.isoformat())
+                if self.db else {}
+            )
+            if hasattr(self, "candle_engine") and self.candle_engine:
+                for sym in screened_universe:
+                    df_live = self.candle_engine.get_candle_history_df(sym, timeframe="5m", include_forming=True)
+                    if df_live is not None and not df_live.empty:
+                        if sym in current_session:
+                            current_session[sym] = pd.concat([current_session[sym], df_live]).drop_duplicates("timestamp", keep="last").sort_values("timestamp")
+                        else:
+                            current_session[sym] = df_live
+
+            # 4. Download 5m data ONLY for screened candidate symbols
+            from database.historical_db import HistoricalCandleDatabase
+            historical_db = HistoricalCandleDatabase()
+
+            candles = load_broker_5minute_data(
+                self.rest_client,
+                screened_universe,
+                start_date=start_date,
+                end_date=end_date,
+                hist_db=historical_db,
+                current_session_by_symbol=current_session,
+                progress=(
+                    (lambda done, total, symbol: progress(done, total, f"5m {symbol} ({done}/{total})"))
+                    if progress else None
+                ),
+            )
+            if not candles:
+                raise RuntimeError(f"No native 5-minute candles were returned for {len(screened_universe)} candidate symbols")
+
+            # 5. Evaluate strategy
+            candidate_dates = getattr(candidate_days_map, "candidate_dates", None)
+            result = ChartinkCashV13Backtester(
+                target_pct=config.DEFAULT_TARGET_PCT,
+                stop_pct=config.DEFAULT_STOP_LOSS_PCT,
+            ).run(
+                candles,
+                self._daily_dfs_cache,
+                fii_history_by_symbol=fii_history,
+                start_date=start_date,
+                end_date=end_date,
+                mode=mode,
+                candidate_dates_by_symbol=candidate_dates,
+                progress=(
+                    (lambda done, total, symbol: progress(done, total, f"Evaluate {symbol}"))
+                    if progress else None
+                ),
+            )
+            result["symbols_screened_total"] = len(cash_universe)
+            result["symbols_skipped_prefilter"] = skipped_count
+
+            output_dir = Path(config.DATA_DIR)
+            trade_file = "chartink_cash_v13_today_trades.csv" if start_date == end_date else "chartink_cash_v13_3month_trades.csv"
+            summary_file = "chartink_cash_v13_today_summary.csv" if start_date == end_date else "chartink_cash_v13_3month_summary.csv"
+            pd.DataFrame(result["trades"]).to_csv(output_dir / trade_file, index=False)
+            pd.DataFrame([{k: v for k, v in result.items() if k != "trades"}]).to_csv(
+                output_dir / summary_file, index=False
+            )
+            return result
+        finally:
+            self._is_cash_v13_backtesting = False
 
     def run_live(self):
         """

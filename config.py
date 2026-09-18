@@ -44,9 +44,9 @@ CANDLE_DURATION_MINUTES = 5 if "5" in TIMEFRAME else (3 if "3" in TIMEFRAME else
 # Market Mode: 'SPOT' (cash equity)
 DEFAULT_MARKET_MODE = "SPOT"
 # Default Stock Universe: 'NIFTY500' (Broad Market 500 stocks)
-DEFAULT_UNIVERSE = "NIFTY500"
+DEFAULT_UNIVERSE = os.getenv("DEFAULT_UNIVERSE", "NIFTY500")
 # Intraday Breakout Execution Target & Stop Loss Settings
-DEFAULT_TARGET_PCT = float(os.getenv("DEFAULT_TARGET_PCT", "2.0"))        # Profit Target: +2.0%
+DEFAULT_TARGET_PCT = float(os.getenv("DEFAULT_TARGET_PCT", "5.0"))        # Profit Target: +5.0%
 DEFAULT_STOP_LOSS_PCT = float(os.getenv("DEFAULT_STOP_LOSS_PCT", "1.0"))  # Initial Stop Loss: -1.0%
 ENABLE_TRAILING_STOP = os.getenv("ENABLE_TRAILING_STOP", "true").lower() in ("true", "1", "yes")  # Trailing Stop: Enabled
 TRAILING_ACTIVATION_PCT = float(os.getenv("TRAILING_ACTIVATION_PCT", "1.0"))  # Activate trailing at +1.0%
@@ -66,14 +66,15 @@ else:
 TIMEFRAME_MINUTES = {"3m": 3, "5m": 5, "15m": 15}
 HEMA_TIMEFRAMES = ["15m", "30m", "1h", "2h", "4h", "1d"]
 
-# Feature Flags (Tab 1 5-Minute Reversal Signals disabled by default per user request)
+# Feature Flags (Tab 1 5-Minute Reversal Signals and HEMA + T3 tab disabled per user request)
 ENABLE_TAB1_REVERSAL_SIGNALS = os.getenv("ENABLE_TAB1_REVERSAL_SIGNALS", "false").lower() in ("true", "1", "yes")
+ENABLE_HEMA_STRATEGY_TAB = os.getenv("ENABLE_HEMA_STRATEGY_TAB", "false").lower() in ("true", "1", "yes")
 
 # Historical Candle Database & Automated Gap Filler Settings
 HISTORICAL_DB_PATH = DATA_DIR / "historical_candles.db"
 ENABLE_HISTORICAL_GAP_FILLER = os.getenv("ENABLE_HISTORICAL_GAP_FILLER", "true").lower() in ("true", "1", "yes")
 HISTORICAL_LOOKBACK_DAYS = int(os.getenv("HISTORICAL_LOOKBACK_DAYS", "30"))
-HISTORICAL_CANDLE_GRANULARITY = os.getenv("HISTORICAL_CANDLE_GRANULARITY", "1minute")
+HISTORICAL_CANDLE_GRANULARITY = "5minute"
 
 # Volume Confirmation
 VOLUME_LOOKBACK = 20
@@ -128,7 +129,13 @@ SCORE_WEIGHTS = {
 }
 
 # API Rate Limits & Performance
-UPSTOX_RATE_LIMIT_PER_SEC = 25  # Official Upstox Market Data limit: 25 req/sec
+# Upstox standard APIs: 50/sec, 500/minute, and 2,000/30 minutes. The long
+# rolling window is the binding limit for historical universe backfills.
+UPSTOX_RATE_LIMIT_PER_SEC = 50
+# 0.95 seconds permits about 1,895 requests per 30 minutes, leaving headroom
+# below the documented 2,000-request quota. This limiter is process-wide.
+UPSTOX_MIN_REQUEST_INTERVAL_SECONDS = float(os.getenv("UPSTOX_MIN_REQUEST_INTERVAL_SECONDS", "0.95"))
+UPSTOX_MAX_RETRY_AFTER_SECONDS = float(os.getenv("UPSTOX_MAX_RETRY_AFTER_SECONDS", "900"))
 MAX_CONCURRENT_REQUESTS = 25
 API_RETRY_ATTEMPTS = 3
 API_RETRY_BACKOFF_BASE = 1.0  # seconds

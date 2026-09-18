@@ -391,7 +391,7 @@ class ChartinkIntradayEngine:
         target_date: Optional[date] = None,
     ) -> Optional[ChartinkSignal]:
         """
-        Evaluates today's intraday candles (1m or 5m) chronologically to find the
+        Evaluates today's native 5m candles chronologically to find the
         EXACT first candle where Chartink breakout conditions were triggered.
         Guarantees that the detected timestamp is the actual historical breakout candle time,
         completely solving repainting.

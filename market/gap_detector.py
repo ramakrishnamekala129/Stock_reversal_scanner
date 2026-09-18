@@ -77,7 +77,7 @@ class GapDetector:
         symbol: str,
         instrument_key: str,
         lookback_days: int = 30,
-        min_candles_per_day: int = 360,
+        min_candles_per_day: int = 72,
     ) -> List[GapWindow]:
         """
         Detects missing or incomplete trading dates for a single symbol and groups

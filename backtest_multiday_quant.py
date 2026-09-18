@@ -1,7 +1,7 @@
 """
 Comprehensive Multi-Day Holding Quant-Level Backtest Engine for Chartink Screener.
 Simulates Multi-Day Holding combinations across 6 months (March - September 2026) using
-1-minute tick-level historical data for all 208 F&O stocks.
+native 5-minute historical data for all F&O stocks.
 
 Includes Full Institutional Quant Suite:
 1. Walk-forward analysis
@@ -31,8 +31,8 @@ import matplotlib.pyplot as plt
 
 print("Initializing Multi-Day Holding Quant Backtest...", flush=True)
 
-# 1. Load Parquet 1m Data & Daily Context
-CACHE_DIR = Path("data/cache/1m")
+# 1. Load native 5m parquet data and daily context
+CACHE_DIR = Path("data/cache/5m")
 TRADES_CSV = Path("data/chartink_6month_trades.csv")
 
 if not TRADES_CSV.exists():
@@ -49,9 +49,9 @@ unique_entries = raw_trades[raw_trades["timeframe"] == "15min"].drop_duplicates(
 
 print(f"Found {len(unique_entries)} unique breakout entries across {unique_entries['symbol'].nunique()} stocks.", flush=True)
 
-# Pre-load all required 1-minute Parquet files into RAM
+# Pre-load all required native 5-minute parquet files into RAM
 symbols_needed = unique_entries["symbol"].unique()
-dfs_1m: Dict[str, pd.DataFrame] = {}
+dfs_5m: Dict[str, pd.DataFrame] = {}
 t0 = time.time()
 for sym in symbols_needed:
     p_file = CACHE_DIR / f"{sym}.parquet"
@@ -60,11 +60,11 @@ for sym in symbols_needed:
             df = pd.read_parquet(p_file)
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             df = df.sort_values("timestamp").reset_index(drop=True)
-            dfs_1m[sym] = df
+            dfs_5m[sym] = df
         except Exception:
             pass
 
-print(f"Loaded {len(dfs_1m)} 1-minute stock datasets into memory in {time.time() - t0:.2f}s.", flush=True)
+print(f"Loaded {len(dfs_5m)} native 5-minute datasets into memory in {time.time() - t0:.2f}s.", flush=True)
 
 
 # 2. Multi-Day Combinations Configuration
@@ -223,7 +223,7 @@ def simulate_multiday_trade(
                 if trail_sl > sl_price:
                     sl_price = trail_sl
 
-        # 2. Check Overnight Gap Openings (First 1m bar of day at 09:15)
+        # 2. Check overnight gap openings using the first 5m bar at 09:15
         if b_time <= dtime(9, 16) and b_date != entry_date:
             # Check Gap-Down SL
             if b_open <= sl_price:
@@ -321,14 +321,14 @@ else:
         
         for _, row in unique_entries.iterrows():
             sym = row["symbol"]
-            if sym not in dfs_1m:
+            if sym not in dfs_5m:
                 continue
                 
             e_time = row["entry_time"]
             e_price = float(row["entry_price"])
             
             trade = simulate_multiday_trade(
-                sym_df=dfs_1m[sym],
+                sym_df=dfs_5m[sym],
                 entry_time=e_time,
                 base_entry_px=e_price,
                 tp_pct=combo["tp"],
@@ -541,10 +541,10 @@ for slip in [0.0005, 0.0010, 0.0020, 0.0030]:
     s_trades = []
     for _, row in unique_entries.iterrows():
         sym = row["symbol"]
-        if sym not in dfs_1m:
+        if sym not in dfs_5m:
             continue
         tr = simulate_multiday_trade(
-            dfs_1m[sym], row["entry_time"], float(row["entry_price"]),
+            dfs_5m[sym], row["entry_time"], float(row["entry_price"]),
             tp_pct=0.050, sl_pct=0.020, max_days=3, slippage_pct=slip
         )
         if tr:
@@ -612,9 +612,9 @@ for pert in [-0.30, -0.20, -0.10, 0.0, 0.10, 0.20, 0.30]:
     p_trades = []
     for _, row in unique_entries.iloc[::2].iterrows():  # Sample half for speed
         sym = row["symbol"]
-        if sym in dfs_1m:
+        if sym in dfs_5m:
             tr = simulate_multiday_trade(
-                dfs_1m[sym], row["entry_time"], float(row["entry_price"]),
+                dfs_5m[sym], row["entry_time"], float(row["entry_price"]),
                 tp_pct=curr_tp, sl_pct=curr_sl, max_days=3
             )
             if tr:

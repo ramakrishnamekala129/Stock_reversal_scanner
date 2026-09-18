@@ -78,11 +78,11 @@ def load_all_daily_candles() -> Dict[str, pd.DataFrame]:
     return daily_map
 
 
-def resample_to_5m(df_1m: pd.DataFrame) -> pd.DataFrame:
-    """Fast resampling of 1m intraday candles to 5m bars."""
-    if df_1m.empty:
+def normalize_5m(df_5m: pd.DataFrame) -> pd.DataFrame:
+    """Normalize native 5-minute candles to session-aligned bars."""
+    if df_5m.empty:
         return pd.DataFrame()
-    df = df_1m.copy()
+    df = df_5m.copy()
     df.set_index("timestamp", inplace=True)
     res = df.resample("5min", closed="left", label="left").agg({
         "open": "first",
@@ -473,13 +473,13 @@ def run_full_backtest() -> pd.DataFrame:
     # Get all distinct trading dates
     trading_dates = [
         r[0] for r in conn.execute(
-            "SELECT DISTINCT substr(timestamp, 1, 10) FROM candles_history_1m ORDER BY 1"
+            "SELECT DISTINCT substr(timestamp, 1, 10) FROM candles_history_5m ORDER BY 1"
         ).fetchall()
     ]
     logger.info(f"Identified {len(trading_dates)} distinct trading dates: {trading_dates[0]} to {trading_dates[-1]}")
 
     all_symbols = [
-        r[0] for r in conn.execute("SELECT DISTINCT symbol FROM candles_history_1m ORDER BY 1").fetchall()
+        r[0] for r in conn.execute("SELECT DISTINCT symbol FROM candles_history_5m ORDER BY 1").fetchall()
     ]
     logger.info(f"Target screening universe: {len(all_symbols)} symbols.")
 
@@ -493,22 +493,22 @@ def run_full_backtest() -> pd.DataFrame:
         df_sym_daily = daily_map[sym]
         sector = sector_map.get(sym, "Other")
 
-        # Load all 1m candles for this symbol
-        df_1m_sym = pd.read_sql_query(
-            f"SELECT timestamp, open, high, low, close, volume FROM candles_history_1m WHERE symbol='{sym}' ORDER BY timestamp",
+        # Load all native 5m candles for this symbol
+        df_5m_sym = pd.read_sql_query(
+            f"SELECT timestamp, open, high, low, close, volume FROM candles_history_5m WHERE symbol='{sym}' ORDER BY timestamp",
             conn
         )
-        if df_1m_sym.empty:
+        if df_5m_sym.empty:
             continue
 
-        df_1m_sym["timestamp"] = pd.to_datetime(df_1m_sym["timestamp"]).dt.tz_localize(None)
-        df_1m_sym["date"] = df_1m_sym["timestamp"].dt.date
+        df_5m_sym["timestamp"] = pd.to_datetime(df_5m_sym["timestamp"]).dt.tz_localize(None)
+        df_5m_sym["date"] = df_5m_sym["timestamp"].dt.date
 
         # Group by trading date
         for d_str in trading_dates:
             d_obj = datetime.strptime(d_str, "%Y-%m-%d").date()
-            df_day_1m = df_1m_sym[df_1m_sym["date"] == d_obj]
-            if len(df_day_1m) < 15:
+            df_day_5m = df_5m_sym[df_5m_sym["date"] == d_obj]
+            if len(df_day_5m) < 3:
                 continue
 
             # Prior daily context strictly prior to today
@@ -518,8 +518,7 @@ def run_full_backtest() -> pd.DataFrame:
 
             subsequent_daily = df_sym_daily[df_sym_daily["date"] > d_obj]
 
-            # Resample today's 1m candles to 5m
-            bars_5m = resample_to_5m(df_day_1m)
+            bars_5m = normalize_5m(df_day_5m)
             if len(bars_5m) < 5:
                 continue
 

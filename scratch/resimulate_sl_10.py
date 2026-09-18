@@ -21,24 +21,24 @@ df_trades["orig_idx"] = np.arange(len(df_trades))
 results = {}
 
 for sym, group in df_trades.groupby("symbol"):
-    df_1m = pd.read_sql_query(
-        f"SELECT timestamp, open, high, low, close, volume FROM candles_history_1m WHERE symbol='{sym}' ORDER BY timestamp",
+    df_5m = pd.read_sql_query(
+        f"SELECT timestamp, open, high, low, close, volume FROM candles_history_5m WHERE symbol='{sym}' ORDER BY timestamp",
         conn
     )
-    if df_1m.empty:
+    if df_5m.empty:
         continue
-    df_1m["timestamp"] = pd.to_datetime(df_1m["timestamp"]).dt.tz_localize(None)
-    df_1m["date"] = df_1m["timestamp"].dt.date
+    df_5m["timestamp"] = pd.to_datetime(df_5m["timestamp"]).dt.tz_localize(None)
+    df_5m["date"] = df_5m["timestamp"].dt.date
 
     for _, row in group.iterrows():
         orig_i = int(row["orig_idx"])
         t_date = datetime.strptime(row["date"], "%Y-%m-%d").date()
-        day_1m = df_1m[df_1m["date"] == t_date]
-        if len(day_1m) < 10:
+        day_5m = df_5m[df_5m["date"] == t_date]
+        if len(day_5m) < 3:
             results[orig_i] = (row["m1_pnl"], row["m1_exit_reason"], row["m1_holding_bars"])
             continue
 
-        df_5m = day_1m.set_index("timestamp").resample("5min", closed="left", label="left").agg({
+        df_5m = day_5m.set_index("timestamp").resample("5min", closed="left", label="left").agg({
             "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"
         }).dropna().reset_index()
 

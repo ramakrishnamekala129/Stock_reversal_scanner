@@ -16,6 +16,7 @@ import upstox_client
 from upstox_client.rest import ApiException
 
 import config
+from market.rate_limiter import AsyncUpstoxRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +29,20 @@ class UpstoxRestClient:
 
     def __init__(self, api_client: Optional[upstox_client.ApiClient] = None):
         self.api_client = api_client
+        self.rate_limiter = AsyncUpstoxRateLimiter(config.UPSTOX_RATE_LIMIT_PER_SEC)
         self.session = requests.Session()
         self.session.headers.update({
             "Accept": "application/json",
             "User-Agent": "Upstox-FNO-Scanner/1.0",
         })
-        if api_client and api_client.configuration and api_client.configuration.access_token:
+        if self.api_client is None and config.UPSTOX_ACCESS_TOKEN:
+            conf = upstox_client.Configuration()
+            conf.access_token = config.UPSTOX_ACCESS_TOKEN
+            self.api_client = upstox_client.ApiClient(conf)
+
+        if self.access_token:
             self.session.headers.update({
-                "Authorization": f"Bearer {api_client.configuration.access_token}"
+                "Authorization": f"Bearer {self.access_token}"
             })
 
     @property
@@ -98,15 +105,17 @@ class UpstoxRestClient:
 
         for attempt in range(config.API_RETRY_ATTEMPTS):
             try:
+                self.rate_limiter.acquire_sync()
                 resp = self.session.get(url, timeout=10)
                 if resp.status_code == 200:
                     result = resp.json()
                     candles = result.get("data", {}).get("candles", [])
                     return candles
                 elif resp.status_code == 429:
-                    sleep_time = config.API_RETRY_BACKOFF_BASE * (2 ** attempt)
-                    logger.warning(f"Rate limited (429) on {instrument_key}, sleeping {sleep_time:.1f}s...")
-                    time.sleep(sleep_time)
+                    raw_retry = float(resp.headers.get("Retry-After", config.API_RETRY_BACKOFF_BASE * (2 ** attempt)))
+                    sleep_time, announced = self.rate_limiter.defer(raw_retry)
+                    if announced:
+                        logger.warning("Upstox rate limit active; pausing requests for %.0fs.", sleep_time)
                 else:
                     logger.error(f"Error fetching daily candles for {instrument_key} (HTTP {resp.status_code}): {resp.text}")
                     break
@@ -116,28 +125,26 @@ class UpstoxRestClient:
 
         return []
 
-    def get_intraday_1m_candles(self, instrument_key: str) -> List[List[Any]]:
+    def get_intraday_5m_candles(self, instrument_key: str) -> List[List[Any]]:
         """
-        Fetches today's intraday 1-minute historical candles directly from Upstox broker.
+        Fetches today's native 5-minute candles directly from Upstox History V3 intraday endpoint.
         Candle format: [timestamp, open, high, low, close, volume, open_interest]
         """
-        encoded_key = urllib.parse.quote(instrument_key)
-        url = f"{self.BASE_API_V2_URL}/historical-candle/intraday/{encoded_key}/1minute"
+        if not self.api_client:
+            return []
 
-        for attempt in range(config.API_RETRY_ATTEMPTS):
-            try:
-                resp = self.session.get(url, timeout=10)
-                if resp.status_code == 200:
-                    result = resp.json()
-                    candles = result.get("data", {}).get("candles", [])
-                    return candles
-                elif resp.status_code == 429:
-                    sleep_time = config.API_RETRY_BACKOFF_BASE * (2 ** attempt)
-                    time.sleep(sleep_time)
-                else:
-                    break
-            except Exception as e:
-                time.sleep(config.API_RETRY_BACKOFF_BASE * (attempt + 1))
+        try:
+            self.rate_limiter.acquire_sync()
+            history_api = upstox_client.HistoryV3Api(self.api_client)
+            res = history_api.get_intra_day_candle_data(
+                instrument_key=instrument_key,
+                unit="minutes",
+                interval="5",
+            )
+            if res and res.data and res.data.candles:
+                return res.data.candles
+        except Exception as e:
+            logger.debug(f"HistoryV3 intraday 5m fetch failed for {instrument_key}: {e}")
 
         return []
 
@@ -149,16 +156,24 @@ class UpstoxRestClient:
     ) -> List[List[Any]]:
         """
         Fetches official 5-minute historical candles from Upstox History V3 API.
+        Automatically includes live intraday candles if to_date is today.
         """
         if not self.api_client:
             return []
 
+        today_str = date.today().isoformat()
+        if not to_date:
+            to_date = today_str
+        if not from_date:
+            from_date = (date.today() - timedelta(days=7)).isoformat()
+
+        # If requesting only today, use the dedicated intraday endpoint
+        if from_date == today_str and to_date == today_str:
+            return self.get_intraday_5m_candles(instrument_key)
+
         try:
+            self.rate_limiter.acquire_sync()
             history_api = upstox_client.HistoryV3Api(self.api_client)
-            if not to_date:
-                to_date = date.today().isoformat()
-            if not from_date:
-                from_date = (date.today() - timedelta(days=7)).isoformat()
 
             res = history_api.get_historical_candle_data1(
                 instrument_key=instrument_key,
@@ -167,11 +182,77 @@ class UpstoxRestClient:
                 to_date=to_date,
                 from_date=from_date,
             )
-            if res and res.data and res.data.candles:
-                return res.data.candles
+            candles = res.data.candles if res and res.data and res.data.candles else []
+
+            # If to_date is today, append live intraday candles
+            if to_date == today_str:
+                live = self.get_intraday_5m_candles(instrument_key)
+                if live:
+                    # Deduplicate and combine
+                    seen_ts = {c[0] for c in candles}
+                    for lc in live:
+                        if lc[0] not in seen_ts:
+                            candles.append(lc)
+            return candles
+        except ApiException as e:
+            if getattr(e, "status", None) == 429:
+                headers = getattr(e, "headers", {}) or {}
+                raw_retry = float(headers.get("Retry-After", 60.0))
+                retry_after, announced = self.rate_limiter.defer(raw_retry)
+                if announced:
+                    logger.warning("Upstox rate limit active; pausing requests for %.0fs.", retry_after)
+            else:
+                logger.debug(f"HistoryV3 5m fetch failed for {instrument_key}: {e}")
         except Exception as e:
             logger.debug(f"HistoryV3 5m fetch failed for {instrument_key}: {e}")
 
+        return []
+
+    def get_quarterly_share_holdings(self, isin: str) -> List[Dict[str, Any]]:
+        """Return Upstox quarterly shareholding history for a cash-equity ISIN."""
+        isin = str(isin or "").strip().upper()
+        if not isin or not self.access_token:
+            return []
+
+        encoded_isin = urllib.parse.quote(isin)
+        url = f"{self.BASE_API_V2_URL}/fundamentals/{encoded_isin}/share-holdings"
+        for attempt in range(config.API_RETRY_ATTEMPTS):
+            try:
+                self.rate_limiter.acquire_sync()
+                resp = self.session.get(url, timeout=15)
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    data = payload.get("data", [])
+                    return data if isinstance(data, list) else []
+                if resp.status_code == 429:
+                    raw_retry = float(
+                        resp.headers.get(
+                            "Retry-After",
+                            config.API_RETRY_BACKOFF_BASE * (2 ** attempt),
+                        )
+                    )
+                    retry_after, announced = self.rate_limiter.defer(raw_retry)
+                    if announced:
+                        logger.warning(
+                            "Upstox rate limit active; pausing requests for %.0fs.",
+                            retry_after,
+                        )
+                    continue
+                logger.warning(
+                    "Shareholding fetch failed for %s (HTTP %s): %s",
+                    isin,
+                    resp.status_code,
+                    resp.text[:300],
+                )
+                break
+            except Exception as exc:
+                logger.warning(
+                    "Shareholding attempt %d failed for %s: %s",
+                    attempt + 1,
+                    isin,
+                    exc,
+                )
+                time.sleep(config.API_RETRY_BACKOFF_BASE * (attempt + 1))
         return []
 
     def get_ws_auth_redirect_url(self) -> Optional[str]:

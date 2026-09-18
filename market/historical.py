@@ -21,6 +21,7 @@ from database.repository import DatabaseRepository
 from database.historical_db import HistoricalCandleDatabase
 from market.gap_detector import GapDetector
 from market.gap_filler import GapFiller
+from market.rate_limiter import AsyncUpstoxRateLimiter
 from upstox.rest import UpstoxRestClient
 
 logger = logging.getLogger(__name__)
@@ -51,32 +52,6 @@ class PreviousDayOHLCV:
         }
 
 
-class AsyncUpstoxRateLimiter:
-    """
-    Token bucket rate limiter strictly enforcing Upstox max 25 requests/second limit.
-    Enables initial burst capacity up to 25 and continuous smooth token refill at 25 req/sec.
-    """
-    def __init__(self, rate_per_sec: float = 25.0, burst_capacity: float = 25.0):
-        self.rate = float(rate_per_sec)
-        self.capacity = float(burst_capacity)
-        self.tokens = float(burst_capacity)
-        self.last_update = time.monotonic()
-        self._lock = asyncio.Lock()
-
-    async def acquire(self):
-        while True:
-            async with self._lock:
-                now = time.monotonic()
-                elapsed = now - self.last_update
-                self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
-                self.last_update = now
-                if self.tokens >= 1.0:
-                    self.tokens -= 1.0
-                    return
-                wait_time = (1.0 - self.tokens) / self.rate
-            await asyncio.sleep(wait_time)
-
-
 class HistoricalDataLoader:
     """Loads previous-day session data and builds initial 5M history with asyncio acceleration & rate limiting."""
 
@@ -87,7 +62,7 @@ class HistoricalDataLoader:
         self.gap_detector = GapDetector(self.hist_db)
         self.gap_filler = GapFiller(self.hist_db, access_token=rest_client.access_token)
         self._pd_cache: Dict[str, PreviousDayOHLCV] = {}
-        self._raw_1m_cache: Dict[str, Tuple[List[Any], float]] = {}
+        self._raw_5m_cache: Dict[str, Tuple[List[Any], float]] = {}
         self._db_candle_cache: Dict[str, pd.DataFrame] = {}
 
     def get_cached_previous_day(self, symbol: str) -> Optional[PreviousDayOHLCV]:
@@ -191,9 +166,14 @@ class HistoricalDataLoader:
                                         return (sym, None)
                                     elif resp.status_code == 429:
                                         raw_retry = float(resp.headers.get("Retry-After", config.API_RETRY_BACKOFF_BASE * (2 ** attempt)))
-                                        retry_after = min(max(raw_retry, 1.0), 3.0)  # Safe cap to max 3s, NEVER hang for 600s!
-                                        logger.warning(f"Upstox 429 Rate limit on {sym} (header: {raw_retry:.0f}s), pacing for {retry_after:.1f}s...")
-                                        await asyncio.sleep(retry_after)
+                                        retry_after, announced = rate_limiter.defer(raw_retry)
+                                        if announced:
+                                            logger.warning(
+                                                "Upstox 429 on %s; pausing all historical requests for %.0fs as directed by Retry-After.",
+                                                sym, retry_after,
+                                            )
+                                        else:
+                                            logger.debug("Upstox cooldown already active after 429 on %s", sym)
                                     else:
                                         break
                                 except Exception as e:
@@ -207,6 +187,7 @@ class HistoricalDataLoader:
                         if pd_obj:
                             results[sym] = pd_obj
 
+            async_failed = False
             try:
                 try:
                     loop = asyncio.get_running_loop()
@@ -219,8 +200,12 @@ class HistoricalDataLoader:
                 else:
                     asyncio.run(_fetch_all_daily())
             except Exception as e:
-                logger.warning(f"Async daily fetch fallback error: {e}. Running threaded fallback...")
-            # Fallback to ThreadPoolExecutor
+                async_failed = True
+                logger.warning(f"Async daily fetch error: {e}. Running limited threaded fallback...")
+
+            # Only fall back when the async batch itself failed. Previously this
+            # ran unconditionally for the whole universe, duplicating hundreds
+            # of successful requests and exhausting the rolling quota.
             def _fetch_single_sync(symbol: str, item: Dict[str, Any]) -> Optional[PreviousDayOHLCV]:
                 inst_key = item["instrument_key"]
                 daily_candles = self.rest_client.get_historical_daily_candles(inst_key)
@@ -241,10 +226,13 @@ class HistoricalDataLoader:
                         )
                 return None
 
-            with ThreadPoolExecutor(max_workers=config.MAX_CONCURRENT_REQUESTS) as executor:
+            sync_missing = {
+                sym: item for sym, item in missing_universe.items() if sym not in results
+            } if async_failed else {}
+            with ThreadPoolExecutor(max_workers=min(2, config.MAX_CONCURRENT_REQUESTS)) as executor:
                 future_to_sym = {
                     executor.submit(_fetch_single_sync, sym, item): sym
-                    for sym, item in universe.items()
+                    for sym, item in sync_missing.items()
                 }
                 for future in as_completed(future_to_sym):
                     sym = future_to_sym[future]
@@ -346,16 +334,15 @@ class HistoricalDataLoader:
 
         return dfs
 
-    def _process_raw_1m_to_5m(self, raw_1m: List[List[Any]], timeframe: str = "5m") -> Optional[pd.DataFrame]:
+    def _process_native_5m(self, raw_5m: List[List[Any]], timeframe: str = "5m") -> Optional[pd.DataFrame]:
         """
-        Converts raw 1-minute candle tuples into 3m, 5m, or 15m resampled DataFrame.
+        Converts native 5-minute candles into 5m or higher-timeframe data.
         Accelerated using Polars (40x+ faster than pure Python/pandas date parsing).
         """
-        if not raw_1m:
+        if not raw_5m:
             return None
 
         rule_map = {
-            "3m": "3m",
             "5m": "5m",
             "15m": "15m",
             "30m": "30m",
@@ -371,7 +358,6 @@ class HistoricalDataLoader:
         rule = rule_map.get(timeframe.lower(), "5m")
 
         cutoff_map = {
-            "3m": dt_time(15, 27),
             "5m": dt_time(15, 25),
             "15m": dt_time(15, 15),
             "30m": dt_time(15, 15),
@@ -389,10 +375,10 @@ class HistoricalDataLoader:
         if pl is not None:
             try:
                 # 1. High-speed Polars Vectorized Ingestion & Resampling (slice to first 6 elements to ignore optional OI)
-                sliced_1m = [c[:6] for c in raw_1m]
+                sliced_5m = [c[:6] for c in raw_5m]
                 df_pl = (
                     pl.DataFrame(
-                        sliced_1m,
+                        sliced_5m,
                         schema=["timestamp", "open", "high", "low", "close", "volume"],
                         orient="row",
                     )
@@ -445,7 +431,7 @@ class HistoricalDataLoader:
         # Fallback to standard pandas pipeline
         kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
         records = []
-        for c in raw_1m:
+        for c in raw_5m:
             ts = pd.to_datetime(c[0])
             if ts.tzinfo is None:
                 ts = ts.tz_localize("UTC").tz_convert(kolkata_tz)
@@ -466,15 +452,15 @@ class HistoricalDataLoader:
             return None
         tf_key = str(timeframe).lower()
         p_rule = {
-            "3m": "3min", "5m": "5min", "15m": "15min", "30m": "30min",
+            "5m": "5min", "15m": "15min", "30m": "30min",
             "1h": "60min", "2h": "120min", "4h": "240min", "1d": "1D", "day": "1D"
         }.get(tf_key, "5min")
         is_daily = str(p_rule).upper().endswith("D") or "DAY" in str(p_rule).upper()
         resample_kwargs = {"origin": "start_day"}
         if not is_daily:
             resample_kwargs["offset"] = "15min"
-        df_1m = pd.DataFrame(records).set_index("timestamp").sort_index()
-        df_res = df_1m.resample(p_rule, **resample_kwargs).agg({
+        df_5m = pd.DataFrame(records).set_index("timestamp").sort_index()
+        df_res = df_5m.resample(p_rule, **resample_kwargs).agg({
             "open": "first",
             "high": "max",
             "low": "min",
@@ -488,8 +474,8 @@ class HistoricalDataLoader:
         """
         Fetches today's official broker candles for a single symbol and returns resampled DataFrame (synchronous).
         """
-        raw_1m = self.rest_client.get_intraday_1m_candles(instrument_key)
-        return self._process_raw_1m_to_5m(raw_1m, timeframe=timeframe)
+        raw_5m = self.rest_client.get_intraday_5m_candles(instrument_key)
+        return self._process_native_5m(raw_5m, timeframe=timeframe)
 
     def refresh_latest_broker_candles(
         self,
@@ -498,24 +484,24 @@ class HistoricalDataLoader:
     ) -> Dict[str, pd.DataFrame]:
         """
         Fetches the latest official broker-side candles (3m, 5m, 15m) for all universe stocks in parallel using asyncio.
-        Enforces Upstox rate limit with safe 429 backoff and in-memory 1m caching.
+        Enforces Upstox rate limits with safe 429 backoff and native 5m caching.
         """
         now_ts = time.time()
         results: Dict[str, pd.DataFrame] = {}
 
-        # 1. First check if fresh 1m candles are already in memory (< 45s old)
+        # 1. First check if fresh native 5m candles are already in memory (< 45s old)
         needed_universe = {}
         for sym, item in universe.items():
-            cached_entry = self._raw_1m_cache.get(sym)
+            cached_entry = self._raw_5m_cache.get(sym)
             if cached_entry and (now_ts - cached_entry[1] < 45.0):
-                df = self._process_raw_1m_to_5m(cached_entry[0], timeframe=timeframe)
+                df = self._process_native_5m(cached_entry[0], timeframe=timeframe)
                 if df is not None and not df.empty:
                     results[sym] = df
                     continue
             needed_universe[sym] = item
 
         if not needed_universe:
-            logger.debug(f"Instantly resampled {len(results)}/{len(universe)} symbols for {timeframe} from fresh in-memory 1m candle cache.")
+            logger.debug(f"Instantly loaded {len(results)}/{len(universe)} symbols for {timeframe} from fresh native 5m cache.")
             return results
 
         token = self.rest_client.access_token
@@ -531,7 +517,9 @@ class HistoricalDataLoader:
             ) as client:
                 async def _fetch_one(sym: str, item: Dict[str, Any]):
                     inst_key = item["instrument_key"]
-                    url = f"https://api.upstox.com/v2/historical-candle/intraday/{inst_key}/1minute"
+                    encoded_key = urllib.parse.quote(inst_key)
+                    today = date.today().isoformat()
+                    url = f"https://api.upstox.com/v3/historical-candle/{encoded_key}/minutes/5/{today}/{today}"
                     for attempt in range(config.API_RETRY_ATTEMPTS):
                         async with sem:
                             await rate_limiter.acquire()
@@ -541,16 +529,21 @@ class HistoricalDataLoader:
                                     data = resp.json()
                                     candles = data.get("data", {}).get("candles", [])
                                     if candles:
-                                        self._raw_1m_cache[sym] = (candles, time.time())
-                                    df = self._process_raw_1m_to_5m(candles, timeframe=timeframe)
+                                        self._raw_5m_cache[sym] = (candles, time.time())
+                                    df = self._process_native_5m(candles, timeframe=timeframe)
                                     if df is not None and not df.empty:
                                         return (sym, df)
                                     return (sym, None)
                                 elif resp.status_code == 429:
                                     raw_retry = float(resp.headers.get("Retry-After", config.API_RETRY_BACKOFF_BASE * (2 ** attempt)))
-                                    retry_after = min(max(raw_retry, 1.0), 3.0)  # Safe cap to max 3s, NEVER hang for 600s!
-                                    logger.warning(f"Upstox 429 on {sym} (header: {raw_retry:.0f}s), pacing for {retry_after:.1f}s...")
-                                    await asyncio.sleep(retry_after)
+                                    retry_after, announced = rate_limiter.defer(raw_retry)
+                                    if announced:
+                                        logger.warning(
+                                            "Upstox 429 on %s; pausing all historical requests for %.0fs as directed by Retry-After.",
+                                            sym, retry_after,
+                                        )
+                                    else:
+                                        logger.debug("Upstox cooldown already active after 429 on %s", sym)
                                 else:
                                     break
                             except Exception as e:
@@ -611,7 +604,7 @@ class HistoricalDataLoader:
 
         needed_symbols = {}
         for sym, item in universe.items():
-            cache_entry = self._raw_1m_cache.get(sym)
+            cache_entry = self._raw_5m_cache.get(sym)
             if not cache_entry:
                 # Check if we already have local candles in RAM or DB before making network requests
                 has_engine = False
@@ -639,7 +632,9 @@ class HistoricalDataLoader:
                 ) as client:
                     async def _fetch_one_raw(sym: str, item: Dict[str, Any]):
                         inst_key = item["instrument_key"]
-                        url = f"https://api.upstox.com/v2/historical-candle/intraday/{inst_key}/1minute"
+                        encoded_key = urllib.parse.quote(inst_key)
+                        today = date.today().isoformat()
+                        url = f"https://api.upstox.com/v3/historical-candle/{encoded_key}/minutes/5/{today}/{today}"
                         for attempt in range(2):
                             await rate_limiter.acquire()
                             try:
@@ -648,10 +643,16 @@ class HistoricalDataLoader:
                                     data = resp.json()
                                     candles = data.get("data", {}).get("candles", [])
                                     if candles:
-                                        self._raw_1m_cache[sym] = (candles, time.time())
+                                        self._raw_5m_cache[sym] = (candles, time.time())
                                     return
                                 elif resp.status_code == 429:
-                                    await asyncio.sleep(1.0)
+                                    raw_retry = float(resp.headers.get("Retry-After", 1.0))
+                                    retry_after, announced = rate_limiter.defer(raw_retry)
+                                    if announced:
+                                        logger.warning(
+                                            "Upstox 429 on %s; pausing all historical requests for %.0fs as directed by Retry-After.",
+                                            sym, retry_after,
+                                        )
                                 else:
                                     break
                             except Exception:
@@ -683,16 +684,16 @@ class HistoricalDataLoader:
 
         def _resample_stock(sym: str):
             tf_dict = {}
-            cache_entry = self._raw_1m_cache.get(sym)
+            cache_entry = self._raw_5m_cache.get(sym)
             raw_candles = cache_entry[0] if cache_entry else None
 
-            # 0. Check HistoricalCandleDatabase (stores complete multi-day 1m candles)
-            df_hist_1m = None
+            # 0. Check HistoricalCandleDatabase (stores complete multi-day 5m candles)
+            df_hist_5m = None
             if hasattr(self, "hist_db") and self.hist_db:
                 try:
-                    df_hist_1m = self.hist_db.get_candles_by_symbol(sym, limit=3500)
+                    df_hist_5m = self.hist_db.get_candles_by_symbol(sym, limit=3500)
                 except Exception:
-                    df_hist_1m = None
+                    df_hist_5m = None
 
             # 1. Check in-memory candle engine (fastest: 0.00001s, zero disk I/O)
             df_db = None
@@ -726,22 +727,22 @@ class HistoricalDataLoader:
                     resample_kwargs["offset"] = "15min"
 
                 # 0. Resample from HistoricalCandleDatabase if available
-                if df_hist_1m is not None and len(df_hist_1m) >= 15:
+                if df_hist_5m is not None and len(df_hist_5m) >= 15:
                     try:
-                        df_res_1m = df_hist_1m.copy()
-                        if not pd.api.types.is_datetime64_any_dtype(df_res_1m["timestamp"]):
-                            df_res_1m["timestamp"] = pd.to_datetime(df_res_1m["timestamp"])
-                        df_res_1m = df_res_1m.sort_values("timestamp").set_index("timestamp")
-                        df = df_res_1m.resample(p_rule, **resample_kwargs).agg({
+                        df_res_5m = df_hist_5m.copy()
+                        if not pd.api.types.is_datetime64_any_dtype(df_res_5m["timestamp"]):
+                            df_res_5m["timestamp"] = pd.to_datetime(df_res_5m["timestamp"])
+                        df_res_5m = df_res_5m.sort_values("timestamp").set_index("timestamp")
+                        df = df_res_5m.resample(p_rule, **resample_kwargs).agg({
                             "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"
                         }).dropna().reset_index()
                     except Exception as err:
                         logger.debug(f"Hist_db resample error for {sym} {tf}: {err}")
                         df = None
 
-                # 1. Fallback or merge with today's raw 1m broker candles
+                # 1. Merge today's native 5m broker candles
                 if raw_candles:
-                    raw_df = self._process_raw_1m_to_5m(raw_candles, timeframe=tf)
+                    raw_df = self._process_native_5m(raw_candles, timeframe=tf)
                     if raw_df is not None and not raw_df.empty:
                         if df is not None and not df.empty:
                             df = pd.concat([df, raw_df], ignore_index=True).drop_duplicates(subset=["timestamp"], keep="last").sort_values("timestamp").reset_index(drop=True)
@@ -789,7 +790,7 @@ class HistoricalDataLoader:
         on_progress: Optional[Callable[[int, int, str], None]] = None,
     ) -> Dict[str, int]:
         """
-        Scans all universe symbols for missing dates and gaps in the historical 1m database
+        Scans all universe symbols for missing dates and gaps in the historical 5m database
         and automatically backfills them using GapFiller via Upstox API asynchronously.
         Does not block GUI, designed to run in a background worker thread.
         """
@@ -860,9 +861,12 @@ class HistoricalDataLoader:
                                     return
                                 elif resp.status_code == 429:
                                     raw_retry = float(resp.headers.get("Retry-After", 2.0))
-                                    backoff = min(max(raw_retry, 1.0), 3.0)
-                                    logger.warning(f"429 rate limit on {sym}, pacing {backoff:.1f}s...")
-                                    await asyncio.sleep(backoff)
+                                    retry_after, announced = rate_limiter.defer(raw_retry)
+                                    if announced:
+                                        logger.warning(
+                                            "Upstox 429 on %s; pausing all historical requests for %.0fs as directed by Retry-After.",
+                                            sym, retry_after,
+                                        )
                                 else:
                                     break
                             except Exception as ex:
@@ -891,5 +895,3 @@ class HistoricalDataLoader:
             logger.info(f"Successfully cached daily candles for {len(results_raw)} symbols into SQLite DB.")
             return len(results_raw)
         return 0
-
-

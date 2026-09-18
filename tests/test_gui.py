@@ -94,6 +94,13 @@ def test_tkinter_gui_initialization(tk_root):
     assert hasattr(gui, "chart_frame")
     assert gui.chart_frame.current_symbol == "RELIANCE"
 
+    # Dedicated Cash V1.3 scanner/backtest tab is fixed to 3 months and 5m.
+    assert hasattr(gui, "tab_cash_v13")
+    assert hasattr(gui, "cash_v13_backtest_btn")
+    assert hasattr(gui, "cash_v13_tree")
+    assert "3 months" in gui.cash_v13_status_var.get()
+    assert "5-minute" in gui.cash_v13_status_var.get()
+
     # Test switching symbol and opening chart
     gui.open_chart_for_symbol("RELIANCE")
     assert gui.chart_frame.current_symbol == "RELIANCE"

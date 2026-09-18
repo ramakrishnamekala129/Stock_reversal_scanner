@@ -10,3 +10,4 @@ data/
 *.xlsx
 upstok_accesstoken.txt
 *token*.txt
+scratch/*.png

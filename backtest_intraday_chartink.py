@@ -25,11 +25,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("intraday_backtest")
 
 
-async def download_symbol_1m_candles(client: httpx.AsyncClient, sem: asyncio.Semaphore, key: str, sym: str, date_ranges: List[Tuple[str, str]]) -> List[list]:
-    """Fetches chunked 1-minute historical candles for a symbol across given date ranges with retry."""
+async def download_symbol_5m_candles(client: httpx.AsyncClient, sem: asyncio.Semaphore, key: str, sym: str, date_ranges: List[Tuple[str, str]]) -> List[list]:
+    """Fetches chunked native 5-minute candles across the requested ranges."""
     all_candles = []
     for to_d, from_d in date_ranges:
-        url = f"https://api.upstox.com/v2/historical-candle/{key}/1minute/{to_d}/{from_d}"
+        url = f"https://api.upstox.com/v3/historical-candle/{key}/minutes/5/{to_d}/{from_d}"
         for attempt in range(4):
             async with sem:
                 try:
@@ -48,9 +48,9 @@ async def download_symbol_1m_candles(client: httpx.AsyncClient, sem: asyncio.Sem
 
 
 async def fetch_intraday_cache(univ: Dict[str, dict], target_symbols: Set[str], token: str, cache_file: Path) -> Dict[str, pd.DataFrame]:
-    """Downloads or loads cached 1-minute data for the target symbols from 2026-08-01 to 2026-09-08."""
+    """Downloads or loads native 5-minute data from 2026-08-01 to 2026-09-08."""
     if cache_file.exists():
-        logger.info(f"Loading cached 1-minute data from {cache_file}...")
+        logger.info(f"Loading cached 5-minute data from {cache_file}...")
         try:
             with open(cache_file, "r", encoding="utf-8") as f:
                 raw = json.load(f)
@@ -61,14 +61,14 @@ async def fetch_intraday_cache(univ: Dict[str, dict], target_symbols: Set[str], 
                     df["timestamp"] = pd.to_datetime(df["timestamp"])
                     df = df.sort_values("timestamp").drop_duplicates(subset=["timestamp"]).reset_index(drop=True)
                     dfs[sym] = df
-            logger.info(f"Loaded {len(dfs)} symbols from 1m cache.")
+            logger.info(f"Loaded {len(dfs)} symbols from 5m cache.")
             # If all target symbols are in cache, return
             missing = target_symbols - set(dfs.keys())
             if not missing:
                 return dfs
             logger.info(f"Cache missing {len(missing)} target symbols. Fetching remainder...")
         except Exception as ex:
-            logger.warning(f"Failed to read 1m cache: {ex}. Re-downloading...")
+            logger.warning(f"Failed to read 5m cache: {ex}. Re-downloading...")
 
     # Define 7-day chunks from 2026-09-08 down to 2026-08-01
     date_ranges = [
@@ -84,18 +84,18 @@ async def fetch_intraday_cache(univ: Dict[str, dict], target_symbols: Set[str], 
     sem = asyncio.Semaphore(5)
     results_raw = {}
 
-    logger.info(f"Downloading 1-minute data across {len(symbols_to_fetch)} symbols from 2026-08-01 to 2026-09-08...")
+    logger.info(f"Downloading native 5-minute data across {len(symbols_to_fetch)} symbols...")
     t0 = time.time()
     async with httpx.AsyncClient(headers=headers, timeout=15.0) as client:
         async def worker(sym: str):
-            candles = await download_symbol_1m_candles(client, sem, univ[sym]["instrument_key"], sym, date_ranges)
+            candles = await download_symbol_5m_candles(client, sem, univ[sym]["instrument_key"], sym, date_ranges)
             if candles:
                 results_raw[sym] = candles
 
         tasks = [worker(s) for s in symbols_to_fetch]
         await asyncio.gather(*tasks)
 
-    logger.info(f"Downloaded 1m candles for {len(results_raw)} symbols in {time.time() - t0:.2f}s.")
+    logger.info(f"Downloaded 5m candles for {len(results_raw)} symbols in {time.time() - t0:.2f}s.")
 
     # Save cache
     cache_file.parent.mkdir(parents=True, exist_ok=True)
@@ -111,11 +111,11 @@ async def fetch_intraday_cache(univ: Dict[str, dict], target_symbols: Set[str], 
     return dfs
 
 
-def resample_ohlcv(df_1m: pd.DataFrame, freq: str) -> pd.DataFrame:
-    """Resamples 1-minute dataframe to 5m or 15m candles cleanly."""
-    if df_1m.empty:
+def resample_ohlcv(df_5m: pd.DataFrame, freq: str) -> pd.DataFrame:
+    """Keeps 5m bars or resamples them to higher timeframes."""
+    if df_5m.empty:
         return pd.DataFrame()
-    df = df_1m.copy()
+    df = df_5m.copy()
     df.set_index("timestamp", inplace=True)
     res = df.resample(freq, closed="left", label="left").agg({
         "open": "first",
@@ -387,15 +387,15 @@ def run_intraday_backtest():
     target_symbols = {s for s in target_symbols if s in univ}
     logger.info(f"Target symbols to backtest: {len(target_symbols)} active F&O stocks.")
 
-    # Fetch/Load 1-minute Intraday Candles
-    intraday_cache = Path("data/cache/intraday_1m_aug_sep.json")
+    # Fetch/load native 5-minute intraday candles
+    intraday_cache = Path("data/cache/intraday_5m_aug_sep.json")
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-    dfs_1m = loop.run_until_complete(fetch_intraday_cache(univ, target_symbols, auth.access_token, intraday_cache))
+    dfs_5m = loop.run_until_complete(fetch_intraday_cache(univ, target_symbols, auth.access_token, intraday_cache))
 
     engine = ChartinkIntradayEngine()
 
@@ -422,14 +422,14 @@ def run_intraday_backtest():
         t_date = pd.to_datetime(d_str).date()
         alerts_on_date = df_truth_sample[df_truth_sample["dt"].dt.strftime("%Y-%m-%d") == d_str]["Symbol"].str.strip().str.upper().tolist()
         # Filter to active F&O
-        alerts_on_date = [s for s in alerts_on_date if s in dfs_1m and s in daily_dfs]
+        alerts_on_date = [s for s in alerts_on_date if s in dfs_5m and s in daily_dfs]
 
         for sym in alerts_on_date:
-            df_sym_1m = dfs_1m[sym]
+            df_sym_5m = dfs_5m[sym]
             # Sliced to current trading date
-            day_mask = df_sym_1m["timestamp"].dt.date == t_date
-            day_1m = df_sym_1m[day_mask]
-            if len(day_1m) < 15:
+            day_mask = df_sym_5m["timestamp"].dt.date == t_date
+            day_5m = df_sym_5m[day_mask]
+            if len(day_5m) < 3:
                 continue
 
             # Prior daily context up to yesterday
@@ -439,7 +439,7 @@ def run_intraday_backtest():
                 continue
 
             for tf in timeframes:
-                df_tf = resample_ohlcv(day_1m, tf)
+                df_tf = resample_ohlcv(day_5m, tf)
                 if len(df_tf) < 3:
                     continue
 

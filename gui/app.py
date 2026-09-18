@@ -6,13 +6,14 @@ Sleek Modern Dark Dashboard with Real-Time Pivots, Narrow CPR, and Trap Zones.
 from __future__ import annotations
 
 import csv
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as dt_time
 import logging
 import os
 import sys
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from tkinter import ttk, messagebox, filedialog
 from typing import Any, Dict, List, Optional, Set
 
@@ -203,6 +204,9 @@ class ScannerTkinterGUI:
         self.chartink_sort_var = tk.StringVar(value="⏱️ Time (Newest First)")
         self.chartink_dirty = False
         self.last_chartink_render_time = 0.0
+        self.cash_v13_status_var = tk.StringVar(value="Ready — 3 months • native 5-minute candles")
+        self.cash_v13_summary_var = tk.StringVar(value="Trades: 0   Win rate: --   P&L: --   Profit factor: --")
+        self.cash_v13_backtest_result: Dict[str, Any] = {}
 
         # Setup Styling & UI Components
         self._setup_styles()
@@ -216,8 +220,10 @@ class ScannerTkinterGUI:
         self._update_clock()
 
         # Background recurring auto-scan loops (hands-free continuous scanning)
-        self._schedule_auto_hema_scan()
+        if getattr(config, "ENABLE_HEMA_STRATEGY_TAB", False):
+            self._schedule_auto_hema_scan()
         self.root.after(1000, self._schedule_auto_chartink_scan)
+        self.root.after(5000, self._schedule_auto_cash_v13_update)
 
     def _debounce(self, key: str, delay_ms: int, callback):
         """Cancels any pending callback for the given key and schedules a new one."""
@@ -233,6 +239,8 @@ class ScannerTkinterGUI:
 
     def _schedule_auto_hema_scan(self):
         """Periodically scans HEMA + T3 across universe in background without requiring manual clicks."""
+        if not getattr(config, "ENABLE_HEMA_STRATEGY_TAB", False):
+            return
         try:
             has_univ = hasattr(self.scanner, "_universe") and bool(self.scanner._universe)
             is_running = getattr(self.scanner, "_is_running", False)
@@ -335,7 +343,7 @@ class ScannerTkinterGUI:
         ctrl_box = tk.Frame(header_frame, bg=BG_DARK)
         ctrl_box.pack(side=tk.RIGHT)
 
-        # Universe Selector: F&O (210 Option Stocks), Nifty 250, Nifty 500
+        # Universe Selector: Cash Segment, Nifty 500, Nifty 250, F&O
         tk.Label(
             ctrl_box,
             text="Universe:",
@@ -346,6 +354,8 @@ class ScannerTkinterGUI:
 
         init_univ = getattr(self.scanner, "universe_name", getattr(config, "DEFAULT_UNIVERSE", "NIFTY500")) if self.scanner else getattr(config, "DEFAULT_UNIVERSE", "NIFTY500")
         univ_display_map = {
+            "CASH": "💵 Cash Segment (All NSE Stocks)",
+            "ALL_CASH": "💵 Cash Segment (All NSE Stocks)",
             "NIFTY500": "🌐 Nifty 500 (Broad Market)",
             "NIFTY250": "🏛️ Nifty 250 (LargeMidcap)",
             "FNO": "🔥 F&O Option Stocks (210)",
@@ -355,12 +365,13 @@ class ScannerTkinterGUI:
             ctrl_box,
             textvariable=self.universe_var,
             values=[
+                "💵 Cash Segment (All NSE Stocks)",
                 "🌐 Nifty 500 (Broad Market)",
                 "🏛️ Nifty 250 (LargeMidcap)",
                 "🔥 F&O Option Stocks (210)",
             ],
             state="readonly",
-            width=25,
+            width=30,
             font=("Segoe UI", 9, "bold"),
         )
         self.universe_combo.pack(side=tk.LEFT, padx=(0, 10))
@@ -429,7 +440,7 @@ class ScannerTkinterGUI:
         self.card_status_val = tk.StringVar(value="🟢 LIVE CONNECTED")
 
         cards_data = [
-            ("F&O UNIVERSE", self.card_symbols_val, ACCENT_BLUE),
+            ("UNIVERSE STOCKS", self.card_symbols_val, ACCENT_BLUE),
             ("5M CANDLES SCANNED", self.card_candles_val, "#e2e8f0"),
             ("TOTAL SIGNALS", self.card_signals_val, ACCENT_AMBER),
             ("BULLISH SETUPS", self.card_bullish_val, ACCENT_GREEN),
@@ -455,10 +466,11 @@ class ScannerTkinterGUI:
         self.notebook = ttk.Notebook(container)
         self.notebook.pack(fill=tk.BOTH, expand=True)
 
-        # Tab 1: HEMA + T3 Strategy Scanner (Primary Active Strategy)
+        # Tab: HEMA + T3 Strategy Scanner (Disabled per user request; toggled via config.ENABLE_HEMA_STRATEGY_TAB)
         self.tab_hema = tk.Frame(self.notebook, bg=BG_DARK)
-        self.notebook.add(self.tab_hema, text="  🎯 HEMA + T3 Strategy Scanner  ")
         self._build_hema_tab()
+        if getattr(config, "ENABLE_HEMA_STRATEGY_TAB", False):
+            self.notebook.add(self.tab_hema, text="  🎯 HEMA + T3 Strategy Scanner  ")
 
         # Tab 2: Live Market & Pivots
         self.tab_market = tk.Frame(self.notebook, bg=BG_DARK)
@@ -475,6 +487,11 @@ class ScannerTkinterGUI:
         self.tab_chartink = tk.Frame(self.notebook, bg=BG_DARK)
         self.notebook.add(self.tab_chartink, text="  🎯 Chartink Intraday (0)  ")
         self._build_chartink_tab()
+
+        # Tab 5: exact linked Cash V1.3 scanner with a fixed 3-month 5m backtest.
+        self.tab_cash_v13 = tk.Frame(self.notebook, bg=BG_DARK)
+        self.notebook.add(self.tab_cash_v13, text="  🧪 Cash V1.3 • 3M Backtest  ")
+        self._build_cash_v13_tab()
 
         # 5-Minute Reversal Signals Tab (Disabled per user request; toggled via config.ENABLE_TAB1_REVERSAL_SIGNALS)
         self.tab_signals = tk.Frame(self.notebook, bg=BG_DARK)
@@ -762,6 +779,23 @@ class ScannerTkinterGUI:
             on_change_callback=self._render_market
         )
         self.market_cpr_menu.pack(side=tk.LEFT, padx=(0, 14))
+
+        # Eligible Today Only toggle (Defaults to ON: ready for stocks eligible today)
+        self.market_eligible_today_var = tk.BooleanVar(value=True)
+        self.market_eligible_check = tk.Checkbutton(
+            toolbar,
+            text="🎯 Eligible Today Only",
+            variable=self.market_eligible_today_var,
+            command=self._render_market,
+            bg=BG_DARK,
+            fg="#10b981",
+            activebackground=BG_DARK,
+            activeforeground="#34d399",
+            selectcolor=CARD_BG,
+            font=("Segoe UI", 9, "bold"),
+            cursor="hand2",
+        )
+        self.market_eligible_check.pack(side=tk.LEFT, padx=(0, 14))
 
         # Market Liquidity Filter
         tk.Label(toolbar, text="Liquid:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
@@ -1413,12 +1447,25 @@ class ScannerTkinterGUI:
         search_query = self.market_search_var.get().strip().upper()
         m_sort = self.market_sort_var.get()
 
+        eligible_today_set = set()
+        if hasattr(self, "scanner") and self.scanner and hasattr(self.scanner, "get_eligible_today_symbols"):
+            try:
+                eligible_today_set = self.scanner.get_eligible_today_symbols()
+            except Exception:
+                eligible_today_set = set()
+
+        only_eligible = self.market_eligible_today_var.get() if hasattr(self, "market_eligible_today_var") else False
+
         filtered_m = []
         for m in self.cached_market:
             symbol = str(m.get("symbol", ""))
             zone = str(m.get("zone", ""))
             cpr_width = float(m.get("cpr_width_pct", 0.0))
             is_narrow = cpr_width <= 0.21 or bool(m.get("is_narrow_cpr"))
+
+            # Apply Eligible Today Only Filter
+            if only_eligible and eligible_today_set and symbol not in eligible_today_set:
+                continue
 
             has_cpr_breakout = "CPR Breakout" in zone
             has_cpr_breakdown = "CPR Breakdown" in zone
@@ -1469,11 +1516,13 @@ class ScannerTkinterGUI:
 
         # Update dynamic market count badge and tab label
         total_market = len(self.cached_market) if hasattr(self, "cached_market") and self.cached_market else len(filtered_m)
+        denom = len(eligible_today_set) if (only_eligible and eligible_today_set) else total_market
+        scope_text = "Eligible Stocks" if (only_eligible and eligible_today_set) else "Stocks"
         if hasattr(self, "market_count_lbl"):
-            self.market_count_lbl.config(text=f"📊 Showing: {len(filtered_m)} / {total_market} Stocks")
+            self.market_count_lbl.config(text=f"📊 Showing: {len(filtered_m)} / {denom} {scope_text}")
         if hasattr(self, "notebook") and hasattr(self, "tab_market"):
             try:
-                self.notebook.tab(self.tab_market, text=f"  📊 Live Market & Daily Pivots ({len(filtered_m)} Stocks)  ")
+                self.notebook.tab(self.tab_market, text=f"  📊 Live Market & Daily Pivots ({len(filtered_m)} {scope_text})  ")
             except Exception:
                 pass
 
@@ -1758,9 +1807,12 @@ class ScannerTkinterGUI:
         threading.Thread(target=_do_switch, daemon=True).start()
 
     def _on_universe_changed(self, event=None):
-        """Switches active stock universe between F&O (210), Nifty 250, and Nifty 500."""
+        """Switches active stock universe between Cash Segment, F&O (210), Nifty 250, and Nifty 500."""
         selected_val = self.universe_var.get()
-        if "500" in selected_val:
+        if "CASH" in selected_val.upper() or "SEGMENT" in selected_val.upper():
+            new_univ = "CASH"
+            univ_title = "Cash Segment (All 2,600+ NSE Stocks)"
+        elif "500" in selected_val:
             new_univ = "NIFTY500"
             univ_title = "NIFTY 500 (Broad Market 500 Stocks)"
         elif "250" in selected_val:
@@ -1783,6 +1835,8 @@ class ScannerTkinterGUI:
         if not confirm:
             cur = getattr(self.scanner, "universe_name", getattr(config, "DEFAULT_UNIVERSE", "NIFTY500"))
             display_map = {
+                "CASH": "💵 Cash Segment (All NSE Stocks)",
+                "ALL_CASH": "💵 Cash Segment (All NSE Stocks)",
                 "NIFTY500": "🌐 Nifty 500 (Broad Market)",
                 "NIFTY250": "🏛️ Nifty 250 (LargeMidcap)",
                 "FNO": "🔥 F&O Option Stocks (210)",
@@ -1793,12 +1847,21 @@ class ScannerTkinterGUI:
         def _do_switch():
             try:
                 self.scanner.startup(force_refresh=False, universe=new_univ)
+                if hasattr(self.scanner, "_universe"):
+                    self.card_symbols_val.set(str(len(self.scanner._universe)))
                 self.chart_dirty = True
                 self.market_dirty = True
                 self.chartink_dirty = True
                 self.hema_dirty = True
                 if hasattr(self, "chart_frame") and self.chart_frame:
                     self.chart_frame.redraw_chart()
+                # If currently on Cash V1.3 tab, refresh backtest immediately
+                if hasattr(self, "notebook") and hasattr(self, "tab_cash_v13"):
+                    try:
+                        if self.notebook.select() == str(self.tab_cash_v13):
+                            self.root.after(100, lambda: self._run_cash_v13_backtest(is_auto=False))
+                    except Exception:
+                        pass
             except Exception as ex:
                 logger.error(f"Error switching universe to {new_univ}: {ex}")
 
@@ -2013,6 +2076,8 @@ class ScannerTkinterGUI:
 
     def _trigger_hema_scan(self, is_auto: bool = False):
         """Triggers ultra-fast parallel Numba scan across universe for selected or all timeframes."""
+        if not getattr(config, "ENABLE_HEMA_STRATEGY_TAB", False):
+            return
         if not self.scanner:
             if not is_auto:
                 self.hema_count_lbl.config(text="⚠️ Scanner backend initializing...")
@@ -2238,6 +2303,240 @@ class ScannerTkinterGUI:
             messagebox.showinfo("Export Successful", f"Saved {len(self.cached_hema_signals)} HEMA+T3 signals to:\n{path}")
         except Exception as e:
             messagebox.showerror("Export Failed", f"Could not export CSV: {e}")
+
+    def _build_cash_v13_tab(self):
+        """Build the dedicated linked Cash V1.3 scanner/backtest workspace."""
+        header = tk.Frame(self.tab_cash_v13, bg=BG_DARK, pady=8)
+        header.pack(fill=tk.X)
+
+        tk.Label(
+            header,
+            text="Chartink Intraday Screener — Cash V1.3",
+            font=("Segoe UI", 12, "bold"), fg=TEXT_MAIN, bg=BG_DARK,
+        ).pack(side=tk.LEFT, padx=(4, 12))
+        tk.Button(
+            header, text="🔗 Open Chartink Scanner",
+            command=lambda: webbrowser.open("https://chartink.com/screener/intraday-screener-cash-v1-3"),
+            bg=CARD_BG, fg=ACCENT_BLUE, activebackground=CARD_BORDER,
+            activeforeground=TEXT_MAIN, relief="flat", padx=10, pady=4,
+        ).pack(side=tk.LEFT)
+
+        self.cash_v13_backtest_btn = tk.Button(
+            header, text="▶ Run Today Backtest",
+            command=self._trigger_cash_v13_backtest,
+            bg="#065f46", fg="#ecfdf5", activebackground="#047857",
+            activeforeground="#ffffff", relief="flat", padx=12, pady=4,
+            font=("Segoe UI", 9, "bold"), cursor="hand2",
+        )
+        self.cash_v13_backtest_btn.pack(side=tk.RIGHT, padx=(4, 4))
+
+        mode_frame = tk.Frame(header, bg=BG_DARK)
+        mode_frame.pack(side=tk.RIGHT, padx=(8, 8))
+        tk.Label(
+            mode_frame, text="Window:", font=("Segoe UI", 9), fg=TEXT_MUTED, bg=BG_DARK
+        ).pack(side=tk.LEFT, padx=(0, 4))
+
+        self.cash_v13_mode_var = tk.StringVar(value="Current Day")
+        self.cash_v13_mode_cb = ttk.Combobox(
+            mode_frame,
+            textvariable=self.cash_v13_mode_var,
+            values=["Current Day", "3 Months"],
+            state="readonly",
+            width=12,
+            font=("Segoe UI", 9),
+        )
+        self.cash_v13_mode_cb.pack(side=tk.LEFT)
+        self.cash_v13_mode_cb.bind("<<ComboboxSelected>>", self._on_cash_v13_mode_change)
+
+        self.cash_v13_auto_var = tk.BooleanVar(value=True)
+        self.cash_v13_auto_cb = tk.Checkbutton(
+            mode_frame,
+            text="⚡ Auto 5m",
+            variable=self.cash_v13_auto_var,
+            bg=BG_DARK,
+            fg=ACCENT_GREEN,
+            selectcolor=CARD_BG,
+            activebackground=BG_DARK,
+            activeforeground=TEXT_MAIN,
+            font=("Segoe UI", 9, "bold"),
+            cursor="hand2",
+            command=self._on_cash_v13_auto_toggle,
+        )
+        self.cash_v13_auto_cb.pack(side=tk.LEFT, padx=(8, 0))
+
+        rules = tk.Frame(self.tab_cash_v13, bg=CARD_BG, padx=12, pady=8)
+        rules.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(
+            rules,
+            text=f"DATA CONTRACT  •  Current day or 3 calendar months  •  5-minute minimum/decision candles  •  Target {config.DEFAULT_TARGET_PCT:g}%  •  Stop {config.DEFAULT_STOP_LOSS_PCT:g}%  •  Intraday exit",
+            font=("Segoe UI", 9, "bold"), fg=ACCENT_AMBER, bg=CARD_BG,
+        ).pack(anchor="w")
+        tk.Label(
+            rules,
+            text="Cash pipeline: daily price/liquidity filter → quarterly FII growth → 5-minute EMA trigger • Avg volume ≥ 100,000 and current volume > SMA20.",
+            font=("Segoe UI", 8), fg=ACCENT_GREEN, bg=CARD_BG,
+        ).pack(anchor="w", pady=(3, 0))
+        tk.Label(
+            rules, textvariable=self.cash_v13_status_var,
+            font=("Segoe UI", 9), fg=TEXT_MUTED, bg=CARD_BG,
+        ).pack(anchor="w", pady=(4, 0))
+        tk.Label(
+            rules, textvariable=self.cash_v13_summary_var,
+            font=("Segoe UI", 10, "bold"), fg=ACCENT_GREEN, bg=CARD_BG,
+        ).pack(anchor="w", pady=(3, 0))
+
+        tree_frame = tk.Frame(self.tab_cash_v13, bg=BG_DARK)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+        columns = [
+            ("date", "Date", 90), ("symbol", "Symbol", 95),
+            ("entry", "Entry", 70), ("exit", "Exit", 70),
+            ("strategy", "Cash V1.3 Branch", 230), ("entry_px", "Entry ₹", 85),
+            ("exit_px", "Exit ₹", 85), ("pnl", "P&L %", 75),
+            ("reason", "Exit Reason", 100), ("tf", "Candle", 65),
+        ]
+        self.cash_v13_tree = ttk.Treeview(
+            tree_frame, columns=[c[0] for c in columns], show="headings", selectmode="browse"
+        )
+        for col, title, width in columns:
+            self.cash_v13_tree.heading(col, text=title)
+            self.cash_v13_tree.column(col, width=width, anchor="center", stretch=(col == "strategy"))
+        self.cash_v13_tree.tag_configure("win", foreground="#34d399")
+        self.cash_v13_tree.tag_configure("loss", foreground="#fb7185")
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.cash_v13_tree.yview)
+        self.cash_v13_tree.configure(yscrollcommand=vsb.set)
+        self.cash_v13_tree.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+
+    def _on_cash_v13_mode_change(self, event=None):
+        mode = self.cash_v13_mode_var.get()
+        if mode == "Current Day":
+            self.cash_v13_backtest_btn.config(text="▶ Run Today Backtest")
+            self.cash_v13_auto_cb.config(state=tk.NORMAL)
+        else:
+            self.cash_v13_backtest_btn.config(text="▶ Run 3-Month Backtest")
+            self.cash_v13_auto_cb.config(state=tk.DISABLED)
+
+    def _on_cash_v13_auto_toggle(self):
+        if self.cash_v13_auto_var.get() and self.cash_v13_mode_var.get() == "Current Day":
+            self._trigger_cash_v13_backtest(is_auto=True)
+
+    def _schedule_auto_cash_v13_update(self):
+        """Automatically re-runs Cash V1.3 Today evaluation when each 5-minute candle boundary closes."""
+        try:
+            if hasattr(self, "cash_v13_auto_var") and self.cash_v13_auto_var.get():
+                if hasattr(self, "cash_v13_mode_var") and self.cash_v13_mode_var.get() == "Current Day":
+                    now = datetime.now()
+                    # Check if market is active (weekday 09:15 to 15:35 IST)
+                    if now.weekday() < 5 and (dt_time(9, 15) <= now.time() <= dt_time(15, 35)):
+                        if hasattr(self, "scanner") and self.scanner:
+                            if not getattr(self.scanner, "_is_cash_v13_backtesting", False):
+                                self._trigger_cash_v13_backtest(is_auto=True)
+        except Exception as e:
+            logger.debug("Error in auto Cash V1.3 update: %s", e)
+
+        # Calculate exact seconds until next 5-minute boundary (:00, :05, :10, etc.) + 5s buffer
+        now = datetime.now()
+        seconds_into_5m = (now.minute % 5) * 60 + now.second
+        seconds_until_next = (300 - seconds_into_5m) + 5
+        if seconds_until_next <= 5:
+            seconds_until_next += 300
+        delay_ms = max(5000, seconds_until_next * 1000)
+        self.root.after(delay_ms, self._schedule_auto_cash_v13_update)
+
+    def _trigger_cash_v13_backtest(self, is_auto: bool = False):
+        """Run broker download and backtest off the Tk event loop."""
+        if not self.scanner:
+            if not is_auto:
+                self.cash_v13_status_var.set("Scanner backend is not connected.")
+            return
+        if getattr(self.scanner, "_is_cash_v13_backtesting", False):
+            return
+        selected_mode = "current_day" if self.cash_v13_mode_var.get() == "Current Day" else "3_months"
+        mode_label = "Current Day" if selected_mode == "current_day" else "3-Month"
+        if not is_auto:
+            self.cash_v13_backtest_btn.config(state=tk.DISABLED, text=f"⏳ Preparing {mode_label} data...")
+            self.cash_v13_status_var.set(f"Pre-screening SQLite daily candles for {mode_label} backtest...")
+        else:
+            self.cash_v13_status_var.set(f"⚡ Auto-updating {mode_label} with newest 5m candle...")
+
+        def progress(done, total, symbol):
+            def update_progress():
+                sym_str = str(symbol)
+                if "SQLite" in sym_str or "Reading" in sym_str or "Loaded" in sym_str:
+                    self.cash_v13_status_var.set(f"Backtest data: {sym_str}")
+                    if not is_auto:
+                        self.cash_v13_backtest_btn.config(text="⏳ Loading SQLite candles...")
+                else:
+                    self.cash_v13_status_var.set(
+                        f"Backtest data: {done}/{total} symbols processed • {symbol}"
+                    )
+                    if not is_auto:
+                        if sym_str.startswith("Evaluate "):
+                            self.cash_v13_backtest_btn.config(text="⏳ Evaluating strategy...")
+                        elif sym_str.startswith("FII "):
+                            self.cash_v13_backtest_btn.config(text="⏳ Loading quarterly FII...")
+                        elif sym_str.startswith("Pre-screening"):
+                            self.cash_v13_backtest_btn.config(text="⏳ Pre-screening daily DB...")
+                        else:
+                            self.cash_v13_backtest_btn.config(text="⏳ Processing 5m data...")
+
+            self.root.after(0, update_progress)
+
+        def worker():
+            try:
+                selected_val = self.universe_var.get()
+                cur_univ = "CASH" if ("CASH" in selected_val.upper() or "SEGMENT" in selected_val.upper()) else getattr(self.scanner, "universe_name", "NIFTY500")
+                result = self.scanner.run_cash_v13_backtest(progress=progress, mode=selected_mode, universe_name=cur_univ)
+                self.root.after(0, lambda: self._show_cash_v13_result(result, is_auto=is_auto))
+            except Exception as exc:
+                err_msg = str(exc)
+                logger.error("Cash V1.3 backtest failed: %s", err_msg, exc_info=True)
+                self.root.after(0, lambda msg=err_msg: self._cash_v13_backtest_failed(msg, is_auto=is_auto))
+
+        threading.Thread(target=worker, daemon=True, name="CashV13Backtest").start()
+
+    def _cash_v13_backtest_failed(self, message: str, is_auto: bool = False):
+        btn_text = "▶ Run Today Backtest" if self.cash_v13_mode_var.get() == "Current Day" else "▶ Run 3-Month Backtest"
+        self.cash_v13_backtest_btn.config(state=tk.NORMAL, text=btn_text)
+        self.cash_v13_status_var.set(f"Backtest failed: {message}")
+        if not is_auto:
+            messagebox.showerror("Cash V1.3 Backtest", message)
+
+    def _show_cash_v13_result(self, result: Dict[str, Any], is_auto: bool = False):
+        self.cash_v13_backtest_result = result
+        btn_text = "▶ Run Today Backtest" if self.cash_v13_mode_var.get() == "Current Day" else "▶ Run 3-Month Backtest"
+        self.cash_v13_backtest_btn.config(state=tk.NORMAL, text=btn_text)
+        mode_label = "Current Day" if result.get("from_date") == result.get("to_date") else "3 Months"
+        screened_info = ""
+        if "symbols_screened_total" in result:
+            screened_info = f" • Pre-screened {result.get('symbols_screened_total', 0)} ({result.get('symbols_skipped_prefilter', 0)} skipped by daily DB)"
+        now_str = datetime.now().strftime("%H:%M:%S")
+        self.cash_v13_status_var.set(
+            f"Complete ({mode_label}: {result.get('from_date')} • Updated {now_str}) • "
+            f"{result.get('symbols_tested', 0)} symbols evaluated{screened_info} • "
+            f"daily candidates {result.get('daily_candidate_stock_days', 0):,}/"
+            f"{result.get('stock_days_total', 0):,} • "
+            f"{result.get('daily_prefilter_reduction_pct', 0):.1f}% rejected • "
+            f"{result.get('bars_evaluated', 0):,} candidate 5m bars • "
+            f"{result.get('calculation_seconds', 0):.1f}s calculation"
+        )
+        self.cash_v13_summary_var.set(
+            f"Trades: {result.get('total_trades', 0)}   Win rate: {result.get('win_rate', 0):.2f}%   "
+            f"P&L: {result.get('total_pnl_pct', 0):+.2f}%   Profit factor: {result.get('profit_factor', 0):.2f}"
+        )
+        children = self.cash_v13_tree.get_children()
+        if children:
+            self.cash_v13_tree.delete(*children)
+        for trade in result.get("trades", []):
+            pnl = float(trade.get("pnl_pct", 0))
+            self.cash_v13_tree.insert("", tk.END, values=(
+                trade.get("signal_date"), trade.get("symbol"), trade.get("entry_time"),
+                trade.get("exit_time"), trade.get("strategy"), trade.get("entry_price"),
+                trade.get("exit_price"), f"{pnl:+.2f}%", trade.get("exit_reason"),
+                trade.get("timeframe", "5min"),
+            ), tags=(("win" if pnl > 0 else "loss"),))
 
     def _build_chartink_tab(self):
         """Builds Tab: Chartink Intraday Screener (Formula from chartink.com/screener/intraday-screener-27102787)."""

@@ -73,6 +73,16 @@ class TestUniverseAndOptions(unittest.TestCase):
         self.assertEqual(cdict["option_lot_size"], 309)
         self.assertIn("ADANIENT", cdict["option_symbol"])
 
+    def test_05_cash_universe(self):
+        cash_u = self.mgr.load_universe("CASH", "SPOT")
+        self.assertGreaterEqual(len(cash_u), 2000, "Cash universe should have >= 2000 stocks")
+        self.assertEqual(self.mgr.current_universe, "CASH")
+        # Verify get_all_spot_equities returns full dictionary
+        all_spot = self.mgr.get_all_spot_equities()
+        self.assertGreaterEqual(len(all_spot), 2000)
+        self.assertIn("RELIANCE", cash_u)
+        self.assertEqual(cash_u["RELIANCE"]["segment"], "NSE_EQ")
+
 
 if __name__ == "__main__":
     unittest.main()

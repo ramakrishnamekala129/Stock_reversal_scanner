@@ -160,7 +160,7 @@ class UpstoxWebSocketStreamer:
 
                 # Parse intraday / day OHLC if present
                 for ohlc in eod_ohlc:
-                    if ohlc.get("interval") in ["I1", "1d", "1m", "I30", "30m"]:
+                    if ohlc.get("interval") in ["I5", "5m", "1d", "I30", "30m"]:
                         open_price = float(ohlc.get("open", 0.0)) or None
                         high_price = float(ohlc.get("high", 0.0)) or None
                         low_price = float(ohlc.get("low", 0.0)) or None

@@ -21,11 +21,11 @@ def temp_hist_db(tmp_path: Path):
 
 
 def test_historical_db_batch_save_and_retrieve(temp_hist_db: HistoricalCandleDatabase):
-    # Prepare 1-minute mock candles
+    # Prepare native 5-minute mock candles
     candles = [
         ["2026-09-01T09:15:00+05:30", 1000.0, 1005.0, 998.0, 1002.0, 5000, 100],
-        ["2026-09-01T09:16:00+05:30", 1002.0, 1008.0, 1001.0, 1007.0, 6000, 105],
-        ["2026-09-01T09:17:00+05:30", 1007.0, 1010.0, 1005.0, 1009.0, 4500, 110],
+        ["2026-09-01T09:20:00+05:30", 1002.0, 1008.0, 1001.0, 1007.0, 6000, 105],
+        ["2026-09-01T09:25:00+05:30", 1007.0, 1010.0, 1005.0, 1009.0, 4500, 110],
     ]
 
     inserted = temp_hist_db.save_candles_batch("RELIANCE", "NSE_EQ|1", candles)
@@ -40,7 +40,7 @@ def test_historical_db_batch_save_and_retrieve(temp_hist_db: HistoricalCandleDat
 
     # Test deduplication / update
     updated_candles = [
-        ["2026-09-01T09:17:00+05:30", 1007.0, 1012.0, 1005.0, 1011.0, 4800, 115],
+        ["2026-09-01T09:25:00+05:30", 1007.0, 1012.0, 1005.0, 1011.0, 4800, 115],
     ]
     inserted2 = temp_hist_db.save_candles_batch("RELIANCE", "NSE_EQ|1", updated_candles)
     assert inserted2 == 1
@@ -67,17 +67,12 @@ def test_gap_detector_identifies_missing_dates(temp_hist_db: HistoricalCandleDat
     total_missing = sum(len(gw.missing_dates) for gw in gaps)
     assert total_missing >= 4
 
-    # Now simulate a fully filled day for TCS (375 bars)
+    # Now simulate a fully filled native 5-minute day for TCS
     mock_full_day = [
-        [f"2026-09-04T09:{m:02d}:00+05:30", 3500.0, 3505.0, 3495.0, 3502.0, 1000, 0]
-        for m in range(15, 60)
+        [(datetime(2026, 9, 4, 9, 15) + timedelta(minutes=5 * i)).isoformat(),
+         3500.0, 3505.0, 3495.0, 3502.0, 1000, 0]
+        for i in range(75)
     ]
-    # Add enough bars to pass the threshold
-    for h in range(10, 16):
-        mock_full_day.extend([
-            [f"2026-09-04T{h:02d}:{m:02d}:00+05:30", 3500.0, 3505.0, 3495.0, 3502.0, 1000, 0]
-            for m in range(0, 60)
-        ])
     temp_hist_db.save_candles_batch("TCS", "NSE_EQ|2", mock_full_day)
 
     # Re-detect gaps -> 2026-09-04 should NO LONGER be flagged as missing
@@ -92,7 +87,7 @@ def test_gap_filler_save_and_reconciliation(temp_hist_db: HistoricalCandleDataba
     # Mock inserting gap candles directly through db
     mock_gap_data = [
         ["2026-09-03T10:15:00+05:30", 500.0, 502.0, 498.0, 501.0, 2000, 50],
-        ["2026-09-03T10:16:00+05:30", 501.0, 504.0, 500.0, 503.0, 2500, 55],
+        ["2026-09-03T10:20:00+05:30", 501.0, 504.0, 500.0, 503.0, 2500, 55],
     ]
     saved = temp_hist_db.save_candles_batch("INFY", "NSE_EQ|3", mock_gap_data)
     assert saved == 2
@@ -102,7 +97,7 @@ def test_gap_filler_save_and_reconciliation(temp_hist_db: HistoricalCandleDataba
     assert df.iloc[0]["symbol"] if "symbol" in df else True
 
 
-def test_process_raw_1m_resampling():
+def test_process_native_5m_resampling():
     from market.historical import HistoricalDataLoader
     from upstox.rest import UpstoxRestClient
 
@@ -113,17 +108,14 @@ def test_process_raw_1m_resampling():
 
     loader = HistoricalDataLoader(UpstoxRestClient(api_client=MockApiClient()))
     
-    # Raw 1m candles containing 7 elements (with open interest) as returned by Upstox API
-    raw_1m_7col = [
+    raw_5m_7col = [
         ["2026-09-08T09:15:00+05:30", 100.0, 105.0, 99.0, 102.0, 1000, 5000],
-        ["2026-09-08T09:16:00+05:30", 102.0, 106.0, 101.0, 104.0, 1500, 5100],
-        ["2026-09-08T09:17:00+05:30", 104.0, 107.0, 103.0, 105.0, 1200, 5200],
-        ["2026-09-08T09:18:00+05:30", 105.0, 108.0, 104.0, 106.0, 1800, 5300],
-        ["2026-09-08T09:19:00+05:30", 106.0, 109.0, 105.0, 108.0, 2000, 5400],
+        ["2026-09-08T09:20:00+05:30", 102.0, 106.0, 101.0, 104.0, 1500, 5100],
+        ["2026-09-08T09:25:00+05:30", 104.0, 107.0, 103.0, 105.0, 1200, 5200],
     ]
 
-    for tf in ["3m", "5m", "15m", "1h", "1d"]:
-        res_df = loader._process_raw_1m_to_5m(raw_1m_7col, timeframe=tf)
+    for tf in ["5m", "15m", "1h", "1d"]:
+        res_df = loader._process_native_5m(raw_5m_7col, timeframe=tf)
         assert res_df is not None, f"Resampling failed for tf={tf}"
         assert not res_df.empty, f"Resampled df empty for tf={tf}"
         assert "open" in res_df.columns

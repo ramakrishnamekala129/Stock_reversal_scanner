@@ -1,6 +1,6 @@
 """
 Dedicated High-Performance SQLite Historical Candle Database.
-Stores multi-day 1-minute historical candles for all F&O universe symbols with
+Stores multi-day 5-minute historical candles for all F&O universe symbols with
 automatic deduplication, indexing, and sync metadata tracking.
 """
 
@@ -52,9 +52,9 @@ class HistoricalCandleDatabase:
         """Creates tables and indexes for historical candles and sync tracking."""
         conn = self._get_connection()
         with conn:
-            # 1. Multi-Day 1-Minute Historical Candles
+            # 1. Multi-Day 5-Minute Historical Candles
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS candles_history_1m (
+                CREATE TABLE IF NOT EXISTS candles_history_5m (
                     symbol TEXT NOT NULL,
                     instrument_key TEXT NOT NULL,
                     timestamp TEXT NOT NULL,
@@ -67,7 +67,7 @@ class HistoricalCandleDatabase:
                     PRIMARY KEY (symbol, timestamp)
                 )
             """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_hist_sym_ts ON candles_history_1m(symbol, timestamp)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_hist_5m_sym_ts ON candles_history_5m(symbol, timestamp)")
 
             # 2. Daily Sync Metadata for Gap Detection
             conn.execute("""
@@ -105,7 +105,7 @@ class HistoricalCandleDatabase:
         candle_records: List[Union[List[Any], Dict[str, Any]]],
     ) -> int:
         """
-        Batch saves raw 1-minute historical candles from Upstox REST or broker feed.
+        Batch saves native 5-minute historical candles from Upstox REST or broker feed.
         Candle format can be [timestamp, open, high, low, close, volume, oi] or dict.
         Returns the number of candles inserted/updated.
         """
@@ -143,7 +143,7 @@ class HistoricalCandleDatabase:
         try:
             with conn:
                 conn.executemany("""
-                    INSERT INTO candles_history_1m (symbol, instrument_key, timestamp, open, high, low, close, volume, oi)
+                    INSERT INTO candles_history_5m (symbol, instrument_key, timestamp, open, high, low, close, volume, oi)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(symbol, timestamp) DO UPDATE SET
                         open = excluded.open,
@@ -158,12 +158,12 @@ class HistoricalCandleDatabase:
                 for d_str in affected_dates:
                     cur = conn.cursor()
                     cur.execute("""
-                        SELECT COUNT(*) FROM candles_history_1m
+                        SELECT COUNT(*) FROM candles_history_5m
                         WHERE symbol = ? AND timestamp LIKE ?
                     """, (symbol, f"{d_str}%"))
                     cnt = cur.fetchone()[0]
-                    # Full NSE session is 375 1-minute bars (09:15 to 15:30)
-                    is_complete = 1 if cnt >= 360 else 0
+                    # Full NSE session normally contains 75 five-minute bars.
+                    is_complete = 1 if cnt >= 72 else 0
                     conn.execute("""
                         INSERT INTO candle_sync_meta (symbol, date, candle_count, is_complete, last_synced_at)
                         VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -186,19 +186,19 @@ class HistoricalCandleDatabase:
         limit: Optional[int] = None,
     ) -> pd.DataFrame:
         """
-        Retrieves 1-minute historical candles for a symbol ordered chronologically.
+        Retrieves 5-minute historical candles for a symbol ordered chronologically.
         Returns pd.DataFrame with tz-aware timestamps in Asia/Kolkata.
         """
         conn = self._get_connection()
-        query = "SELECT timestamp, open, high, low, close, volume, oi FROM candles_history_1m WHERE symbol = ?"
+        query = "SELECT timestamp, open, high, low, close, volume, oi FROM candles_history_5m WHERE symbol = ?"
         params: List[Any] = [symbol]
 
         if from_date:
             query += " AND timestamp >= ?"
-            params.append(f"{from_date}T00:00:00" if "T" not in from_date else from_date)
+            params.append(str(from_date)[:10])
         if to_date:
             query += " AND timestamp <= ?"
-            params.append(f"{to_date}T23:59:59" if "T" not in to_date else to_date)
+            params.append(f"{str(to_date)[:10]}~")
 
         query += " ORDER BY timestamp ASC"
         if limit:
@@ -209,12 +209,73 @@ class HistoricalCandleDatabase:
             if df.empty:
                 return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
 
-            kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
-            df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(None).dt.tz_localize(kolkata_tz)
+            try:
+                df["timestamp"] = pd.to_datetime(df["timestamp"], format="ISO8601", utc=True).dt.tz_convert(config.MARKET_TIMEZONE)
+            except Exception:
+                kolkata_tz = pytz.timezone(config.MARKET_TIMEZONE)
+                stamps = [
+                    pd.Timestamp(val).tz_convert(kolkata_tz)
+                    if pd.Timestamp(val).tzinfo is not None
+                    else pd.Timestamp(val).tz_localize(kolkata_tz)
+                    for val in df["timestamp"]
+                ]
+                df["timestamp"] = pd.DatetimeIndex(stamps)
             return df
         except Exception as e:
             logger.error(f"Error querying historical candles for {symbol}: {e}")
             return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume", "oi"])
+
+    def get_candles_for_symbols_bulk(
+        self,
+        symbols: List[str],
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+    ) -> Dict[str, pd.DataFrame]:
+        """
+        Ultra-fast bulk loading of 5-minute historical candles for multiple symbols.
+        Uses Polars for blazing-fast columnar loading and timestamp parsing when available.
+        """
+        if not symbols:
+            return {}
+
+        conn = self._get_connection()
+        from_ts = str(from_date)[:10] if from_date else None
+        to_ts = f"{str(to_date)[:10]}~" if to_date else None
+
+        try:
+            import polars as pl
+            # Build query with escaped symbol strings
+            safe_symbols = [str(s).replace("'", "''") for s in symbols]
+            placeholders = ",".join(f"'{s}'" for s in safe_symbols)
+            query = f"SELECT symbol, timestamp, open, high, low, close, volume, oi FROM candles_history_5m WHERE symbol IN ({placeholders})"
+            if from_ts:
+                query += f" AND timestamp >= '{from_ts}'"
+            if to_ts:
+                query += f" AND timestamp <= '{to_ts}'"
+            query += " ORDER BY symbol, timestamp ASC"
+
+            df_pl = pl.read_database(query, conn)
+            if df_pl.is_empty():
+                return {}
+
+            # Parse timestamps with timezone in Polars
+            df_pl = df_pl.with_columns(pl.col("timestamp").str.to_datetime(time_zone=config.MARKET_TIMEZONE))
+            partitions = df_pl.partition_by("symbol", as_dict=True)
+
+            result: Dict[str, pd.DataFrame] = {}
+            for sym_key, sub_df in partitions.items():
+                s = sym_key[0] if isinstance(sym_key, tuple) else sym_key
+                result[s] = sub_df.drop("symbol").to_pandas()
+            return result
+        except Exception as e:
+            logger.debug(f"Polars bulk query fallback to individual queries: {e}")
+
+        result = {}
+        for s in symbols:
+            c = self.get_candles_by_symbol(s, from_date=from_date, to_date=to_date)
+            if not c.empty:
+                result[s] = c
+        return result
 
     def get_recorded_dates(self, symbol: str) -> Dict[str, int]:
         """Returns a dict of {date_str: candle_count} recorded in SQLite for this symbol."""
@@ -241,7 +302,7 @@ class HistoricalCandleDatabase:
                 return row[0]
             # Fallback direct count
             cur.execute("""
-                SELECT COUNT(*) FROM candles_history_1m
+                SELECT COUNT(*) FROM candles_history_5m
                 WHERE symbol = ? AND timestamp LIKE ?
             """, (symbol, f"{date_str}%"))
             r = cur.fetchone()
@@ -254,7 +315,7 @@ class HistoricalCandleDatabase:
         conn = self._get_connection()
         try:
             cur = conn.cursor()
-            cur.execute("SELECT COUNT(DISTINCT symbol), COUNT(*), MIN(timestamp), MAX(timestamp) FROM candles_history_1m")
+            cur.execute("SELECT COUNT(DISTINCT symbol), COUNT(*), MIN(timestamp), MAX(timestamp) FROM candles_history_5m")
             row = cur.fetchone()
             return {
                 "total_symbols": row[0] if row else 0,

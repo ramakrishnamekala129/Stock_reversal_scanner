@@ -80,8 +80,8 @@ def parse_args():
     parser.add_argument(
         "--universe",
         default=getattr(config, "DEFAULT_UNIVERSE", "NIFTY500"),
-        choices=["fno", "nifty250", "nifty500", "FNO", "NIFTY250", "NIFTY500"],
-        help="Stock universe: 'nifty500' (default broad market 500), 'nifty250', or 'fno'.",
+        choices=["cash", "all_cash", "fno", "nifty250", "nifty500", "CASH", "ALL_CASH", "FNO", "NIFTY250", "NIFTY500"],
+        help="Stock universe: 'cash' (all NSE cash equities), 'nifty500' (default broad market 500), 'nifty250', or 'fno'.",
     )
     return parser.parse_args()
 

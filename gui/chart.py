@@ -501,15 +501,15 @@ class CandleChartFrame(tk.Frame):
             except Exception:
                 df = None
 
-        # 4. Try from HistoricalCandleDatabase 1-minute historical bars resampled to tf
+        # 4. Try native 5-minute historical bars, resampled only to higher TFs
         if df is None or df.empty:
             try:
                 from database.historical_db import HistoricalCandleDatabase
                 hist_db = HistoricalCandleDatabase()
-                df_1m = hist_db.get_candles_by_symbol(symbol, limit=375)
-                if df_1m is not None and not df_1m.empty:
+                df_5m = hist_db.get_candles_by_symbol(symbol, limit=375)
+                if df_5m is not None and not df_5m.empty:
                     from backtest_intraday_chartink import resample_ohlcv
-                    df_res = resample_ohlcv(df_1m, tf)
+                    df_res = resample_ohlcv(df_5m, tf)
                     if not df_res.empty:
                         df_res["is_forming"] = False
                         df = df_res

@@ -39,7 +39,7 @@ CHUNKS_6M = [
 
 
 async def download_symbol_6m(client: httpx.AsyncClient, sem: asyncio.Semaphore, key: str, sym: str, out_file: Path) -> Optional[pd.DataFrame]:
-    """Downloads 6 months of 1-minute data for a symbol and saves to compressed parquet."""
+    """Downloads 6 months of native 5-minute data and saves compressed parquet."""
     if out_file.exists():
         try:
             return pd.read_parquet(out_file)
@@ -48,7 +48,7 @@ async def download_symbol_6m(client: httpx.AsyncClient, sem: asyncio.Semaphore, 
 
     all_candles = []
     for to_d, from_d in CHUNKS_6M:
-        url = f"https://api.upstox.com/v2/historical-candle/{key}/1minute/{to_d}/{from_d}"
+        url = f"https://api.upstox.com/v3/historical-candle/{key}/minutes/5/{to_d}/{from_d}"
         for attempt in range(4):
             async with sem:
                 try:
@@ -77,7 +77,7 @@ async def download_symbol_6m(client: httpx.AsyncClient, sem: asyncio.Semaphore, 
 
 
 async def prepare_all_6m_candles(univ: Dict[str, dict], target_symbols: Set[str], token: str, cache_dir: Path) -> Dict[str, pd.DataFrame]:
-    """Downloads or loads 6-month 1m parquet files for all target symbols."""
+    """Downloads or loads six-month native 5-minute parquet files."""
     cache_dir.mkdir(parents=True, exist_ok=True)
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     sem = asyncio.Semaphore(6)
@@ -118,11 +118,11 @@ async def prepare_all_6m_candles(univ: Dict[str, dict], target_symbols: Set[str]
     return dfs
 
 
-def resample_ohlcv(df_1m: pd.DataFrame, freq: str) -> pd.DataFrame:
-    """Resamples 1-minute dataframe to 5m or 15m bars."""
-    if df_1m.empty:
+def resample_ohlcv(df_5m: pd.DataFrame, freq: str) -> pd.DataFrame:
+    """Keeps native 5m bars or resamples them to higher timeframes."""
+    if df_5m.empty:
         return pd.DataFrame()
-    df = df_1m.copy()
+    df = df_5m.copy()
     df.set_index("timestamp", inplace=True)
     res = df.resample(freq, closed="left", label="left").agg({
         "open": "first",
@@ -373,19 +373,19 @@ def run_6month_backtest():
             hist_db.save_all_daily_candles_bulk(raw_daily)
             daily_dfs = hist_db.get_all_daily_candles_map()
 
-    # Prepare 6-Month 1m Parquet Cache
+    # Prepare six-month native 5m parquet cache
     target_symbols = set(df_truth_6m["Symbol"].str.strip().str.upper().unique())
     target_symbols = {s for s in target_symbols if s in univ}
     logger.info(f"Active F&O Target Symbols: {len(target_symbols)}")
 
-    cache_dir = Path("data/cache/1m")
+    cache_dir = Path("data/cache/5m")
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-    dfs_1m = loop.run_until_complete(prepare_all_6m_candles(univ, target_symbols, auth.access_token, cache_dir))
+    dfs_5m = loop.run_until_complete(prepare_all_6m_candles(univ, target_symbols, auth.access_token, cache_dir))
 
     engine = ChartinkIntradayEngine()
 
@@ -407,13 +407,13 @@ def run_6month_backtest():
     for d_str in unique_dates:
         t_date = pd.to_datetime(d_str).date()
         alerts_on_date = df_truth_6m[df_truth_6m["dt"].dt.strftime("%Y-%m-%d") == d_str]["Symbol"].str.strip().str.upper().tolist()
-        alerts_on_date = [s for s in alerts_on_date if s in dfs_1m and s in daily_dfs]
+        alerts_on_date = [s for s in alerts_on_date if s in dfs_5m and s in daily_dfs]
 
         for sym in alerts_on_date:
-            df_sym_1m = dfs_1m[sym]
-            day_mask = df_sym_1m["timestamp"].dt.date == t_date
-            day_1m = df_sym_1m[day_mask]
-            if len(day_1m) < 15:
+            df_sym_5m = dfs_5m[sym]
+            day_mask = df_sym_5m["timestamp"].dt.date == t_date
+            day_5m = df_sym_5m[day_mask]
+            if len(day_5m) < 3:
                 continue
 
             df_sym_daily = daily_dfs[sym]
@@ -422,7 +422,7 @@ def run_6month_backtest():
                 continue
 
             for tf in timeframes:
-                df_tf = resample_ohlcv(day_1m, tf)
+                df_tf = resample_ohlcv(day_5m, tf)
                 if len(df_tf) < 3:
                     continue
 

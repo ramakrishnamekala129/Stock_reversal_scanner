@@ -16,17 +16,18 @@ import httpx
 import config
 from database.historical_db import HistoricalCandleDatabase
 from market.gap_detector import GapDetector, GapWindow
+from market.rate_limiter import AsyncUpstoxRateLimiter
 
 logger = logging.getLogger(__name__)
 
 
 class GapFiller:
     """
-    Automated backfiller for missing historical candles using Upstox V2 REST endpoints.
+    Automated backfiller for missing native 5-minute candles using Upstox V3.
     Enforces strict token bucket rate-limiting and atomic database commits.
     """
 
-    BASE_URL = "https://api.upstox.com/v2"
+    BASE_URL = "https://api.upstox.com/v3"
 
     def __init__(
         self,
@@ -63,10 +64,10 @@ class GapFiller:
         with httpx.Client(headers=headers, timeout=10.0) as client:
             for gw in gap_windows:
                 candles = []
-                # 1. If window includes today, fetch today's intraday 1m feed
+                # 1. If window includes today, fetch today's native 5m bars
                 if today_str in gw.missing_dates:
                     try:
-                        url_today = f"{self.BASE_URL}/historical-candle/intraday/{encoded_key}/1minute"
+                        url_today = f"{self.BASE_URL}/historical-candle/{encoded_key}/minutes/5/{today_str}/{today_str}"
                         resp = client.get(url_today)
                         if resp.status_code == 200:
                             c_data = resp.json().get("data", {}).get("candles", [])
@@ -80,7 +81,7 @@ class GapFiller:
                 if past_dates:
                     from_d = min(past_dates)
                     to_d = max(past_dates)
-                    url_hist = f"{self.BASE_URL}/historical-candle/{encoded_key}/1minute/{to_d}/{from_d}"
+                    url_hist = f"{self.BASE_URL}/historical-candle/{encoded_key}/minutes/5/{to_d}/{from_d}"
                     for attempt in range(3):
                         try:
                             resp = client.get(url_hist)
@@ -158,6 +159,7 @@ class GapFiller:
 
             # 2. Asynchronous backfilling with semaphore rate control
             sem = asyncio.Semaphore(concurrency)
+            rate_limiter = AsyncUpstoxRateLimiter(self.rate_limit, self.rate_limit)
             headers = {
                 "Authorization": f"Bearer {self.access_token}",
                 "Accept": "application/json",
@@ -185,13 +187,21 @@ class GapFiller:
                             # If today is missing
                             if today_str in gw.missing_dates:
                                 try:
-                                    url_today = f"{self.BASE_URL}/historical-candle/intraday/{encoded_key}/1minute"
+                                    url_today = f"{self.BASE_URL}/historical-candle/{encoded_key}/minutes/5/{today_str}/{today_str}"
+                                    await rate_limiter.acquire()
                                     r = await client.get(url_today)
                                     if r.status_code == 200:
                                         c_data = r.json().get("data", {}).get("candles", [])
                                         if c_data:
                                             sym_candles.extend(c_data)
-                                    await asyncio.sleep(0.05)
+                                    elif r.status_code == 429:
+                                        raw_retry = float(r.headers.get("Retry-After", 1.0))
+                                        retry_after, announced = rate_limiter.defer(raw_retry)
+                                        if announced:
+                                            logger.warning(
+                                                "Upstox 429 during gap fill; pausing all historical requests for %.0fs.",
+                                                retry_after,
+                                            )
                                 except Exception:
                                     pass
 
@@ -200,9 +210,10 @@ class GapFiller:
                             if past_dates:
                                 from_d = min(past_dates)
                                 to_d = max(past_dates)
-                                url_hist = f"{self.BASE_URL}/historical-candle/{encoded_key}/1minute/{to_d}/{from_d}"
+                                url_hist = f"{self.BASE_URL}/historical-candle/{encoded_key}/minutes/5/{to_d}/{from_d}"
                                 for attempt in range(3):
                                     try:
+                                        await rate_limiter.acquire()
                                         r = await client.get(url_hist)
                                         if r.status_code == 200:
                                             c_data = r.json().get("data", {}).get("candles", [])
@@ -210,12 +221,17 @@ class GapFiller:
                                                 sym_candles.extend(c_data)
                                             break
                                         elif r.status_code == 429:
-                                            await asyncio.sleep(1.0 * (attempt + 1))
+                                            raw_retry = float(r.headers.get("Retry-After", 1.0 * (attempt + 1)))
+                                            retry_after, announced = rate_limiter.defer(raw_retry)
+                                            if announced:
+                                                logger.warning(
+                                                    "Upstox 429 during gap fill; pausing all historical requests for %.0fs.",
+                                                    retry_after,
+                                                )
                                         else:
                                             break
                                     except Exception:
                                         await asyncio.sleep(0.5)
-                                await asyncio.sleep(0.05)
 
                     if sym_candles:
                         # Filter valid 09:15 to 15:30
