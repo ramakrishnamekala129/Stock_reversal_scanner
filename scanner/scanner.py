@@ -733,43 +733,50 @@ class FNOIntradayScanner:
         now_ist = datetime.now(pytz.timezone(config.MARKET_TIMEZONE))
         today_cal = now_ist.date()
         market_open_time = dt_time(9, 15)
-        is_weekday = now_ist.weekday() < 5
-        is_live_trading_day = is_weekday and (now_ist.time() >= market_open_time)
+        is_live_trading_day = (now_ist.weekday() < 5) and (now_ist.time() >= market_open_time)
 
         dates_list = []
-        if getattr(self, "_daily_dfs_cache", None):
-            for sym in ["RELIANCE", "TCS", "INFY", "HDFCBANK"]:
-                df = self._daily_dfs_cache.get(sym)
+        try:
+            from database.historical_db import HistoricalCandleDatabase
+            hdb = HistoricalCandleDatabase()
+            conn = hdb._get_connection()
+            rows = conn.execute(
+                "SELECT DISTINCT SUBSTR(timestamp, 1, 10) as d FROM candles_history_daily ORDER BY d DESC LIMIT 10"
+            ).fetchall()
+            dates_list = [datetime.strptime(r[0], "%Y-%m-%d").date() for r in rows if r[0]]
+        except Exception:
+            dates_list = []
+
+        if not dates_list and getattr(self, "_daily_dfs_cache", None):
+            for df in self._daily_dfs_cache.values():
                 if df is not None and not df.empty and "timestamp" in df.columns:
-                    dates_list = sorted(list(set(pd.to_datetime(df["timestamp"]).dt.date)))
+                    dates_list = sorted(list(set(pd.to_datetime(df["timestamp"]).dt.date)), reverse=True)
                     if len(dates_list) >= 2:
                         break
-            if not dates_list:
-                first_df = next(iter(self._daily_dfs_cache.values()), None)
-                if first_df is not None and not first_df.empty and "timestamp" in first_df.columns:
-                    dates_list = sorted(list(set(pd.to_datetime(first_df["timestamp"]).dt.date)))
 
         if is_live_trading_day:
             today_session = today_cal
             prior_dates = [d for d in dates_list if d < today_session]
-            if prior_dates:
-                yesterday_session = prior_dates[-1]
-            else:
-                offset = 3 if today_session.weekday() == 0 else 1
-                yesterday_session = today_session - timedelta(days=offset)
+            yesterday_session = prior_dates[0] if prior_dates else today_session - timedelta(days=1)
+        elif now_ist.weekday() in (5, 6):  # Saturday or Sunday
+            # The most recent completed market session was Friday.
+            # When evaluating on a weekend, Friday is both the latest session and the 'Yesterday' session relative to Saturday/Sunday.
+            latest_session = dates_list[0] if dates_list else today_cal - timedelta(days=1)
+            today_session = latest_session
+            yesterday_session = latest_session
         else:
+            # Weekdays before 09:15 AM or after 15:30 PM
             if dates_list:
-                if today_cal in dates_list:
+                if today_cal in dates_list and now_ist.time() >= dt_time(15, 30):
                     today_session = today_cal
                     idx = dates_list.index(today_cal)
-                    yesterday_session = dates_list[idx - 1] if idx > 0 else today_cal - timedelta(days=1)
+                    yesterday_session = dates_list[idx + 1] if idx + 1 < len(dates_list) else today_cal - timedelta(days=1)
                 else:
-                    today_session = dates_list[-1]
-                    yesterday_session = dates_list[-2] if len(dates_list) >= 2 else today_session - timedelta(days=1)
+                    today_session = dates_list[0]
+                    yesterday_session = dates_list[1] if len(dates_list) > 1 else dates_list[0] - timedelta(days=1)
             else:
                 today_session = today_cal
-                offset = 3 if today_session.weekday() == 0 else 1
-                yesterday_session = today_session - timedelta(days=offset)
+                yesterday_session = today_cal - timedelta(days=1)
 
         return today_session, yesterday_session
 
@@ -799,10 +806,21 @@ class FNOIntradayScanner:
             try:
                 self._load_daily_candles_cache()
 
-                target_universe = self._universe
+                # Tab 57960 is dedicated to Chartink Formula {57960} which operates on Nifty 500
+                target_universe = {}
                 if symbols:
                     sym_set = set(symbols)
-                    target_universe = {k: v for k, v in self._universe.items() if k in sym_set}
+                    target_universe = {s: {"symbol": s} for s in sym_set}
+                elif hasattr(self, "instrument_mgr") and self.instrument_mgr:
+                    try:
+                        nifty500_syms = self.instrument_mgr.universe_loader.get_nifty_500_symbols()
+                        if nifty500_syms:
+                            target_universe = {s: {"symbol": s} for s in nifty500_syms}
+                    except Exception as e:
+                        logger.debug(f"Error loading nifty500_syms: {e}")
+
+                if not target_universe and self._universe:
+                    target_universe = self._universe
 
                 if not target_universe and self._daily_dfs_cache:
                     target_universe = {s: {"symbol": s} for s in self._daily_dfs_cache.keys()}

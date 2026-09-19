@@ -835,7 +835,7 @@ class HistoricalDataLoader:
 
         logger.info(f"Downloading daily candles for {len(target_symbols)} symbols...")
         today_str = date.today().isoformat()
-        from_date_str = "2024-01-01"
+        from_date_str = (date.today() - timedelta(days=45)).isoformat() if not missing else "2024-01-01"
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         results_raw: Dict[str, List[Any]] = {}
 
