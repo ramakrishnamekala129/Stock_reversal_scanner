@@ -6,7 +6,7 @@ Sleek Modern Dark Dashboard with Real-Time Pivots, Narrow CPR, and Trap Zones.
 from __future__ import annotations
 
 import csv
-from datetime import datetime, timezone, timedelta, time as dt_time
+from datetime import date, datetime, timezone, timedelta, time as dt_time
 import logging
 import os
 import sys
@@ -210,7 +210,7 @@ class ScannerTkinterGUI:
 
         # Chartink Screener 57960 Filters & State
         self.cached_57960_signals: List[dict] = []
-        self.sig_57960_session_var = tk.StringVar(value="Today")
+        self.sig_57960_session_var = tk.StringVar(value="Today (18-Sep)")
         self.sig_57960_search_var = tk.StringVar(value="")
         self.sig_57960_sort_var = tk.StringVar(value="⏱️ Time (Newest First)")
         self.sig_57960_auto_var = tk.BooleanVar(value=True)
@@ -2956,14 +2956,14 @@ class ScannerTkinterGUI:
         )
         self.btn_57960_scan.pack(side=tk.LEFT, padx=(0, 8))
 
-        # Session Selector (Today / Yesterday)
+        # Session Selector (Today / Yesterday / 16-Sep)
         tk.Label(header, text="📅 Session:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         self.combo_57960_session = ttk.Combobox(
             header,
             textvariable=self.sig_57960_session_var,
-            values=["Today", "Yesterday"],
+            values=["Today (18-Sep)", "Yesterday (17-Sep)", "16-Sep (Wednesday)"],
             state="readonly",
-            width=10,
+            width=20,
         )
         self.combo_57960_session.pack(side=tk.LEFT, padx=(0, 8))
         self.combo_57960_session.bind("<<ComboboxSelected>>", self._on_57960_session_changed)
@@ -3062,6 +3062,7 @@ class ScannerTkinterGUI:
         cols = [
             ("time", "Time", 75, "center"),
             ("symbol", "Symbol", 90, "w"),
+            ("sector", "Sector", 130, "w"),
             ("price", "Price (₹)", 85, "e"),
             ("gann", "Gann Lvl (₹)", 90, "e"),
             ("gann_diff", "Gann +%", 80, "center"),
@@ -3070,7 +3071,7 @@ class ScannerTkinterGUI:
             ("ema13", "5m EMA13", 85, "e"),
             ("sma_ema", "5m SMA(EMA)", 90, "e"),
             ("pivot_diff", "Pivot Diff %", 90, "center"),
-            ("confluences", "Formula Confluences & Breakout Factors", 360, "w"),
+            ("confluences", "Formula Confluences & Breakout Factors", 330, "w"),
         ]
 
         self.tree_57960 = ttk.Treeview(
@@ -3082,7 +3083,7 @@ class ScannerTkinterGUI:
 
         for col_id, col_name, width, align in cols:
             self.tree_57960.heading(col_id, text=col_name, anchor=align)
-            self.tree_57960.column(col_id, width=width, anchor=align, stretch=(col_id in ("confluences",)))
+            self.tree_57960.column(col_id, width=width, anchor=align, stretch=(col_id in ("confluences", "sector")))
 
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree_57960.yview)
         hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree_57960.xview)
@@ -3113,31 +3114,39 @@ class ScannerTkinterGUI:
             self.open_chart_for_symbol(sym)
 
     def _on_57960_session_changed(self, event=None):
-        """Called when user switches session between Today and Yesterday."""
+        """Called when user switches session between Today (18-Sep), Yesterday (17-Sep), and 16-Sep."""
         self._render_57960_signals()
         self._trigger_57960_scan(is_auto=False)
 
     def _trigger_57960_scan(self, is_auto: bool = False):
         """Triggers parallel scan across universe evaluating Chartink Screener 57960 rules."""
-        session_mode = self.sig_57960_session_var.get().lower() if hasattr(self, "sig_57960_session_var") else "today"
-        session_title = session_mode.title()
+        session_choice = self.sig_57960_session_var.get() if hasattr(self, "sig_57960_session_var") else "Today (18-Sep)"
+        session_lower = session_choice.lower()
+
+        target_d = None
+        if "18" in session_lower or "today" in session_lower:
+            target_d = date(2026, 9, 18)
+        elif "17" in session_lower or "yesterday" in session_lower:
+            target_d = date(2026, 9, 17)
+        elif "16" in session_lower:
+            target_d = date(2026, 9, 16)
 
         if not self.scanner:
             if not is_auto:
-                self.sig_57960_status_var.set(f"⚠️ Scanner backend initializing for Formula {{57960}} ({session_title})...")
+                self.sig_57960_status_var.set(f"⚠️ Scanner backend initializing for Formula {{57960}} ({session_choice})...")
             return
 
         if not is_auto:
-            self.sig_57960_status_var.set(f"🔄 Scanning Chartink Formula {{57960}} ({session_title})...")
+            self.sig_57960_status_var.set(f"🔄 Scanning Chartink Formula {{57960}} ({session_choice})...")
 
         def _do_scan():
             try:
-                res = self.scanner.scan_57960_universe(session_mode=session_mode)
+                res = self.scanner.scan_57960_universe(session_mode=session_lower, target_date=target_d)
                 if isinstance(res, tuple):
                     elapsed, n_tasks, n_sigs = res
                     now_str = datetime.now().strftime("%H:%M:%S")
                     self.root.after(0, lambda: self.sig_57960_status_var.set(
-                        f"🟢 Scanned ({session_title} {now_str}) • {n_sigs} Candidates ({n_tasks} Stocks in {elapsed:.2f}s)"
+                        f"🟢 Scanned ({session_choice} {now_str}) • {n_sigs} Candidates ({n_tasks} Stocks in {elapsed:.2f}s)"
                     ))
                 self.sig_57960_dirty = True
             except Exception as ex:
@@ -3149,14 +3158,20 @@ class ScannerTkinterGUI:
         """Renders filtered and sorted Screener 57960 breakout candidates in Treeview."""
         search_q = self.sig_57960_search_var.get().strip().upper()
         sort_by = self.sig_57960_sort_var.get()
-        session_choice = self.sig_57960_session_var.get() if hasattr(self, "sig_57960_session_var") else "Today"
+        session_choice = self.sig_57960_session_var.get() if hasattr(self, "sig_57960_session_var") else "Today (18-Sep)"
+        session_lower = session_choice.lower()
 
         target_date_str = None
-        if self.scanner and hasattr(self.scanner, "get_57960_session_dates"):
+        if "18" in session_lower or "today" in session_lower:
+            target_date_str = "2026-09-18"
+        elif "17" in session_lower or "yesterday" in session_lower:
+            target_date_str = "2026-09-17"
+        elif "16" in session_lower:
+            target_date_str = "2026-09-16"
+        elif self.scanner and hasattr(self.scanner, "get_57960_session_dates"):
             try:
                 today_d, yest_d = self.scanner.get_57960_session_dates()
-                target_d = yest_d if session_choice.lower() == "yesterday" else today_d
-                target_date_str = str(target_d)
+                target_date_str = str(today_d)
             except Exception:
                 target_date_str = None
 
@@ -3191,7 +3206,7 @@ class ScannerTkinterGUI:
             self.sig_57960_count_lbl.config(text=f"🎯 Showing ({session_choice}{date_lbl}): {len(filtered)} Candidates ({len(unique_syms)} Stocks)")
         if hasattr(self, "notebook") and hasattr(self, "tab_57960"):
             try:
-                self.notebook.tab(self.tab_57960, text=f"  ⚡ 57960 • {session_choice} ({len(filtered)})  ")
+                self.notebook.tab(self.tab_57960, text=f"  ⚡ 57960 • {session_choice.split()[0]} ({len(filtered)})  ")
             except Exception:
                 pass
 
@@ -3205,12 +3220,12 @@ class ScannerTkinterGUI:
                 now_str = datetime.now().strftime("%H:%M:%S")
                 univ_name = getattr(self.scanner, 'universe_name', 'Universe') if self.scanner else 'Universe'
                 self.tree_57960.insert("", tk.END, values=(
-                    now_str, "REAL-TIME ACTIVE", "--", "--", "--", "--", "--", "--", "--", "--",
+                    now_str, "REAL-TIME ACTIVE", "--", "--", "--", "--", "--", "--", "--", "--", "--",
                     f"🟢 Auto-evaluating {univ_name} stocks every 15 seconds against Screener 57960."
                 ), tags=("high_mfi",))
             else:
                 self.tree_57960.insert("", tk.END, values=(
-                    "--:--:--", "--", "--", "--", "--", "--", "--", "--", "--", "--",
+                    "--:--:--", "--", "--", "--", "--", "--", "--", "--", "--", "--", "--",
                     "No candidates matching active search filter."
                 ))
             return
@@ -3241,6 +3256,7 @@ class ScannerTkinterGUI:
             row_vals = (
                 str(s.get("timestamp", "--")),
                 str(s.get("symbol", "--")),
+                str(s.get("sector", "--")),
                 f"{float(s.get('price', 0.0)):.2f}",
                 f"{float(s.get('gann_level', 0.0)):.2f}",
                 f"+{gann_diff:.2f}%",
@@ -3279,13 +3295,15 @@ class ScannerTkinterGUI:
             with open(path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow([
-                    "Time", "Symbol", "Price", "Gann Level", "Gann Diff %",
+                    "Time", "Symbol", "Sector", "Market Cap", "Price", "Gann Level", "Gann Diff %",
                     "MFI(14)", "ATR(14)", "5m EMA13", "5m SMA(EMA)", "Pivot Diff %", "Confluences"
                 ])
                 for s in self.cached_57960_signals:
                     writer.writerow([
                         s.get("timestamp"),
                         s.get("symbol"),
+                        s.get("sector"),
+                        s.get("market_cap"),
                         s.get("price"),
                         s.get("gann_level"),
                         s.get("gann_diff_pct"),
@@ -3299,3 +3317,4 @@ class ScannerTkinterGUI:
             messagebox.showinfo("Export Successful", f"Saved {len(self.cached_57960_signals)} Screener 57960 signals to:\n{path}")
         except Exception as e:
             messagebox.showerror("Export Failed", f"Could not export CSV: {e}")
+

@@ -97,7 +97,8 @@ def test_sub1_monthly_breakout_and_turnover():
     df.loc[len(df) - 1, "high"] = today_close + 1.0
     df.loc[len(df) - 1, "volume"] = 300000
 
-    sig = engine.evaluate_stock("TEST_SUB1", df)
+    target_d = df["timestamp"].iloc[-1].date()
+    sig = engine.evaluate_stock("TEST_SUB1", df, target_date=target_d)
     assert sig is not None
     assert any("Monthly Breakout" in s for s in sig.matched_strategies)
     assert sig.turnover_cr >= 10.0
@@ -126,7 +127,8 @@ def test_sub2_weekly_breakout_and_200_sma():
     df.loc[len(df) - 1, "high"] = today_close + 1.0
     df.loc[len(df) - 1, "volume"] = 300000
 
-    sig = engine.evaluate_stock("TEST_SUB2", df)
+    target_d = df["timestamp"].iloc[-1].date()
+    sig = engine.evaluate_stock("TEST_SUB2", df, target_date=target_d)
     assert sig is not None
     assert any("20W High" in s for s in sig.matched_strategies)
 
@@ -154,7 +156,8 @@ def test_sub3_multi_sma_rsi_vol_surge():
     df.loc[len(df) - 1, "high"] = 151.0
     df.loc[len(df) - 1, "volume"] = 1000000
 
-    sig = engine.evaluate_stock("TEST_SUB3", df)
+    target_d = df["timestamp"].iloc[-1].date()
+    sig = engine.evaluate_stock("TEST_SUB3", df, target_date=target_d)
     assert sig is not None
     assert any("MA + RSI + Vol Surge" in s for s in sig.matched_strategies)
     assert sig.price == 150.0

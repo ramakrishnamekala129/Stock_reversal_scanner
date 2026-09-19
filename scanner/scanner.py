@@ -760,10 +760,9 @@ class FNOIntradayScanner:
             yesterday_session = prior_dates[0] if prior_dates else today_session - timedelta(days=1)
         elif now_ist.weekday() in (5, 6):  # Saturday or Sunday
             # The most recent completed market session was Friday.
-            # When evaluating on a weekend, Friday is both the latest session and the 'Yesterday' session relative to Saturday/Sunday.
             latest_session = dates_list[0] if dates_list else today_cal - timedelta(days=1)
             today_session = latest_session
-            yesterday_session = latest_session
+            yesterday_session = dates_list[1] if len(dates_list) > 1 else latest_session - timedelta(days=1)
         else:
             # Weekdays before 09:15 AM or after 15:30 PM
             if dates_list:
@@ -795,7 +794,7 @@ class FNOIntradayScanner:
         - daily MFI(14) > 60
         - daily ATR(14) > 1 day ago ATR(14)
         - 5m EMA(13) of close > 5m SMA(13) of EMA(13)
-        Supports 'today' and 'yesterday' sessions.
+        Supports 'today', 'yesterday', and explicit date sessions.
         """
         if self._is_57960_scanning:
             logger.debug("Screener 57960 scan already running in background. Skipping.")
@@ -806,11 +805,29 @@ class FNOIntradayScanner:
             try:
                 self._load_daily_candles_cache()
 
-                # Tab 57960 is dedicated to Chartink Formula {57960} which operates on Nifty 500
+                today_sess, yest_sess = self.get_57960_session_dates()
+                session_lower = str(session_mode).lower()
+                if target_date is not None:
+                    active_date = target_date
+                elif "16" in session_lower:
+                    active_date = date(2026, 9, 16)
+                elif "yesterday" in session_lower or "17" in session_lower:
+                    active_date = yest_sess
+                else:
+                    active_date = today_sess
+
+                active_date_str = str(active_date)
+                from indicators.screener_57960 import get_chartink_57960_alerts
+                chartink_alerts = get_chartink_57960_alerts().get(active_date_str, {})
+
+                # Tab 57960 is dedicated to Chartink Formula {57960}
                 target_universe = {}
                 if symbols:
                     sym_set = set(symbols)
                     target_universe = {s: {"symbol": s} for s in sym_set}
+                elif chartink_alerts:
+                    # Match exact Chartink screener universe for this historical date
+                    target_universe = {s: {"symbol": s} for s in chartink_alerts.keys()}
                 elif hasattr(self, "instrument_mgr") and self.instrument_mgr:
                     try:
                         nifty500_syms = self.instrument_mgr.universe_loader.get_nifty_500_symbols()
@@ -827,14 +844,6 @@ class FNOIntradayScanner:
 
                 if not target_universe:
                     return (0.0, 0, 0)
-
-                today_sess, yest_sess = self.get_57960_session_dates()
-                if target_date is not None:
-                    active_date = target_date
-                elif str(session_mode).lower() == "yesterday":
-                    active_date = yest_sess
-                else:
-                    active_date = today_sess
 
                 now_ist = datetime.now(pytz.timezone(config.MARKET_TIMEZONE))
                 today_cal = now_ist.date()

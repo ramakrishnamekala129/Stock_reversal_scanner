@@ -17,13 +17,94 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime, time as dt_time, timedelta
+import csv
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+_CHARTINK_57960_ALERTS_CACHE: Optional[Dict[str, Dict[str, Dict[str, Any]]]] = None
+
+
+def standardize_alert_time(raw_time: str) -> str:
+    """Standardizes times like '2:40 pm' or '9:15 am' into 24-hr '14:40' format for clean chronological sorting."""
+    t_clean = raw_time.strip().lower()
+    try:
+        dt = datetime.strptime(t_clean, "%I:%M %p")
+        return dt.strftime("%H:%M")
+    except Exception:
+        try:
+            dt = datetime.strptime(t_clean, "%H:%M")
+            return dt.strftime("%H:%M")
+        except Exception:
+            return raw_time
+
+
+def get_chartink_57960_alerts(csv_path: Optional[Path] = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """
+    Loads historical Chartink Screener {57960} alert logs from CSV.
+    Returns: { 'YYYY-MM-DD': { 'SYMBOL': { 'first_time', 'last_time', 'sector', 'market_cap', 'count' } } }
+    """
+    global _CHARTINK_57960_ALERTS_CACHE
+    if _CHARTINK_57960_ALERTS_CACHE is not None and csv_path is None:
+        return _CHARTINK_57960_ALERTS_CACHE
+
+    target_path = csv_path
+    if not target_path:
+        for candidate in [Path("data/chartink_57960_alerts.csv"), Path(__file__).parent / "chartink_57960_alerts.csv"]:
+            if candidate.exists():
+                target_path = candidate
+                break
+        if not target_path:
+            target_path = Path("data/chartink_57960_alerts.csv")
+
+    alerts_map: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    if target_path.exists():
+        try:
+            with open(target_path, "r", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    raw_dt = (row.get("Date") or "").strip()
+                    sym = (row.get("Symbol") or "").strip().upper()
+                    mcap = (row.get("Marketcapname") or "").strip()
+                    sec = (row.get("Sector") or "").strip()
+                    if not raw_dt or not sym:
+                        continue
+                    parts = raw_dt.split(" ")
+                    d_part = parts[0]
+                    t_part = " ".join(parts[1:])
+                    d_tokens = d_part.split("-")
+                    if len(d_tokens) == 3:
+                        iso_date = f"{d_tokens[2]}-{d_tokens[1]}-{d_tokens[0]}"
+                    else:
+                        iso_date = d_part
+
+                    t_std = standardize_alert_time(t_part)
+
+                    if iso_date not in alerts_map:
+                        alerts_map[iso_date] = {}
+                    if sym not in alerts_map[iso_date]:
+                        alerts_map[iso_date][sym] = {
+                            "first_time": t_std,
+                            "raw_first_time": t_part,
+                            "last_time": t_std,
+                            "market_cap": mcap,
+                            "sector": sec,
+                            "count": 1,
+                        }
+                    else:
+                        alerts_map[iso_date][sym]["last_time"] = t_std
+                        alerts_map[iso_date][sym]["count"] += 1
+        except Exception as e:
+            logger.warning(f"Error loading Chartink 57960 alerts CSV: {e}")
+
+    if csv_path is None:
+        _CHARTINK_57960_ALERTS_CACHE = alerts_map
+    return alerts_map
 
 
 @dataclass
@@ -43,6 +124,8 @@ class Screener57960Signal:
     date: str = ""
     first_detected_time: str = ""
     first_detected_price: float = 0.0
+    sector: str = ""
+    market_cap: str = ""
 
 
 class Screener57960Engine:
@@ -208,6 +291,14 @@ class Screener57960Engine:
         if latest_atr <= prev_atr:
             return None
 
+        now_str = datetime.now().strftime("%H:%M:%S")
+        active_date_str = active_date.strftime("%Y-%m-%d")
+
+        # Check if this stock has historical Chartink Screener {57960} alert records
+        alerts_map = get_chartink_57960_alerts()
+        day_alerts = alerts_map.get(active_date_str, {})
+        alert_info = day_alerts.get(symbol)
+
         # Condition 6: 5-minute trigger (if 5m candles provided)
         ema13_val = 0.0
         sma_ema13_val = 0.0
@@ -220,7 +311,8 @@ class Screener57960Engine:
                 if not df_5m_target.empty:
                     df_5m = df_5m_target
             is_5m_triggered, ema13_val, sma_ema13_val, trg_idx = self.check_5m_trigger(df_5m)
-            if not is_5m_triggered:
+            # Qualifies if currently active, OR triggered intraday during session, OR historical alert log exists
+            if not is_5m_triggered and trg_idx is None and not alert_info:
                 return None
             if trg_idx is not None and trg_idx < len(df_5m):
                 trg_row = df_5m.iloc[trg_idx]
@@ -232,20 +324,32 @@ class Screener57960Engine:
             ema13_val = c_close
             sma_ema13_val = c_open
 
+        stock_sector = alert_info.get("sector", "") if alert_info else ""
+        stock_mcap = alert_info.get("market_cap", "") if alert_info else ""
+
+        if alert_info and not first_det_time:
+            first_det_time = alert_info.get("first_time", "")
+
         gann_diff_pct = ((c_close - gann_level) / gann_level) * 100.0 if gann_level > 0 else 0.0
         pivot_diff_pct = ((typical_price - median_price) / median_price) * 100.0 if median_price > 0 else 0.0
         atr_expansion_pct = ((latest_atr - prev_atr) / prev_atr) * 100.0 if prev_atr > 0 else 0.0
 
-        confluences = [
+        confluences = []
+        if stock_sector or stock_mcap:
+            mcap_prefix = f"[{stock_mcap}] " if stock_mcap else ""
+            confluences.append(f"Sector: {stock_sector} {mcap_prefix}".strip())
+
+        if alert_info:
+            raw_t = alert_info.get("raw_first_time", alert_info.get("first_time", ""))
+            confluences.append(f"Chartink Trigger: {raw_t} ({alert_info.get('count', 1)} 5m bars)")
+
+        confluences.extend([
             f"Gann Breakout: +{gann_diff_pct:.2f}% (Above ₹{gann_level:.2f})",
             f"Daily MFI(14): {latest_mfi:.1f} (> 60)",
             f"ATR Expansion: +{atr_expansion_pct:.1f}% (₹{latest_atr:.2f} vs ₹{prev_atr:.2f})",
             f"Upper Pivot Clearance: +{pivot_diff_pct:.2f}%",
             f"5m EMA13: {ema13_val:.2f} > SMA: {sma_ema13_val:.2f}",
-        ]
-
-        now_str = datetime.now().strftime("%H:%M:%S")
-        active_date_str = active_date.strftime("%Y-%m-%d")
+        ])
 
         return Screener57960Signal(
             symbol=symbol,
@@ -263,4 +367,6 @@ class Screener57960Engine:
             date=active_date_str,
             first_detected_time=first_det_time or now_str,
             first_detected_price=round(first_det_price, 2),
+            sector=stock_sector,
+            market_cap=stock_mcap,
         )

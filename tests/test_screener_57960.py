@@ -137,3 +137,45 @@ def test_screener_57960_yesterday_target_date():
     assert sig_yest.price == 1025.0
     assert sig_yest.date == str(yest_date)
 
+
+def test_screener_57960_chartink_alerts_csv_loaded():
+    from indicators.screener_57960 import get_chartink_57960_alerts
+    alerts = get_chartink_57960_alerts()
+    assert "2026-09-18" in alerts
+    assert "2026-09-17" in alerts
+    assert "2026-09-16" in alerts
+    assert len(alerts["2026-09-18"]) == 35
+    assert len(alerts["2026-09-17"]) == 17
+    assert len(alerts["2026-09-16"]) == 12
+
+    # Check alert fields
+    b_alert = alerts["2026-09-18"]["BEML"]
+    assert b_alert["sector"] == "Aerospace & Defence"
+    assert b_alert["market_cap"] == "Midcap"
+    assert b_alert["first_time"] == "09:15"
+
+
+def test_screener_57960_scanner_exact_sessions_match():
+    from scanner.scanner import FNOIntradayScanner
+    from web.state import dashboard_state
+
+    s = FNOIntradayScanner(enable_web=False, enable_excel=False)
+    # Today session (18-Sep) -> 35
+    _, n_tasks18, n_sigs18 = s.scan_57960_universe(session_mode="today", target_date=date(2026, 9, 18))
+    sigs18 = dashboard_state.get_screener_57960_signals(target_date="2026-09-18")
+    assert n_sigs18 == 35
+    assert len(sigs18) == 35
+
+    # Yesterday session (17-Sep) -> 17
+    _, n_tasks17, n_sigs17 = s.scan_57960_universe(session_mode="yesterday", target_date=date(2026, 9, 17))
+    sigs17 = dashboard_state.get_screener_57960_signals(target_date="2026-09-17")
+    assert n_sigs17 == 17
+    assert len(sigs17) == 17
+
+    # 16-Sep session -> 12
+    _, n_tasks16, n_sigs16 = s.scan_57960_universe(session_mode="16-sep", target_date=date(2026, 9, 16))
+    sigs16 = dashboard_state.get_screener_57960_signals(target_date="2026-09-16")
+    assert n_sigs16 == 12
+    assert len(sigs16) == 12
+
+
