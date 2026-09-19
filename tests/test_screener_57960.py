@@ -179,3 +179,34 @@ def test_screener_57960_scanner_exact_sessions_match():
     assert len(sigs16) == 12
 
 
+def test_screener_57960_full_history_dataset():
+    from pathlib import Path
+    from indicators.screener_57960 import get_chartink_57960_alerts
+    import pandas as pd
+
+    csv_p = Path("data/chartink_57960_daily_history.csv")
+    assert csv_p.exists()
+    df = pd.read_csv(csv_p)
+    assert len(df) == 2529
+    assert df["Date"].nunique() == 160
+
+    alerts_map = get_chartink_57960_alerts()
+    assert len(alerts_map) >= 160
+    assert "2026-01-28" in alerts_map
+    assert "2026-04-22" in alerts_map
+    assert "2026-09-18" in alerts_map
+
+    # Check 28-01-2026 BEL
+    bel_alert = alerts_map["2026-01-28"].get("BEL")
+    assert bel_alert is not None
+    assert bel_alert["sector"] == "Aerospace & Defence"
+    assert bel_alert["market_cap"] == "Largecap"
+
+    # Check 18-09-2026 BEML
+    beml_alert = alerts_map["2026-09-18"].get("BEML")
+    assert beml_alert is not None
+    assert beml_alert["sector"] == "Aerospace & Defence"
+    assert beml_alert["first_time"] == "09:15"
+
+
+

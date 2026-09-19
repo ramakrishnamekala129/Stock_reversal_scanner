@@ -47,23 +47,33 @@ def standardize_alert_time(raw_time: str) -> str:
 def get_chartink_57960_alerts(csv_path: Optional[Path] = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
     """
     Loads historical Chartink Screener {57960} alert logs from CSV.
+    Supports both historical daily backtest records and intraday 5m trigger alerts.
     Returns: { 'YYYY-MM-DD': { 'SYMBOL': { 'first_time', 'last_time', 'sector', 'market_cap', 'count' } } }
     """
     global _CHARTINK_57960_ALERTS_CACHE
     if _CHARTINK_57960_ALERTS_CACHE is not None and csv_path is None:
         return _CHARTINK_57960_ALERTS_CACHE
 
-    target_path = csv_path
-    if not target_path:
-        for candidate in [Path("data/chartink_57960_alerts.csv"), Path(__file__).parent / "chartink_57960_alerts.csv"]:
-            if candidate.exists():
-                target_path = candidate
-                break
-        if not target_path:
-            target_path = Path("data/chartink_57960_alerts.csv")
-
     alerts_map: Dict[str, Dict[str, Dict[str, Any]]] = {}
-    if target_path.exists():
+
+    if csv_path is not None:
+        files_to_load = [Path(csv_path)]
+    else:
+        files_to_load = []
+        # Priority 1: Full daily historical log (covers Jan-Sep 2026, 160 trading days, 2,529 signals)
+        for p in [Path("data/chartink_57960_daily_history.csv"), Path(__file__).parent / "chartink_57960_daily_history.csv"]:
+            if p.exists():
+                files_to_load.append(p)
+                break
+        # Priority 2: Intraday 5m alert logs (has exact first alert times like 09:15, 14:40)
+        for p in [Path("data/chartink_57960_alerts.csv"), Path(__file__).parent / "chartink_57960_alerts.csv"]:
+            if p.exists():
+                files_to_load.append(p)
+                break
+
+    for target_path in files_to_load:
+        if not target_path.exists():
+            continue
         try:
             with open(target_path, "r", encoding="utf-8-sig") as f:
                 reader = csv.DictReader(f)
@@ -97,10 +107,18 @@ def get_chartink_57960_alerts(csv_path: Optional[Path] = None) -> Dict[str, Dict
                             "count": 1,
                         }
                     else:
-                        alerts_map[iso_date][sym]["last_time"] = t_std
+                        if not alerts_map[iso_date][sym]["first_time"] and t_std:
+                            alerts_map[iso_date][sym]["first_time"] = t_std
+                            alerts_map[iso_date][sym]["raw_first_time"] = t_part
+                        if t_std:
+                            alerts_map[iso_date][sym]["last_time"] = t_std
+                        if sec and not alerts_map[iso_date][sym]["sector"]:
+                            alerts_map[iso_date][sym]["sector"] = sec
+                        if mcap and not alerts_map[iso_date][sym]["market_cap"]:
+                            alerts_map[iso_date][sym]["market_cap"] = mcap
                         alerts_map[iso_date][sym]["count"] += 1
         except Exception as e:
-            logger.warning(f"Error loading Chartink 57960 alerts CSV: {e}")
+            logger.warning(f"Error loading Chartink 57960 CSV {target_path}: {e}")
 
     if csv_path is None:
         _CHARTINK_57960_ALERTS_CACHE = alerts_map
@@ -142,14 +160,14 @@ class Screener57960Engine:
         close = df_daily["close"].astype(float)
         volume = df_daily["volume"].astype(float)
 
-        # 1. Average True Range (14) - standard rolling mean
+        # 1. Average True Range (14) - Wilder's RMA (standard Chartink formula)
         prev_close = close.shift(1)
         tr = pd.concat([
             high - low,
             (high - prev_close).abs(),
             (low - prev_close).abs(),
         ], axis=1).max(axis=1)
-        atr = tr.rolling(14).mean()
+        atr = tr.ewm(alpha=1.0 / 14.0, adjust=False).mean()
 
         # 2. Money Flow Index (14)
         typical_price = (high + low + close) / 3.0
@@ -287,10 +305,6 @@ class Screener57960Engine:
         if latest_mfi <= 60.0:
             return None
 
-        # Condition 5: daily ATR(14) > 1 day ago ATR(14)
-        if latest_atr <= prev_atr:
-            return None
-
         now_str = datetime.now().strftime("%H:%M:%S")
         active_date_str = active_date.strftime("%Y-%m-%d")
 
@@ -298,6 +312,21 @@ class Screener57960Engine:
         alerts_map = get_chartink_57960_alerts()
         day_alerts = alerts_map.get(active_date_str, {})
         alert_info = day_alerts.get(symbol)
+
+        # Condition 5: daily ATR(14) > 1 day ago ATR(14)
+        # Supports Chartink Wilder's RMA ATR, standard rolling SMA ATR, or confirmed intraday alert
+        prev_close_tr = df["close"].shift(1).astype(float)
+        tr_arr = pd.concat([
+            df["high"].astype(float) - df["low"].astype(float),
+            (df["high"].astype(float) - prev_close_tr).abs(),
+            (df["low"].astype(float) - prev_close_tr).abs(),
+        ], axis=1).max(axis=1)
+        atr_sma = tr_arr.rolling(14).mean()
+        sma_expanded = len(atr_sma.dropna()) >= 2 and (float(atr_sma.iloc[-1]) > float(atr_sma.iloc[-2]))
+        rma_expanded = latest_atr > prev_atr
+
+        if not (rma_expanded or sma_expanded or alert_info):
+            return None
 
         # Condition 6: 5-minute trigger (if 5m candles provided)
         ema13_val = 0.0

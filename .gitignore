@@ -5,6 +5,7 @@ __pycache__/
 .env
 data/*
 !data/chartink_57960_alerts.csv
+!data/chartink_57960_daily_history.csv
 data/cache/
 *.db
 .pytest_cache/
