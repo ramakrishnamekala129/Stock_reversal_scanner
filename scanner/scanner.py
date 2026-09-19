@@ -10,10 +10,10 @@ import signal
 import sys
 import threading
 import time
-from datetime import date, datetime, time as dt_time
+from datetime import date, datetime, timedelta, time as dt_time
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 import pandas as pd
 import pytz
 
@@ -23,6 +23,7 @@ from excel.live_excel import LiveExcelManager
 from indicators.pivots import DailyPivots, calculate_daily_pivots
 from indicators.hema_t3 import HemaT3RegimeEngine, HemaT3Signal
 from indicators.chartink_screener import ChartinkIntradayEngine, ChartinkSignal
+from indicators.screener_57960 import Screener57960Engine, Screener57960Signal
 from market.candle_engine import Candle, CandleEngine, CandleStatus, MultiTimeframeCandleEngine
 from market.historical import HistoricalDataLoader, PreviousDayOHLCV
 from market.instruments import InstrumentManager
@@ -62,6 +63,7 @@ class FNOIntradayScanner:
         self.signal_engine = SignalEngine()
         self.hema_engine = HemaT3RegimeEngine()
         self.chartink_engine = ChartinkIntradayEngine()
+        self.screener_57960_engine = Screener57960Engine()
         self.trigger_tracker = SignalTriggerTracker()
         self.db = DatabaseRepository() if config.ENABLE_DB_STORAGE else None
         self.excel_mgr = LiveExcelManager() if enable_excel else None
@@ -77,6 +79,8 @@ class FNOIntradayScanner:
         self._hema_scan_lock = threading.Lock()
         self._is_chartink_scanning = False
         self._chartink_scan_lock = threading.Lock()
+        self._is_57960_scanning = False
+        self._scan_57960_lock = threading.Lock()
         self._is_cash_v13_backtesting = False
         self._daily_dfs_cache: Dict[str, pd.DataFrame] = {}
         self._daily_cache_loaded: bool = False
@@ -438,6 +442,7 @@ class FNOIntradayScanner:
             if getattr(config, "ENABLE_HEMA_STRATEGY_TAB", False):
                 threading.Thread(target=self.scan_hema_universe, daemon=True, name="StartupHemaScan").start()
             threading.Thread(target=self.scan_chartink_universe, daemon=True, name="StartupChartinkScan").start()
+            threading.Thread(target=self.scan_57960_universe, daemon=True, name="Startup57960Scan").start()
         except Exception as e:
             logger.debug(f"Startup scan error: {e}")
 
@@ -457,6 +462,7 @@ class FNOIntradayScanner:
             if getattr(config, "ENABLE_HEMA_STRATEGY_TAB", False):
                 threading.Thread(target=self.scan_hema_universe, daemon=True, name="SyncHemaScan").start()
             threading.Thread(target=self.scan_chartink_universe, daemon=True, name="SyncChartinkScan").start()
+            threading.Thread(target=self.scan_57960_universe, daemon=True, name="Sync57960Scan").start()
         except Exception as e:
             logger.debug(f"Sync scan error: {e}")
 
@@ -718,6 +724,171 @@ class FNOIntradayScanner:
                 self.scan_chartink_universe()
             except Exception as e:
                 logger.debug(f"Chartink live monitor loop exception: {e}")
+
+    def get_57960_session_dates(self) -> Tuple[date, date]:
+        """
+        Returns (today_session_date, yesterday_session_date).
+        Dynamically resolves trading sessions from historical cache to cleanly skip weekends & holidays.
+        """
+        now_ist = datetime.now(pytz.timezone(config.MARKET_TIMEZONE))
+        today_cal = now_ist.date()
+        market_open_time = dt_time(9, 15)
+        is_weekday = now_ist.weekday() < 5
+        is_live_trading_day = is_weekday and (now_ist.time() >= market_open_time)
+
+        dates_list = []
+        if getattr(self, "_daily_dfs_cache", None):
+            for sym in ["RELIANCE", "TCS", "INFY", "HDFCBANK"]:
+                df = self._daily_dfs_cache.get(sym)
+                if df is not None and not df.empty and "timestamp" in df.columns:
+                    dates_list = sorted(list(set(pd.to_datetime(df["timestamp"]).dt.date)))
+                    if len(dates_list) >= 2:
+                        break
+            if not dates_list:
+                first_df = next(iter(self._daily_dfs_cache.values()), None)
+                if first_df is not None and not first_df.empty and "timestamp" in first_df.columns:
+                    dates_list = sorted(list(set(pd.to_datetime(first_df["timestamp"]).dt.date)))
+
+        if is_live_trading_day:
+            today_session = today_cal
+            prior_dates = [d for d in dates_list if d < today_session]
+            if prior_dates:
+                yesterday_session = prior_dates[-1]
+            else:
+                offset = 3 if today_session.weekday() == 0 else 1
+                yesterday_session = today_session - timedelta(days=offset)
+        else:
+            if dates_list:
+                if today_cal in dates_list:
+                    today_session = today_cal
+                    idx = dates_list.index(today_cal)
+                    yesterday_session = dates_list[idx - 1] if idx > 0 else today_cal - timedelta(days=1)
+                else:
+                    today_session = dates_list[-1]
+                    yesterday_session = dates_list[-2] if len(dates_list) >= 2 else today_session - timedelta(days=1)
+            else:
+                today_session = today_cal
+                offset = 3 if today_session.weekday() == 0 else 1
+                yesterday_session = today_session - timedelta(days=offset)
+
+        return today_session, yesterday_session
+
+    def scan_57960_universe(
+        self,
+        symbols: Optional[List[str]] = None,
+        session_mode: str = "today",
+        target_date: Optional[date] = None,
+    ) -> Tuple[float, int, int]:
+        """
+        Executes parallel screening of the universe evaluating Chartink Screener 57960 rules:
+        - Universe: {57960} -> Nifty 500
+        - 350 < daily close < 3000
+        - daily close >= square( sqrt( daily open ) + 0.125 )
+        - (high + low)/2 < ((high + low + close)/3) * 0.997
+        - daily MFI(14) > 60
+        - daily ATR(14) > 1 day ago ATR(14)
+        - 5m EMA(13) of close > 5m SMA(13) of EMA(13)
+        Supports 'today' and 'yesterday' sessions.
+        """
+        if self._is_57960_scanning:
+            logger.debug("Screener 57960 scan already running in background. Skipping.")
+            return (0.0, 0, 0)
+
+        with self._scan_57960_lock:
+            self._is_57960_scanning = True
+            try:
+                self._load_daily_candles_cache()
+
+                target_universe = self._universe
+                if symbols:
+                    sym_set = set(symbols)
+                    target_universe = {k: v for k, v in self._universe.items() if k in sym_set}
+
+                if not target_universe and self._daily_dfs_cache:
+                    target_universe = {s: {"symbol": s} for s in self._daily_dfs_cache.keys()}
+
+                if not target_universe:
+                    return (0.0, 0, 0)
+
+                today_sess, yest_sess = self.get_57960_session_dates()
+                if target_date is not None:
+                    active_date = target_date
+                elif str(session_mode).lower() == "yesterday":
+                    active_date = yest_sess
+                else:
+                    active_date = today_sess
+
+                now_ist = datetime.now(pytz.timezone(config.MARKET_TIMEZONE))
+                today_cal = now_ist.date()
+                market_open_time = dt_time(9, 15)
+                is_market_hours = (now_ist.time() >= market_open_time) and (now_ist.weekday() < 5)
+                is_live_target = (active_date == today_cal) and is_market_hours
+
+                target_db_candles_map = {}
+                if hasattr(self, "db") and self.db:
+                    try:
+                        target_db_candles_map = self.db.get_candles_by_date(str(active_date))
+                    except Exception as e:
+                        logger.debug(f"Error querying db candles for {active_date}: {e}")
+                        target_db_candles_map = {}
+
+                t0 = time.time()
+                tasks = []
+                for sym in target_universe.keys():
+                    df_daily = self._daily_dfs_cache.get(sym)
+                    if df_daily is not None and len(df_daily) >= 16:
+                        tasks.append((sym, df_daily))
+
+                if not tasks:
+                    return (0.0, 0, 0)
+
+                def _eval_57960_worker(task):
+                    sym, df = task
+                    try:
+                        df_5m = None
+                        if is_live_target:
+                            if hasattr(self, "candle_engine") and self.candle_engine:
+                                df_c = self.candle_engine.get_candle_history_df(sym, include_forming=True)
+                                if df_c is not None and not df_c.empty:
+                                    today_bars = df_c[pd.to_datetime(df_c["timestamp"]).dt.date == active_date]
+                                    if not today_bars.empty:
+                                        df_5m = today_bars
+                        if df_5m is None and target_db_candles_map:
+                            df_5m = target_db_candles_map.get(sym)
+
+                        today_override = None
+                        if is_live_target:
+                            lp = dashboard_state.live_prices.get(sym)
+                            if lp and lp.get("is_live", False) and lp.get("ltp", 0) > 0:
+                                today_override = {
+                                    "timestamp": datetime.now(),
+                                    "close": float(lp["ltp"]),
+                                    "volume": int(lp.get("volume", 0)),
+                                }
+
+                        return self.screener_57960_engine.evaluate_stock(
+                            symbol=sym,
+                            df_daily=df,
+                            df_5m=df_5m,
+                            today_override=today_override,
+                            target_date=active_date,
+                        )
+                    except Exception as ex:
+                        logger.warning(f"Screener 57960 error for {sym}: {ex}")
+                        return None
+
+                workers = min(8, os.cpu_count() or 4)
+                with ThreadPoolExecutor(max_workers=workers) as executor:
+                    raw_signals = list(executor.map(_eval_57960_worker, tasks))
+
+                valid_signals = [s for s in raw_signals if s is not None]
+                dashboard_state.add_screener_57960_signals_batch(valid_signals, target_date=str(active_date))
+                elapsed = time.time() - t0
+                if valid_signals:
+                    logger.info(f"Screener 57960 scan ({session_mode.title()} - {active_date}) complete: Evaluated {len(tasks)} stocks in {elapsed:.2f}s! Found {len(valid_signals)} candidates.")
+                return elapsed, len(tasks), len(valid_signals)
+            finally:
+                self._is_57960_scanning = False
 
     def run_cash_v13_backtest(
         self,

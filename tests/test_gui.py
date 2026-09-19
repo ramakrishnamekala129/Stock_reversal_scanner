@@ -101,6 +101,21 @@ def test_tkinter_gui_initialization(tk_root):
     assert "3 months" in gui.cash_v13_status_var.get()
     assert "5-minute" in gui.cash_v13_status_var.get()
 
+    # Verify Tab 57960 (Chartink Screener {57960})
+    assert hasattr(gui, "tab_57960")
+    assert hasattr(gui, "btn_57960_scan")
+    assert hasattr(gui, "combo_57960_session")
+    assert hasattr(gui, "tree_57960")
+    assert gui.sig_57960_session_var.get() == "Today"
+    assert "Today" in gui.combo_57960_session["values"]
+    assert "Yesterday" in gui.combo_57960_session["values"]
+
+    # Test switching to Yesterday
+    gui.sig_57960_session_var.set("Yesterday")
+    gui._on_57960_session_changed()
+    assert gui.sig_57960_session_var.get() == "Yesterday"
+    assert "57960" in gui.sig_57960_status_var.get()
+
     # Test switching symbol and opening chart
     gui.open_chart_for_symbol("RELIANCE")
     assert gui.chart_frame.current_symbol == "RELIANCE"

@@ -208,6 +208,16 @@ class ScannerTkinterGUI:
         self.cash_v13_summary_var = tk.StringVar(value="Trades: 0   Win rate: --   P&L: --   Profit factor: --")
         self.cash_v13_backtest_result: Dict[str, Any] = {}
 
+        # Chartink Screener 57960 Filters & State
+        self.cached_57960_signals: List[dict] = []
+        self.sig_57960_session_var = tk.StringVar(value="Today")
+        self.sig_57960_search_var = tk.StringVar(value="")
+        self.sig_57960_sort_var = tk.StringVar(value="⏱️ Time (Newest First)")
+        self.sig_57960_auto_var = tk.BooleanVar(value=True)
+        self.sig_57960_status_var = tk.StringVar(value="Ready — Formula {57960} (Nifty 500)")
+        self.sig_57960_dirty = False
+        self.last_57960_render_time = 0.0
+
         # Setup Styling & UI Components
         self._setup_styles()
         self._build_header()
@@ -223,6 +233,7 @@ class ScannerTkinterGUI:
         if getattr(config, "ENABLE_HEMA_STRATEGY_TAB", False):
             self._schedule_auto_hema_scan()
         self.root.after(1000, self._schedule_auto_chartink_scan)
+        self.root.after(2500, self._schedule_auto_57960_scan)
         self.root.after(5000, self._schedule_auto_cash_v13_update)
 
     def _debounce(self, key: str, delay_ms: int, callback):
@@ -263,6 +274,16 @@ class ScannerTkinterGUI:
             pass
         # Auto-evaluate every 10 seconds continuously (hands-free real-time operation)
         self.root.after(10000, self._schedule_auto_chartink_scan)
+
+    def _schedule_auto_57960_scan(self):
+        """Continuously re-evaluates Screener 57960 in background every 15 seconds."""
+        try:
+            if hasattr(self, "scanner") and self.scanner and self.sig_57960_auto_var.get():
+                if not getattr(self.scanner, "_is_57960_scanning", False):
+                    self._trigger_57960_scan(is_auto=True)
+        except Exception:
+            pass
+        self.root.after(15000, self._schedule_auto_57960_scan)
 
     def _setup_styles(self):
         """Configures modern dark ttk styles for notebook, treeviews, and inputs."""
@@ -487,6 +508,11 @@ class ScannerTkinterGUI:
         self.tab_chartink = tk.Frame(self.notebook, bg=BG_DARK)
         self.notebook.add(self.tab_chartink, text="  🎯 Chartink Intraday (0)  ")
         self._build_chartink_tab()
+
+        # Tab: Chartink Screener 57960 (Gann + MFI + 5M EMA-SMA Intraday Momentum)
+        self.tab_57960 = tk.Frame(self.notebook, bg=BG_DARK)
+        self.notebook.add(self.tab_57960, text="  ⚡ 57960 • Gann MFI 5M (0)  ")
+        self._build_57960_tab()
 
         # Tab 5: exact linked Cash V1.3 scanner with a fixed 3-month 5m backtest.
         self.tab_cash_v13 = tk.Frame(self.notebook, bg=BG_DARK)
@@ -965,6 +991,8 @@ class ScannerTkinterGUI:
                 self.hema_dirty = True
             elif hasattr(self, "tab_chartink") and cur == str(self.tab_chartink):
                 self.chartink_dirty = True
+            elif hasattr(self, "tab_57960") and cur == str(self.tab_57960):
+                self.sig_57960_dirty = True
         except Exception:
             pass
 
@@ -1072,6 +1100,13 @@ class ScannerTkinterGUI:
                         except Exception:
                             pass
 
+            sigs_57960 = snapshot.get("screener_57960_signals", [])
+            if sigs_57960 is not None:
+                if sigs_57960 != self.cached_57960_signals:
+                    self.cached_57960_signals = list(sigs_57960)
+                    self.sig_57960_dirty = True
+
+
             ws_status = stats.get("ws_status", "INITIALIZING...")
             if ws_status == "CONNECTED":
                 new_status = "🟢 LIVE CONNECTED"
@@ -1151,6 +1186,13 @@ class ScannerTkinterGUI:
                             self.last_chartink_render_time = now
                             self.chartink_dirty = False
                             self._render_chartink_signals()
+
+                    # If on Chartink Screener 57960 tab: throttle redraws to at most once every 1.5 seconds
+                    elif hasattr(self, "tab_57960") and cur_tab == str(self.tab_57960):
+                        if self.sig_57960_dirty and (now - self.last_57960_render_time >= 1.5):
+                            self.last_57960_render_time = now
+                            self.sig_57960_dirty = False
+                            self._render_57960_signals()
 
                 except Exception:
                     pass
@@ -1852,6 +1894,7 @@ class ScannerTkinterGUI:
                 self.chart_dirty = True
                 self.market_dirty = True
                 self.chartink_dirty = True
+                self.sig_57960_dirty = True
                 self.hema_dirty = True
                 if hasattr(self, "chart_frame") and self.chart_frame:
                     self.chart_frame.redraw_chart()
@@ -2882,5 +2925,377 @@ class ScannerTkinterGUI:
                         s.get("reasons_str"),
                     ])
             messagebox.showinfo("Export Successful", f"Saved {len(self.cached_chartink_signals)} Chartink breakout signals to:\n{path}")
+        except Exception as e:
+            messagebox.showerror("Export Failed", f"Could not export CSV: {e}")
+
+    def _build_57960_tab(self):
+        """Builds dedicated Tab for Chartink Screener {57960}: Gann + MFI + 5M EMA-SMA Intraday Momentum."""
+        header = tk.Frame(self.tab_57960, bg=BG_DARK, pady=6)
+        header.pack(fill=tk.X)
+
+        tk.Label(
+            header,
+            text="Chartink Screener {57960} — Gann MFI & 5M EMA-SMA",
+            font=("Segoe UI", 12, "bold"), fg=TEXT_MAIN, bg=BG_DARK,
+        ).pack(side=tk.LEFT, padx=(4, 10))
+
+        tk.Button(
+            header, text="🔗 Open Chartink Screener",
+            command=lambda: webbrowser.open("https://chartink.com/screener/57960"),
+            bg=CARD_BG, fg=ACCENT_BLUE, activebackground=CARD_BORDER,
+            activeforeground=TEXT_MAIN, relief="flat", padx=10, pady=3,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+
+        # Scan Button
+        self.btn_57960_scan = tk.Button(
+            header, text="▶ Scan Now",
+            command=self._trigger_57960_scan,
+            bg="#065f46", fg="#ecfdf5", activebackground="#047857",
+            activeforeground="#ffffff", relief="flat", padx=10, pady=3,
+            font=("Segoe UI", 9, "bold"), cursor="hand2",
+        )
+        self.btn_57960_scan.pack(side=tk.LEFT, padx=(0, 8))
+
+        # Session Selector (Today / Yesterday)
+        tk.Label(header, text="📅 Session:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        self.combo_57960_session = ttk.Combobox(
+            header,
+            textvariable=self.sig_57960_session_var,
+            values=["Today", "Yesterday"],
+            state="readonly",
+            width=10,
+        )
+        self.combo_57960_session.pack(side=tk.LEFT, padx=(0, 8))
+        self.combo_57960_session.bind("<<ComboboxSelected>>", self._on_57960_session_changed)
+
+        # Auto Toggle
+        tk.Checkbutton(
+            header,
+            text="⚡ Auto 5m",
+            variable=self.sig_57960_auto_var,
+            bg=BG_DARK,
+            fg=ACCENT_GREEN,
+            selectcolor=CARD_BG,
+            activebackground=BG_DARK,
+            activeforeground=TEXT_MAIN,
+            font=("Segoe UI", 9, "bold"),
+            cursor="hand2",
+        ).pack(side=tk.LEFT, padx=(0, 10))
+
+        # Search Entry
+        tk.Label(header, text="Search:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        search_entry = ttk.Entry(header, textvariable=self.sig_57960_search_var, width=12)
+        search_entry.pack(side=tk.LEFT, padx=(0, 10))
+        search_entry.bind("<KeyRelease>", lambda e: self._debounce("57960_search", 250, self._render_57960_signals))
+
+        # Sort Combo
+        tk.Label(header, text="Sort By:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
+        sort_combo = ttk.Combobox(
+            header,
+            textvariable=self.sig_57960_sort_var,
+            values=[
+                "⏱️ Time (Newest First)",
+                "⏱️ Time (Oldest First)",
+                "🚀 Pivot Diff % (Highest First)",
+                "📈 Gann Breakout % (Highest First)",
+                "📊 MFI(14) (Highest First)",
+                "💰 Price (Highest First)",
+                "🔤 Symbol (A to Z)",
+            ],
+            state="readonly",
+            width=24,
+        )
+        sort_combo.pack(side=tk.LEFT, padx=(0, 10))
+        sort_combo.bind("<<ComboboxSelected>>", lambda e: self._render_57960_signals())
+
+        # Export CSV Button
+        tk.Button(
+            header,
+            text="📥 Export CSV",
+            command=self._export_57960_csv,
+            bg=CARD_BG,
+            fg=ACCENT_BLUE,
+            activebackground=CARD_BORDER,
+            activeforeground=TEXT_MAIN,
+            font=("Segoe UI", 9, "bold"),
+            relief="flat",
+            padx=10,
+            pady=3,
+            cursor="hand2",
+        ).pack(side=tk.RIGHT, padx=4)
+
+        # Rules Card Banner
+        rules = tk.Frame(self.tab_57960, bg=CARD_BG, padx=12, pady=6)
+        rules.pack(fill=tk.X, pady=(0, 6))
+
+        tk.Label(
+            rules,
+            text="FORMULA  •  {57960} Nifty 500  •  350 < Close < 3000  •  Close >= (√Open + 0.125)²  •  MFI(14) > 60  •  ATR(14) > 1d ATR(14)  •  5m EMA13 > SMA13(EMA13)",
+            font=("Segoe UI", 9, "bold"), fg=ACCENT_AMBER, bg=CARD_BG,
+        ).pack(anchor="w")
+
+        tk.Label(
+            rules,
+            text="Master Filter: Median Pivot ((H+L)/2) < Typical ((H+L+C)/3) * 0.997  •  Intraday 5M EMA Smoothed Trend Alignment",
+            font=("Segoe UI", 8), fg=ACCENT_GREEN, bg=CARD_BG,
+        ).pack(anchor="w", pady=(2, 0))
+
+        status_row = tk.Frame(rules, bg=CARD_BG)
+        status_row.pack(fill=tk.X, pady=(3, 0))
+
+        tk.Label(
+            status_row, textvariable=self.sig_57960_status_var,
+            font=("Segoe UI", 9), fg=TEXT_MUTED, bg=CARD_BG,
+        ).pack(side=tk.LEFT)
+
+        self.sig_57960_count_lbl = tk.Label(
+            status_row,
+            text="🎯 Showing: 0 Candidates",
+            font=("Segoe UI", 9, "bold"), fg=ACCENT_GREEN, bg=CARD_BG,
+        )
+        self.sig_57960_count_lbl.pack(side=tk.RIGHT)
+
+        # Treeview
+        tree_frame = tk.Frame(self.tab_57960, bg=BG_DARK)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        cols = [
+            ("time", "Time", 75, "center"),
+            ("symbol", "Symbol", 90, "w"),
+            ("price", "Price (₹)", 85, "e"),
+            ("gann", "Gann Lvl (₹)", 90, "e"),
+            ("gann_diff", "Gann +%", 80, "center"),
+            ("mfi", "MFI(14)", 70, "center"),
+            ("atr", "ATR(14)", 75, "center"),
+            ("ema13", "5m EMA13", 85, "e"),
+            ("sma_ema", "5m SMA(EMA)", 90, "e"),
+            ("pivot_diff", "Pivot Diff %", 90, "center"),
+            ("confluences", "Formula Confluences & Breakout Factors", 360, "w"),
+        ]
+
+        self.tree_57960 = ttk.Treeview(
+            tree_frame,
+            columns=[c[0] for c in cols],
+            show="headings",
+            selectmode="browse",
+        )
+
+        for col_id, col_name, width, align in cols:
+            self.tree_57960.heading(col_id, text=col_name, anchor=align)
+            self.tree_57960.column(col_id, width=width, anchor=align, stretch=(col_id in ("confluences",)))
+
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree_57960.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree_57960.xview)
+        self.tree_57960.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        self.tree_57960.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb.grid(row=1, column=0, sticky="ew")
+
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+
+        self.tree_57960.tag_configure("high_mfi", background="#064e3b", foreground="#34d399")
+        self.tree_57960.tag_configure("strong_gann", background="#1e3a8a", foreground="#60a5fa")
+        self.tree_57960.tag_configure("alt_row", background=TREE_ALT)
+
+        self.tree_57960.bind("<Double-1>", self._on_57960_double_click)
+
+    def _on_57960_double_click(self, event):
+        """Double clicking a candidate opens its Candlestick & CPR chart in Tab 3."""
+        sel = self.tree_57960.selection()
+        if not sel:
+            return
+        item = self.tree_57960.item(sel[0])
+        vals = item.get("values", [])
+        if len(vals) >= 2:
+            sym = str(vals[1]).strip()
+            self.open_chart_for_symbol(sym)
+
+    def _on_57960_session_changed(self, event=None):
+        """Called when user switches session between Today and Yesterday."""
+        self._render_57960_signals()
+        self._trigger_57960_scan(is_auto=False)
+
+    def _trigger_57960_scan(self, is_auto: bool = False):
+        """Triggers parallel scan across universe evaluating Chartink Screener 57960 rules."""
+        session_mode = self.sig_57960_session_var.get().lower() if hasattr(self, "sig_57960_session_var") else "today"
+        session_title = session_mode.title()
+
+        if not self.scanner:
+            if not is_auto:
+                self.sig_57960_status_var.set(f"⚠️ Scanner backend initializing for Formula {{57960}} ({session_title})...")
+            return
+
+        if not is_auto:
+            self.sig_57960_status_var.set(f"🔄 Scanning Chartink Formula {{57960}} ({session_title})...")
+
+        def _do_scan():
+            try:
+                res = self.scanner.scan_57960_universe(session_mode=session_mode)
+                if isinstance(res, tuple):
+                    elapsed, n_tasks, n_sigs = res
+                    now_str = datetime.now().strftime("%H:%M:%S")
+                    self.root.after(0, lambda: self.sig_57960_status_var.set(
+                        f"🟢 Scanned ({session_title} {now_str}) • {n_sigs} Candidates ({n_tasks} Stocks in {elapsed:.2f}s)"
+                    ))
+                self.sig_57960_dirty = True
+            except Exception as ex:
+                logger.error(f"Error executing Screener 57960 scan: {ex}")
+
+        threading.Thread(target=_do_scan, daemon=True, name="Screener57960Worker").start()
+
+    def _render_57960_signals(self):
+        """Renders filtered and sorted Screener 57960 breakout candidates in Treeview."""
+        search_q = self.sig_57960_search_var.get().strip().upper()
+        sort_by = self.sig_57960_sort_var.get()
+        session_choice = self.sig_57960_session_var.get() if hasattr(self, "sig_57960_session_var") else "Today"
+
+        target_date_str = None
+        if self.scanner and hasattr(self.scanner, "get_57960_session_dates"):
+            try:
+                today_d, yest_d = self.scanner.get_57960_session_dates()
+                target_d = yest_d if session_choice.lower() == "yesterday" else today_d
+                target_date_str = str(target_d)
+            except Exception:
+                target_date_str = None
+
+        filtered = []
+        for s in self.cached_57960_signals:
+            sym = str(s.get("symbol", "")).upper()
+            if search_q and search_q not in sym:
+                continue
+            if target_date_str and s.get("date") and s.get("date") != target_date_str:
+                continue
+            filtered.append(s)
+
+        # Sorting
+        if sort_by == "⏱️ Time (Newest First)":
+            filtered.sort(key=lambda x: str(x.get("timestamp", "")), reverse=True)
+        elif sort_by == "⏱️ Time (Oldest First)":
+            filtered.sort(key=lambda x: str(x.get("timestamp", "")))
+        elif sort_by == "🚀 Pivot Diff % (Highest First)":
+            filtered.sort(key=lambda x: float(x.get("median_pivot_diff_pct", 0.0)), reverse=True)
+        elif sort_by == "📈 Gann Breakout % (Highest First)":
+            filtered.sort(key=lambda x: float(x.get("gann_diff_pct", 0.0)), reverse=True)
+        elif sort_by == "📊 MFI(14) (Highest First)":
+            filtered.sort(key=lambda x: float(x.get("mfi_14", 0.0)), reverse=True)
+        elif sort_by == "💰 Price (Highest First)":
+            filtered.sort(key=lambda x: float(x.get("price", 0.0)), reverse=True)
+        elif sort_by == "🔤 Symbol (A to Z)":
+            filtered.sort(key=lambda x: str(x.get("symbol", "")))
+
+        unique_syms = {s.get("symbol") for s in filtered if s.get("symbol")}
+        date_lbl = f" [{target_date_str}]" if target_date_str else ""
+        if hasattr(self, "sig_57960_count_lbl"):
+            self.sig_57960_count_lbl.config(text=f"🎯 Showing ({session_choice}{date_lbl}): {len(filtered)} Candidates ({len(unique_syms)} Stocks)")
+        if hasattr(self, "notebook") and hasattr(self, "tab_57960"):
+            try:
+                self.notebook.tab(self.tab_57960, text=f"  ⚡ 57960 • {session_choice} ({len(filtered)})  ")
+            except Exception:
+                pass
+
+        existing_children = list(self.tree_57960.get_children())
+        target_ids = [f"57960_{s.get('symbol')}_{idx}" for idx, s in enumerate(filtered)]
+
+        if not target_ids:
+            if existing_children:
+                self.tree_57960.delete(*existing_children)
+            if not self.cached_57960_signals:
+                now_str = datetime.now().strftime("%H:%M:%S")
+                univ_name = getattr(self.scanner, 'universe_name', 'Universe') if self.scanner else 'Universe'
+                self.tree_57960.insert("", tk.END, values=(
+                    now_str, "REAL-TIME ACTIVE", "--", "--", "--", "--", "--", "--", "--", "--",
+                    f"🟢 Auto-evaluating {univ_name} stocks every 15 seconds against Screener 57960."
+                ), tags=("high_mfi",))
+            else:
+                self.tree_57960.insert("", tk.END, values=(
+                    "--:--:--", "--", "--", "--", "--", "--", "--", "--", "--", "--",
+                    "No candidates matching active search filter."
+                ))
+            return
+
+        if not hasattr(self, "_57960_row_cache"):
+            self._57960_row_cache = {}
+
+        needs_full_rebuild = (existing_children != target_ids)
+        if needs_full_rebuild:
+            self._57960_row_cache.clear()
+            if existing_children:
+                self.tree_57960.delete(*existing_children)
+
+        for idx, s in enumerate(filtered):
+            tags = []
+            mfi = float(s.get("mfi_14", 0.0))
+            gann_diff = float(s.get("gann_diff_pct", 0.0))
+            if mfi >= 70.0:
+                tags.append("high_mfi")
+            elif gann_diff >= 1.0:
+                tags.append("strong_gann")
+
+            if idx % 2 == 1:
+                tags.append("alt_row")
+
+            reasons = " • ".join(s.get("confluence_factors", [])) if s.get("confluence_factors") else "--"
+
+            row_vals = (
+                str(s.get("timestamp", "--")),
+                str(s.get("symbol", "--")),
+                f"{float(s.get('price', 0.0)):.2f}",
+                f"{float(s.get('gann_level', 0.0)):.2f}",
+                f"+{gann_diff:.2f}%",
+                f"{mfi:.1f}",
+                f"{float(s.get('atr_14', 0.0)):.2f}",
+                f"{float(s.get('ema_13', 0.0)):.2f}",
+                f"{float(s.get('sma_ema_13', 0.0)):.2f}",
+                f"+{float(s.get('median_pivot_diff_pct', 0.0)):.2f}%",
+                reasons,
+            )
+            tag_tuple = tuple(tags)
+            row_id = target_ids[idx]
+
+            if needs_full_rebuild:
+                self.tree_57960.insert("", tk.END, iid=row_id, values=row_vals, tags=tag_tuple)
+                self._57960_row_cache[row_id] = (row_vals, tag_tuple)
+            else:
+                cached = self._57960_row_cache.get(row_id)
+                if cached is None or cached[0] != row_vals or cached[1] != tag_tuple:
+                    self.tree_57960.item(row_id, values=row_vals, tags=tag_tuple)
+                    self._57960_row_cache[row_id] = (row_vals, tag_tuple)
+
+    def _export_57960_csv(self):
+        """Exports currently loaded Screener 57960 candidates into a CSV file."""
+        if not self.cached_57960_signals:
+            messagebox.showinfo("Export CSV", "No Screener 57960 candidates available to export.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")],
+            initialfile=f"chartink_57960_gann_mfi_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "Time", "Symbol", "Price", "Gann Level", "Gann Diff %",
+                    "MFI(14)", "ATR(14)", "5m EMA13", "5m SMA(EMA)", "Pivot Diff %", "Confluences"
+                ])
+                for s in self.cached_57960_signals:
+                    writer.writerow([
+                        s.get("timestamp"),
+                        s.get("symbol"),
+                        s.get("price"),
+                        s.get("gann_level"),
+                        s.get("gann_diff_pct"),
+                        s.get("mfi_14"),
+                        s.get("atr_14"),
+                        s.get("ema_13"),
+                        s.get("sma_ema_13"),
+                        s.get("median_pivot_diff_pct"),
+                        " • ".join(s.get("confluence_factors", [])),
+                    ])
+            messagebox.showinfo("Export Successful", f"Saved {len(self.cached_57960_signals)} Screener 57960 signals to:\n{path}")
         except Exception as e:
             messagebox.showerror("Export Failed", f"Could not export CSV: {e}")

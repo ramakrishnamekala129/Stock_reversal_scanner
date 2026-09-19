@@ -27,6 +27,7 @@ class WebDashboardState:
         self.signals: List[dict] = []
         self.hema_signals: List[dict] = []
         self.chartink_signals: List[dict] = []
+        self.screener_57960_signals: List[dict] = []
         self.stats: Dict[str, Any] = {
             "symbols_scanned": 0,
             "candles_processed": 0,
@@ -347,6 +348,50 @@ class WebDashboardState:
             "count": len(self.chartink_signals),
         })
 
+    def add_screener_57960_signals_batch(self, signals: List[Any], target_date: Optional[str] = None):
+        """Batch-updates Chartink Screener 57960 signals under atomic lock."""
+        today_str = target_date or datetime.now(IST_TZ).strftime("%Y-%m-%d")
+        formatted = []
+        for signal in signals:
+            sig_dict = signal.__dict__.copy() if hasattr(signal, "__dict__") else dict(signal)
+            if not sig_dict.get("date"):
+                sig_dict["date"] = today_str
+            formatted.append(sig_dict)
+
+        with self._lock:
+            # Preserve signals from other session dates (e.g. keep both Today & Yesterday)
+            other_date_signals = [s for s in self.screener_57960_signals if s.get("date") != today_str]
+            current_date_signals = [s for s in self.screener_57960_signals if s.get("date") == today_str]
+
+            existing_syms = {s.get("symbol"): idx for idx, s in enumerate(current_date_signals)}
+            new_items = []
+            for s in formatted:
+                sym = s.get("symbol")
+                if sym in existing_syms:
+                    existing_s = current_date_signals[existing_syms[sym]]
+                    s["first_detected_time"] = existing_s.get("first_detected_time") or s.get("first_detected_time")
+                    s["first_detected_price"] = existing_s.get("first_detected_price") or s.get("first_detected_price")
+                    current_date_signals[existing_syms[sym]] = s
+                else:
+                    new_items.append(s)
+
+            merged_current = new_items + current_date_signals
+            self.screener_57960_signals = merged_current + other_date_signals
+            if len(self.screener_57960_signals) > 5000:
+                self.screener_57960_signals = self.screener_57960_signals[:5000]
+
+        self._broadcast({
+            "type": "BATCH_SCREENER_57960_SIGNALS",
+            "date": today_str,
+            "count": len(self.screener_57960_signals),
+        })
+
+    def get_screener_57960_signals(self, target_date: Optional[str] = None) -> List[dict]:
+        with self._lock:
+            if target_date:
+                return [dict(s) for s in self.screener_57960_signals if s.get("date") == target_date]
+            return [dict(s) for s in self.screener_57960_signals]
+
     def update_signal_trigger(self, symbol: str, timestamp: str, pattern: str, new_status: str, trigger_time: str = ""):
         """Updates the trigger confirmation status of an existing signal and broadcasts update."""
         updated_sig = None
@@ -489,6 +534,7 @@ class WebDashboardState:
                 "signals": list(self.signals),
                 "hema_signals": list(self.hema_signals),
                 "chartink_signals": [s for s in self.chartink_signals if s.get("date") == today_str],
+                "screener_57960_signals": [dict(s) for s in self.screener_57960_signals],
                 "stats": dict(self.stats),
                 "price_version": self.price_version,
             }

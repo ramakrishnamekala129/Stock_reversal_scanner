@@ -340,15 +340,23 @@ def test_load_5minute_data_reuses_sqlite_without_broker_calls(tmp_path):
     assert len(loaded["STOCK_B"]) == 70
 
 
-def test_load_5minute_data_refreshes_live_candle(tmp_path):
+def test_load_5minute_data_refreshes_live_candle(tmp_path, monkeypatch):
     from unittest.mock import MagicMock
+    from zoneinfo import ZoneInfo
     from database.historical_db import HistoricalCandleDatabase
     from chartink_cash_v13_backtest import load_three_month_5minute_data
+
+    # Simulate Wednesday at 11:00 AM IST (live market session)
+    simulated_now = datetime(2026, 9, 16, 11, 0, tzinfo=ZoneInfo("Asia/Kolkata"))
+    monkeypatch.setattr(
+        "chartink_cash_v13_backtest.datetime",
+        type("MockDateTime", (datetime,), {"now": staticmethod(lambda tz=None: simulated_now)}),
+    )
 
     db = HistoricalCandleDatabase(db_path=tmp_path / "test_cache2.db")
     db.init_schema()
 
-    today = date.today()
+    today = simulated_now.date()
     start_dt = datetime.combine(today, datetime.min.time()).replace(hour=9, minute=15)
     # Put an old candle from earlier today into SQLite
     candles = [
