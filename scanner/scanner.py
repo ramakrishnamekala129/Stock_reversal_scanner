@@ -806,15 +806,32 @@ class FNOIntradayScanner:
                 self._load_daily_candles_cache()
 
                 today_sess, yest_sess = self.get_57960_session_dates()
-                session_lower = str(session_mode).lower()
+                session_str = str(session_mode).strip()
+                session_lower = session_str.lower()
                 if target_date is not None:
                     active_date = target_date
-                elif "16" in session_lower:
-                    active_date = date(2026, 9, 16)
-                elif "yesterday" in session_lower or "17" in session_lower:
+                elif "today" in session_lower:
+                    active_date = today_sess
+                elif "yesterday" in session_lower:
                     active_date = yest_sess
                 else:
-                    active_date = today_sess
+                    parsed_d = None
+                    import re
+                    match = re.search(r"\b\d{1,4}[-/ ][A-Za-z0-9]{2,4}[-/ ]\d{2,4}\b", session_str)
+                    if match:
+                        token = match.group(0)
+                        for fmt in ("%d-%b-%Y", "%d-%m-%Y", "%Y-%m-%d", "%d %b %Y"):
+                            try:
+                                parsed_d = datetime.strptime(token, fmt).date()
+                                break
+                            except Exception:
+                                pass
+                    if parsed_d:
+                        active_date = parsed_d
+                    elif "16" in session_lower:
+                        active_date = date(2026, 9, 16)
+                    else:
+                        active_date = today_sess
 
                 active_date_str = str(active_date)
                 from indicators.screener_57960 import get_chartink_57960_alerts
@@ -858,6 +875,48 @@ class FNOIntradayScanner:
                     except Exception as e:
                         logger.debug(f"Error querying db candles for {active_date}: {e}")
                         target_db_candles_map = {}
+
+                # Supplement from historical_candles.db if empty
+                if not target_db_candles_map:
+                    try:
+                        from database.historical_db import HistoricalCandleDatabase
+                        from collections import defaultdict
+                        hdb = HistoricalCandleDatabase()
+                        h_conn = hdb._get_connection()
+                        iso_str = str(active_date)
+                        h_rows = h_conn.execute(
+                            f"SELECT symbol, timestamp, open, high, low, close, volume FROM candles_history_5m WHERE timestamp LIKE '{iso_str}%' ORDER BY timestamp ASC"
+                        ).fetchall()
+                        if h_rows:
+                            grouped = defaultdict(list)
+                            for r in h_rows:
+                                # Normalize ISO8601 string timestamp to tz-naive IST datetime at source
+                                # e.g. "2026-09-16T09:15:00+05:30" -> datetime(2026, 9, 16, 9, 15, 0)
+                                raw_ts = r[1]
+                                try:
+                                    # Replace T separator and strip trailing offset chars for strptime
+                                    ts_clean = str(raw_ts).replace("T", " ")
+                                    # Parse using dateutil which handles +05:30 offset correctly
+                                    from dateutil.parser import parse as _du_parse
+                                    ts_obj = _du_parse(raw_ts)
+                                    if ts_obj.tzinfo is not None:
+                                        from datetime import timezone as _tz, timedelta as _td
+                                        ist = _tz(timedelta(hours=5, minutes=30))
+                                        ts_obj = ts_obj.astimezone(ist).replace(tzinfo=None)
+                                except Exception:
+                                    ts_obj = raw_ts  # fallback: keep raw string
+                                grouped[r[0]].append({
+                                    "timestamp": ts_obj,
+                                    "open": float(r[2]),
+                                    "high": float(r[3]),
+                                    "low": float(r[4]),
+                                    "close": float(r[5]),
+                                    "volume": int(r[6] or 0),
+                                })
+                            for s, records in grouped.items():
+                                target_db_candles_map[s] = pd.DataFrame(records)
+                    except Exception as ex_h:
+                        logger.debug(f"Historical 5m candle fallback exception: {ex_h}")
 
                 t0 = time.time()
                 tasks = []

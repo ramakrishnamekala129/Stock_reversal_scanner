@@ -188,12 +188,13 @@ class Screener57960Engine:
         5m EMA(13) of close > 5m SMA(13) of EMA(13).
         Returns (is_triggered, ema13_val, sma_ema13_val, trigger_bar_index).
         """
-        if df_5m is None or len(df_5m) < 13:
+        if df_5m is None or df_5m.empty:
             return False, 0.0, 0.0, None
 
         close = df_5m["close"].astype(float)
         ema13 = close.ewm(span=13, adjust=False).mean()
-        sma13_of_ema = ema13.rolling(13).mean()
+        # Use min_periods=1 so that morning 09:15 crossover is not masked by 12 bars of NaNs
+        sma13_of_ema = ema13.rolling(13, min_periods=1).mean()
 
         if len(sma13_of_ema.dropna()) == 0:
             return False, 0.0, 0.0, None
@@ -228,7 +229,10 @@ class Screener57960Engine:
             return None
 
         df = df_daily.copy()
-        df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(None)
+        _ts = pd.to_datetime(df["timestamp"])
+        if _ts.dt.tz is not None:
+            _ts = _ts.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+        df["timestamp"] = _ts
         df = df.sort_values("timestamp").reset_index(drop=True)
 
         if target_date is not None:
@@ -247,8 +251,8 @@ class Screener57960Engine:
         # Merge today's live session if provided
         if today_override:
             t_dt = pd.to_datetime(today_override.get("timestamp", datetime.now()))
-            if hasattr(t_dt, "tz") and t_dt.tz is not None:
-                t_dt = t_dt.tz_localize(None)
+            if hasattr(t_dt, "tzinfo") and t_dt.tzinfo is not None:
+                t_dt = t_dt.tz_convert(None)
             if t_dt.date() == active_date:
                 if df["timestamp"].iloc[-1].date() == t_dt.date():
                     df.loc[len(df) - 1, "timestamp"] = t_dt
@@ -336,7 +340,18 @@ class Screener57960Engine:
 
         if df_5m is not None and not df_5m.empty:
             if "timestamp" in df_5m.columns:
-                df_5m_target = df_5m[pd.to_datetime(df_5m["timestamp"]).dt.date == active_date]
+                try:
+                    _ts5 = pd.to_datetime(df_5m["timestamp"], format="ISO8601")
+                except Exception:
+                    try:
+                        _ts5 = pd.to_datetime(df_5m["timestamp"], format="mixed")
+                    except Exception:
+                        _ts5 = pd.to_datetime(df_5m["timestamp"], infer_datetime_format=True, errors="coerce")
+                if _ts5.dt.tz is not None:
+                    _ts5 = _ts5.dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
+                df_5m = df_5m.copy()
+                df_5m["timestamp"] = _ts5
+                df_5m_target = df_5m[df_5m["timestamp"].dt.date == active_date]
                 if not df_5m_target.empty:
                     df_5m = df_5m_target
             is_5m_triggered, ema13_val, sma_ema13_val, trg_idx = self.check_5m_trigger(df_5m)
@@ -356,8 +371,11 @@ class Screener57960Engine:
         stock_sector = alert_info.get("sector", "") if alert_info else ""
         stock_mcap = alert_info.get("market_cap", "") if alert_info else ""
 
-        if alert_info and not first_det_time:
-            first_det_time = alert_info.get("first_time", "")
+        # Prioritize exact ground-truth first detected alert time from Chartink log
+        if alert_info and alert_info.get("first_time"):
+            first_det_time = alert_info["first_time"]
+        elif not first_det_time:
+            first_det_time = "EOD"
 
         gann_diff_pct = ((c_close - gann_level) / gann_level) * 100.0 if gann_level > 0 else 0.0
         pivot_diff_pct = ((typical_price - median_price) / median_price) * 100.0 if median_price > 0 else 0.0

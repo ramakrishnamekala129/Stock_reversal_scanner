@@ -210,7 +210,9 @@ class ScannerTkinterGUI:
 
         # Chartink Screener 57960 Filters & State
         self.cached_57960_signals: List[dict] = []
-        self.sig_57960_session_var = tk.StringVar(value="Today (18-Sep)")
+        self._57960_session_labels: List[str] = []  # Populated dynamically from history CSV
+        self._57960_session_dates: Dict[str, str] = {}  # label -> YYYY-MM-DD
+        self.sig_57960_session_var = tk.StringVar(value="")
         self.sig_57960_search_var = tk.StringVar(value="")
         self.sig_57960_sort_var = tk.StringVar(value="⏱️ Time (Newest First)")
         self.sig_57960_auto_var = tk.BooleanVar(value=True)
@@ -2956,17 +2958,19 @@ class ScannerTkinterGUI:
         )
         self.btn_57960_scan.pack(side=tk.LEFT, padx=(0, 8))
 
-        # Session Selector (Today / Yesterday / 16-Sep)
+        # Session Selector — populated dynamically from historical CSV (all 160 trading days)
         tk.Label(header, text="📅 Session:", font=("Segoe UI", 9, "bold"), fg=TEXT_MUTED, bg=BG_DARK).pack(side=tk.LEFT, padx=(0, 4))
         self.combo_57960_session = ttk.Combobox(
             header,
             textvariable=self.sig_57960_session_var,
-            values=["Today (18-Sep)", "Yesterday (17-Sep)", "16-Sep (Wednesday)"],
+            values=[],
             state="readonly",
-            width=20,
+            width=26,
         )
         self.combo_57960_session.pack(side=tk.LEFT, padx=(0, 8))
         self.combo_57960_session.bind("<<ComboboxSelected>>", self._on_57960_session_changed)
+        # Load dates from CSV and populate combo
+        self._load_57960_session_dates()
 
         # Auto Toggle
         tk.Checkbutton(
@@ -3113,23 +3117,95 @@ class ScannerTkinterGUI:
             sym = str(vals[1]).strip()
             self.open_chart_for_symbol(sym)
 
+    def _load_57960_session_dates(self):
+        """Reads historical CSV and populates the session dropdown with all available trading dates."""
+        try:
+            import pandas as pd
+            for p in [
+                "data/chartink_57960_daily_history.csv",
+                "indicators/chartink_57960_daily_history.csv",
+            ]:
+                import os
+                if not os.path.exists(p):
+                    continue
+                df = pd.read_csv(p)
+                df["_parsed"] = pd.to_datetime(df["Date"], dayfirst=True)
+                unique_dates = sorted(df["_parsed"].dt.date.unique(), reverse=True)
+                from datetime import date as _date
+                today = _date.today()
+                labels = []
+                date_map: Dict[str, str] = {}
+                for d in unique_dates:
+                    iso = d.strftime("%Y-%m-%d")
+                    friendly = d.strftime("%d-%b-%Y")  # e.g. 18-Sep-2026
+                    if d == today:
+                        label = f"{friendly} (Today)"
+                    elif (today - d).days == 1:
+                        label = f"{friendly} (Yesterday)"
+                    else:
+                        label = friendly
+                    labels.append(label)
+                    date_map[label] = iso
+                self._57960_session_labels = labels
+                self._57960_session_dates = date_map
+                if labels:
+                    self.combo_57960_session.config(values=labels)
+                    self.sig_57960_session_var.set(labels[0])
+                return
+        except Exception as e:
+            logger.warning("Could not load 57960 session dates from CSV: %s", e)
+        # Fallback: hardcoded recent dates
+        from datetime import date as _date
+        today = _date.today()
+        fallback = [
+            (today, "Today"),
+            (today - __import__('datetime').timedelta(days=1), "Yesterday"),
+        ]
+        labels = []
+        date_map: Dict[str, str] = {}
+        for d, suffix in fallback:
+            iso = d.strftime("%Y-%m-%d")
+            label = f"{d.strftime('%d-%b-%Y')} ({suffix})"
+            labels.append(label)
+            date_map[label] = iso
+        self._57960_session_labels = labels
+        self._57960_session_dates = date_map
+        self.combo_57960_session.config(values=labels)
+        if labels:
+            self.sig_57960_session_var.set(labels[0])
+
+    def _parse_57960_date_from_label(self, label: str) -> Optional[str]:
+        """Resolves a session combo label to a YYYY-MM-DD string.
+        Checks the pre-built date_map first; falls back to parsing DD-Mon-YYYY from the label."""
+        if label in self._57960_session_dates:
+            return self._57960_session_dates[label]
+        # Try to extract a date string from the label (e.g. '18-Sep-2026 (Today)')
+        import re
+        m = re.search(r'(\d{2}-[A-Za-z]{3}-\d{4})', label)
+        if m:
+            try:
+                from datetime import datetime as _dt
+                return _dt.strptime(m.group(1), "%d-%b-%Y").strftime("%Y-%m-%d")
+            except Exception:
+                pass
+        return None
+
     def _on_57960_session_changed(self, event=None):
-        """Called when user switches session between Today (18-Sep), Yesterday (17-Sep), and 16-Sep."""
+        """Called when user selects a new session from the date dropdown."""
         self._render_57960_signals()
         self._trigger_57960_scan(is_auto=False)
 
     def _trigger_57960_scan(self, is_auto: bool = False):
         """Triggers parallel scan across universe evaluating Chartink Screener 57960 rules."""
-        session_choice = self.sig_57960_session_var.get() if hasattr(self, "sig_57960_session_var") else "Today (18-Sep)"
+        session_choice = self.sig_57960_session_var.get() if hasattr(self, "sig_57960_session_var") else ""
+        target_date_str = self._parse_57960_date_from_label(session_choice)
+        target_d: Optional[date] = None
+        if target_date_str:
+            try:
+                target_d = date.fromisoformat(target_date_str)
+            except Exception:
+                pass
         session_lower = session_choice.lower()
-
-        target_d = None
-        if "18" in session_lower or "today" in session_lower:
-            target_d = date(2026, 9, 18)
-        elif "17" in session_lower or "yesterday" in session_lower:
-            target_d = date(2026, 9, 17)
-        elif "16" in session_lower:
-            target_d = date(2026, 9, 16)
 
         if not self.scanner:
             if not is_auto:
@@ -3158,22 +3234,8 @@ class ScannerTkinterGUI:
         """Renders filtered and sorted Screener 57960 breakout candidates in Treeview."""
         search_q = self.sig_57960_search_var.get().strip().upper()
         sort_by = self.sig_57960_sort_var.get()
-        session_choice = self.sig_57960_session_var.get() if hasattr(self, "sig_57960_session_var") else "Today (18-Sep)"
-        session_lower = session_choice.lower()
-
-        target_date_str = None
-        if "18" in session_lower or "today" in session_lower:
-            target_date_str = "2026-09-18"
-        elif "17" in session_lower or "yesterday" in session_lower:
-            target_date_str = "2026-09-17"
-        elif "16" in session_lower:
-            target_date_str = "2026-09-16"
-        elif self.scanner and hasattr(self.scanner, "get_57960_session_dates"):
-            try:
-                today_d, yest_d = self.scanner.get_57960_session_dates()
-                target_date_str = str(today_d)
-            except Exception:
-                target_date_str = None
+        session_choice = self.sig_57960_session_var.get() if hasattr(self, "sig_57960_session_var") else ""
+        target_date_str = self._parse_57960_date_from_label(session_choice)
 
         filtered = []
         for s in self.cached_57960_signals:
